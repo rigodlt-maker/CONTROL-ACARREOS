@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Acarreos">
+<meta name="application-name" content="Acarreos">
+<meta name="theme-color" content="#0f6e56">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Acarreos">
+<meta name="application-name" content="Acarreos">
+<meta name="theme-color" content="#0f6e56">
+<link rel="icon" type="image/png" href="data:image/png;base64,">
+<link rel="apple-touch-icon" href="data:image/png;base64,">
+<title>Control de Acarreos - Rompeolas Oriente</title>
+<!-- SheetJS para exportar a Excel -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f5f4f0; --surface: #ffffff;
+  --border: rgba(0,0,0,0.12); --border-strong: rgba(0,0,0,0.28);
+  --text: #1a1a18; --text-muted: #5f5e5a;
+  --accent: #0f6e56; --accent-light: #e1f5ee; --accent-mid: #1d9e75;
+  --danger: #a32d2d; --danger-light: #fcebeb;
+  --warning: #854f0b; --warning-light: #faeeda;
+  --info: #1a4f8a; --info-light: #f0f7ff;
+  --radius: 10px; --radius-lg: 14px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 15px; }
+header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; }
+header p { font-size: 11px; opacity: 0.8; }
+.tab-bar { display: flex; background: var(--surface); border-bottom: 0.5px solid var(--border); position: sticky; top: 60px; z-index: 99; }
+.tab-btn { flex: 1; padding: 10px 4px 9px; border: none; background: none; font-size: 12px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-btn svg { width: 20px; height: 20px; }
+.tab-content { display: none; padding: 16px; }
+.tab-content.active { display: block; }
+
+/* ── FORM ── */
+.form-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
+.form-card h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+.field-row { margin-bottom: 10px; }
+.field-row:last-child { margin-bottom: 0; }
+label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 3px; font-weight: 500; }
+input[type="text"], input[type="number"], input[type="date"], input[type="time"], select, textarea {
+  width: 100%; height: 38px; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  padding: 0 10px; font-size: 14px; background: var(--surface); color: var(--text);
+}
+textarea { height: 70px; padding: 8px 10px; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid); outline-offset: -1px; border-color: transparent; }
+.field-row.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.field-row.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+/* Campos calculados / solo lectura */
+.calc-field { background: var(--accent-light) !important; color: var(--accent) !important; font-weight: 600; border-color: rgba(15,110,86,0.3) !important; }
+.calc-field-neutral { background: #f8f8f6 !important; color: var(--text-muted) !important; font-weight: 500; border-color: rgba(0,0,0,0.15) !important; }
+
+/* Panel de resumen de pesos */
+.pesos-summary { background: var(--accent-light); border-radius: var(--radius); padding: 12px 14px; margin-top: 10px; border: 0.5px solid rgba(15,110,86,0.25); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.peso-item { text-align: center; }
+.peso-item .lbl { font-size: 11px; color: var(--accent); margin-bottom: 2px; font-weight: 500; }
+.peso-item .val { font-size: 19px; font-weight: 700; color: var(--accent); }
+.peso-item .unit { font-size: 11px; color: var(--accent); opacity: 0.7; }
+
+/* Banner range hint */
+.range-hint { background: var(--info-light); border: 0.5px solid #b3d4f5; border-radius: var(--radius); padding: 8px 12px; font-size: 12px; color: var(--info); margin-top: 6px; display: none; }
+.range-hint strong { font-weight: 600; }
+
+/* Botones */
+.btn { flex: 1; padding: 10px 12px; border-radius: var(--radius); border: 0.5px solid var(--border-strong); font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; }
+.btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+.btn-primary:active { background: #0c5c46; }
+.btn-secondary { background: var(--surface); color: var(--text); }
+.btn-secondary:active { background: var(--bg); }
+.btn-danger { background: var(--danger-light); color: var(--danger); border-color: rgba(163,45,45,0.3); }
+.btn-excel { background: #1D6F42; color: white; border-color: #1D6F42; }
+.btn-excel:active { background: #155233; }
+.banner { border-radius: var(--radius); padding: 10px 12px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+.banner svg { flex-shrink: 0; margin-top: 1px; }
+.banner-success { background: var(--accent-light); color: var(--accent); }
+.banner-warning { background: var(--warning-light); color: var(--warning); }
+.banner-danger  { background: var(--danger-light);  color: var(--danger);  }
+
+/* ── DB ── */
+.stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.stat-card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
+.stat-card .val { font-size: 22px; font-weight: 600; color: var(--accent); }
+.stat-card .lbl { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.record { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 12px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; cursor: pointer; }
+.record:active { border-color: var(--accent-mid); }
+.rec-main { flex: 1; min-width: 0; }
+.rec-boleta { font-size: 14px; font-weight: 600; }
+.rec-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rec-peso { text-align: right; flex-shrink: 0; }
+.rec-peso .kg { font-size: 15px; font-weight: 600; color: var(--accent); }
+.rec-peso .fecha { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.badge { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 500; margin-top: 4px; }
+.badge-green { background: var(--accent-light); color: var(--accent); }
+.badge-blue  { background: var(--info-light);   color: var(--info); }
+.empty-state { text-align: center; padding: 40px 16px; color: var(--text-muted); }
+.empty-state svg { margin: 0 auto 10px; display: block; opacity: 0.3; }
+.filter-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.filter-row input { flex: 1; height: 36px; border: 0.5px solid var(--border-strong); border-radius: var(--radius); padding: 0 10px; font-size: 13px; background: var(--surface); }
+.export-bar { display: flex; gap: 8px; padding: 12px 0 4px; border-top: 0.5px solid var(--border); margin-top: 12px; flex-wrap: wrap; }
+.export-bar .btn { font-size: 12px; padding: 9px 10px; }
+
+/* ── MODAL ── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; align-items: flex-end; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--surface); border-radius: 16px 16px 0 0; width: 100%; max-height: 85vh; overflow-y: auto; padding: 16px; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.modal-header h2 { font-size: 16px; font-weight: 600; }
+.modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
+.detail-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+.detail-row:last-child { border-bottom: none; }
+.detail-row .dk { color: var(--text-muted); }
+.detail-row .dv { font-weight: 500; text-align: right; max-width: 60%; }
+.detail-section { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+
+/* ── GOOGLE SHEETS ── */
+.btn-sheets { background: #0F9D58; color: white; border-color: #0F9D58; }
+.btn-sheets:active { background: #0b7a44; }
+.btn-sheets:disabled { background: #a8d5be; border-color: #a8d5be; cursor: not-allowed; }
+.sheets-url-row input { flex: 1; height: 38px; border: 0.5px solid var(--border-strong); border-radius: var(--radius); padding: 0 10px; font-size: 12px; background: var(--surface); }
+.sheets-preview-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 14px; }
+.sheets-preview-table th { background: #0F9D58; color: white; padding: 5px 7px; text-align: left; font-weight: 600; white-space: nowrap; }
+.sheets-preview-table td { padding: 5px 7px; border-bottom: 0.5px solid var(--border); white-space: nowrap; }
+.sheets-preview-table tr:nth-child(even) td { background: #f9f9f7; }
+.sheets-preview-wrap { overflow-x: auto; border-radius: var(--radius); border: 0.5px solid var(--border); margin-bottom: 12px; }
+.sheets-status { border-radius: var(--radius); padding: 10px 12px; font-size: 13px; margin-bottom: 12px; display: none; }
+.sheets-status.ok  { background: var(--accent-light); color: var(--accent); }
+.sheets-status.err { background: var(--danger-light);  color: var(--danger); }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.url-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; background: var(--bg); border-radius: var(--radius); padding: 8px 10px; }
+.url-hint strong { color: var(--text); }
+.url-hint code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <rect x="2" y="6" width="4" height="16" rx="1" fill="white"/>
+    <rect x="8" y="2" width="2" height="24" rx="1" fill="white"/>
+    <rect x="12" y="6" width="4" height="16" rx="1" fill="white"/>
+    <rect x="18" y="2" width="2" height="24" rx="1" fill="white"/>
+    <rect x="22" y="6" width="4" height="16" rx="1" fill="white"/>
+  </svg>
+  <div><h1>Control de Acarreos</h1><p>Rompeolas Oriente · Veracruz</p></div>
+</header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="showTab('form')" id="t-form">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+    Captura
+  </button>
+  <button class="tab-btn" onclick="showTab('db')" id="t-db">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
+    Base de datos
+  </button>
+</div>
+
+<!-- ═══ TAB CAPTURA ═══ -->
+<div class="tab-content active" id="tab-form">
+
+  <!-- Sección: Fechas y Horas -->
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Pesajes
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Fecha 1er pesaje *</label>
+        <input type="date" id="f-fecha1" oninput="calcCiclo()"/>
+      </div>
+      <div>
+        <label>Hora 1er pesaje *</label>
+        <input type="time" id="f-hora1" oninput="calcCiclo()"/>
+      </div>
+    </div>
+    <div class="field-row two-col">
+      <div>
+        <label>Fecha 2do pesaje *</label>
+        <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
+      </div>
+      <div>
+        <label>Hora 2do pesaje *</label>
+        <input type="time" id="f-hora2" oninput="calcCiclo()"/>
+      </div>
+    </div>
+    <div class="field-row">
+      <label>Ciclo (tiempo entre pesajes)</label>
+      <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
+    </div>
+  </div>
+
+  <!-- Sección: Identificación -->
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
+      Identificación
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Boleta *</label>
+        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
+      </div>
+      <div>
+        <label>Placas *</label>
+        <input type="text" id="f-placas" placeholder="Ej: 5XDC16A"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sección: Material y Destino -->
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      Material y Destino
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Material *</label>
+        <select id="f-material" onchange="updateRangos()">
+          <option value="">— Seleccionar —</option>
+          <option value="NUCLEO">Núcleo</option>
+          <option value="BERMA">Berma</option>
+          <option value="BERMA DE APOYO">Berma de apoyo</option>
+          <option value="SECUNDARIA 1">Secundaria 1</option>
+          <option value="SECUNDARIA 2">Secundaria 2</option>
+          <option value="CORAZA">Coraza</option>
+        </select>
+      </div>
+      <div>
+        <label>Rango de material</label>
+        <input type="text" id="f-rango" class="calc-field-neutral" readonly placeholder="Selecciona destino y material"/>
+      </div>
+    </div>
+    <div class="range-hint" id="range-hint"></div>
+    <div class="field-row two-col">
+      <div>
+        <label>Banco (Origen) *</label>
+        <select id="f-banco">
+          <option value="">— Seleccionar —</option>
+          <option value="EL TAJO">El Tajo</option>
+          <option value="TRITURA">Tritura</option>
+          <option value="MOZOMBOA">Mozomboa</option>
+        </select>
+      </div>
+      <div>
+        <label>Destino *</label>
+        <select id="f-destino" onchange="updateRangos()">
+          <option value="">— Seleccionar —</option>
+          <option value="ACOPIO">Acopio</option>
+          <option value="MURO">Muro</option>
+          <option value="CUERPO 1">Cuerpo 1</option>
+          <option value="CUERPO 2">Cuerpo 2</option>
+          <option value="CUERPO 3">Cuerpo 3</option>
+          <option value="CUERPO 4">Cuerpo 4</option>
+          <option value="CUERPO 5">Cuerpo 5</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sección: Pesos -->
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Pesos
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Peso Bruto (kg) *</label>
+        <input type="number" id="f-bruto" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
+      </div>
+      <div>
+        <label>Tara (kg) *</label>
+        <input type="number" id="f-tara" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
+      </div>
+    </div>
+    <div class="pesos-summary">
+      <div class="peso-item">
+        <div class="lbl">Peso Neto</div>
+        <div class="val" id="neto-display">—</div>
+        <div class="unit">kg</div>
+      </div>
+      <div class="peso-item">
+        <div class="lbl">Toneladas</div>
+        <div class="val" id="ton-display">—</div>
+        <div class="unit">ton</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-bottom:24px;">
+    <button class="btn btn-secondary" onclick="clearForm()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+      Limpiar
+    </button>
+    <button class="btn btn-primary" onclick="saveRecord()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      Guardar registro
+    </button>
+  </div>
+</div>
+
+<!-- ═══ TAB BASE DE DATOS ═══ -->
+<div class="tab-content" id="tab-db">
+  <div class="stats-row">
+    <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes registrados</div></div>
+    <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas acumuladas</div></div>
+  </div>
+  <div class="filter-row">
+    <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="renderDB()"/>
+  </div>
+  <div id="records-list"></div>
+  <div class="export-bar">
+    <button class="btn btn-excel" onclick="exportExcel()" style="flex:1">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Exportar Excel (.xlsx)
+    </button>
+    <button class="btn btn-secondary" onclick="exportCSV()" style="flex:1">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Exportar CSV
+    </button>
+    <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+    </button>
+  </div>
+  <div style="padding: 8px 0 4px;">
+    <button class="btn btn-sheets" onclick="openSheetsModal()" style="width:100%">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+      Enviar a Google Sheets
+    </button>
+  </div>
+</div>
+
+<!-- MODAL DETALLE -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-title">Boleta #</h2>
+      <button class="modal-close" onclick="closeModalForce()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="modal-body"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="editRecord()" style="flex:1">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Editar
+      </button>
+      <button class="btn btn-danger" onclick="deleteRecord()" style="flex:0;padding:0 16px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// TABLA DE RANGOS: destino → material → rango
+// ══════════════════════════════════════════════════════
+const RANGOS = {
+  'CUERPO 1': {
+    'NUCLEO':         '0.02 a 0.20 ton',
+    'SECUNDARIA 2':   '0.20 a 0.30 ton',
+    'SECUNDARIA 1':   '0.30 a 0.50 ton',
+    'CORAZA':         '5.8 ton',
+    'BERMA':          '0.30 a 0.50 ton',
+    'BERMA DE APOYO': '0.20 a 0.30 ton'
+  },
+  'CUERPO 2': {
+    'NUCLEO':         '0.02 a 0.20 ton',
+    'SECUNDARIA 2':   '0.30 a 0.50 ton',
+    'SECUNDARIA 1':   '0.50 a 1.00 ton',
+    'CORAZA':         '10 ton',
+    'BERMA':          '0.50 a 1.00 ton',
+    'BERMA DE APOYO': '0.30 a 0.50 ton'
+  },
+  'CUERPO 3': {
+    'NUCLEO':         '0.01 a 0.50 ton',
+    'SECUNDARIA 2':   '0.50 a 0.80 ton',
+    'SECUNDARIA 1':   '0.80 a 1.50 ton',
+    'CORAZA':         '16 ton',
+    'BERMA':          '0.80 a 1.50 ton',
+    'BERMA DE APOYO': '0.50 a 0.80 ton'
+  },
+  'CUERPO 4': {
+    'NUCLEO':         '0.01 a 0.50 ton',
+    'SECUNDARIA 2':   '0.60 a 1.00 ton',
+    'SECUNDARIA 1':   '1.00 a 2.00 ton',
+    'CORAZA':         '19 ton',
+    'BERMA':          '1.00 a 2.00 ton',
+    'BERMA DE APOYO': '0.60 a 1.00 ton'
+  },
+  'CUERPO 5': {
+    'NUCLEO':         '0.01 a 0.50 ton',
+    'SECUNDARIA 2':   '0.80 a 1.20 ton',
+    'SECUNDARIA 1':   '1.20 a 2.30 ton',
+    'BERMA':          '1.20 a 2.30 ton',
+    'BERMA DE APOYO': '0.80 a 1.20 ton'
+  },
+  'MURO': {
+    'NUCLEO':         '0.01 a 0.50 ton',
+    'SECUNDARIA 2':   '1.00 a 1.50 ton',
+    'SECUNDARIA 1':   '1.50 a 3.00 ton',
+    'BERMA':          '1.50 a 3.00 ton',
+    'BERMA DE APOYO': '1.00 a 1.50 ton'
+  }
+  // ACOPIO no tiene rangos definidos
+};
+
+// ══════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════
+let db = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
+let currentModalId = null;
+let editMode = false;
+
+// ── Tabs ──
+function showTab(t) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + t).classList.add('active');
+  document.getElementById('t-' + t).classList.add('active');
+  if (t === 'db') renderDB();
+}
+
+// ══════════════════════════════════════════════════════
+// CÁLCULOS AUTOMÁTICOS
+// ══════════════════════════════════════════════════════
+
+// Calcula el ciclo (diferencia entre pesaje 1 y pesaje 2)
+function calcCiclo() {
+  const fecha1 = document.getElementById('f-fecha1').value;
+  const hora1  = document.getElementById('f-hora1').value;
+  const fecha2 = document.getElementById('f-fecha2').value;
+  const hora2  = document.getElementById('f-hora2').value;
+  const cicloEl = document.getElementById('f-ciclo');
+
+  if (!fecha1 || !hora1 || !fecha2 || !hora2) {
+    cicloEl.value = '';
+    return;
+  }
+
+  const dt1 = new Date(fecha1 + 'T' + hora1 + ':00');
+  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+  const diffMs = dt2 - dt1;
+
+  if (diffMs < 0) {
+    cicloEl.value = '⚠ Fecha/hora 2 anterior a la 1';
+    return;
+  }
+
+  const totalMin = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+
+  if (hrs > 0) {
+    cicloEl.value = hrs + 'h ' + String(min).padStart(2, '0') + 'min';
+  } else {
+    cicloEl.value = min + ' min';
+  }
+}
+
+// Calcula Peso Neto y Toneladas
+function calcPesos() {
+  const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
+  const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
+  const neto  = bruto - tara;
+
+  const netoEl = document.getElementById('neto-display');
+  const tonEl  = document.getElementById('ton-display');
+
+  if (bruto > 0 && tara > 0) {
+    netoEl.textContent = neto > 0 ? neto.toLocaleString('es-MX') : '—';
+    tonEl.textContent  = neto > 0 ? (neto / 1000).toFixed(3) : '—';
+  } else {
+    netoEl.textContent = '—';
+    tonEl.textContent  = '—';
+  }
+}
+
+// Actualiza el rango de material según destino + material
+function updateRangos() {
+  const destino  = document.getElementById('f-destino').value;
+  const material = document.getElementById('f-material').value;
+  const rangoEl  = document.getElementById('f-rango');
+  const hintEl   = document.getElementById('range-hint');
+
+  if (!destino || !material) {
+    rangoEl.value = '';
+    hintEl.style.display = 'none';
+    return;
+  }
+
+  const destinoRangos = RANGOS[destino];
+  if (!destinoRangos) {
+    // Destinos sin tabla (ACOPIO)
+    rangoEl.value = 'Sin rango definido';
+    hintEl.style.display = 'none';
+    return;
+  }
+
+  const rango = destinoRangos[material];
+  if (rango) {
+    rangoEl.value = rango;
+    hintEl.style.display = 'block';
+    hintEl.innerHTML = `<strong>Rango ${destino} / ${material}:</strong> ${rango}`;
+  } else {
+    rangoEl.value = 'Sin rango para esta combinación';
+    hintEl.style.display = 'none';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// FORM: leer, limpiar, guardar
+// ══════════════════════════════════════════════════════
+function getFormData() {
+  const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
+  const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
+  const neto  = bruto - tara;
+  return {
+    id:       editMode ? currentModalId : Date.now(),
+    fecha1:   document.getElementById('f-fecha1').value,
+    hora1:    document.getElementById('f-hora1').value,
+    fecha2:   document.getElementById('f-fecha2').value,
+    hora2:    document.getElementById('f-hora2').value,
+    ciclo:    document.getElementById('f-ciclo').value,
+    boleta:   document.getElementById('f-boleta').value.trim(),
+    placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
+    material: document.getElementById('f-material').value,
+    rango:    document.getElementById('f-rango').value,
+    banco:    document.getElementById('f-banco').value,
+    destino:  document.getElementById('f-destino').value,
+    bruto_kg: bruto,
+    tara_kg:  tara,
+    neto_kg:  neto,
+    ton:      neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    ts:       new Date().toISOString()
+  };
+}
+
+function clearForm() {
+  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-placas','f-bruto','f-tara'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('f-material').selectedIndex = 0;
+  document.getElementById('f-banco').selectedIndex    = 0;
+  document.getElementById('f-destino').selectedIndex  = 0;
+  document.getElementById('f-ciclo').value  = '';
+  document.getElementById('f-rango').value  = '';
+  document.getElementById('range-hint').style.display = 'none';
+  document.getElementById('neto-display').textContent = '—';
+  document.getElementById('ton-display').textContent  = '—';
+  editMode = false;
+  currentModalId = null;
+}
+
+function saveRecord() {
+  const data = getFormData();
+
+  if (!data.boleta)  { alert('Ingresa el número de boleta.'); return; }
+  if (!data.fecha1)  { alert('Ingresa la fecha del 1er pesaje.'); return; }
+  if (!data.fecha2)  { alert('Ingresa la fecha del 2do pesaje.'); return; }
+  if (!data.placas)  { alert('Ingresa las placas del vehículo.'); return; }
+  if (!data.material){ alert('Selecciona el material.'); return; }
+  if (!data.banco)   { alert('Selecciona el banco de origen.'); return; }
+  if (!data.destino) { alert('Selecciona el destino.'); return; }
+  if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
+  if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
+  if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+
+  if (editMode) {
+    db = db.map(r => r.id === currentModalId ? data : r);
+  } else {
+    if (db.find(r => r.boleta === data.boleta) &&
+        !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) return;
+    db.unshift(data);
+  }
+
+  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  clearForm();
+  showTab('db');
+}
+
+// ══════════════════════════════════════════════════════
+// BASE DE DATOS
+// ══════════════════════════════════════════════════════
+function renderDB() {
+  const q = (document.getElementById('filter-input').value || '').toLowerCase();
+  const filtered = db.filter(r =>
+    ['boleta','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
+  );
+
+  const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
+  document.getElementById('stat-total').textContent     = filtered.length;
+  document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
+
+  const list = document.getElementById('records-list');
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/>
+        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+      </svg>
+      <p>${db.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros.<br>Ve a Captura para agregar el primero.'}</p>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(r => `
+    <div class="record" onclick="openModal(${r.id})">
+      <div class="rec-main">
+        <div class="rec-boleta">Boleta #${r.boleta}</div>
+        <div class="rec-detail">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${r.banco   ? '<span class="badge badge-blue">'+r.banco+'</span>'   : ''}
+          ${r.destino ? '<span class="badge badge-green">'+r.destino+'</span>' : ''}
+        </div>
+      </div>
+      <div class="rec-peso">
+        <div class="kg">${((r.neto_kg||0)/1000).toFixed(3)} t</div>
+        <div class="fecha">${r.fecha1||'—'}</div>
+        ${r.ciclo ? '<div class="fecha" style="margin-top:1px">⏱ '+r.ciclo+'</div>' : ''}
+      </div>
+    </div>`).join('');
+}
+
+function openModal(id) {
+  currentModalId = id;
+  const r = db.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById('modal-title').textContent = 'Boleta #' + r.boleta;
+
+  const fmt = (v, suffix='') => v !== undefined && v !== null && v !== '' ? v + suffix : '—';
+  const fmtNum = (v, suffix='') => v ? Number(v).toLocaleString('es-MX') + suffix : '—';
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="detail-section">Pesajes</div>
+    <div class="detail-row"><span class="dk">1er pesaje</span><span class="dv">${fmt(r.fecha1)} ${fmt(r.hora1)}</span></div>
+    <div class="detail-row"><span class="dk">2do pesaje</span><span class="dv">${fmt(r.fecha2)} ${fmt(r.hora2)}</span></div>
+    <div class="detail-row"><span class="dk">Ciclo</span><span class="dv">${fmt(r.ciclo)}</span></div>
+    <div class="detail-section" style="margin-top:8px">Identificación</div>
+    <div class="detail-row"><span class="dk">Boleta</span><span class="dv">${fmt(r.boleta)}</span></div>
+    <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
+    <div class="detail-section" style="margin-top:8px">Material y Destino</div>
+    <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
+    <div class="detail-row"><span class="dk">Rango</span><span class="dv">${fmt(r.rango)}</span></div>
+    <div class="detail-row"><span class="dk">Banco (Origen)</span><span class="dv">${fmt(r.banco)}</span></div>
+    <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
+    <div class="detail-section" style="margin-top:8px">Pesos</div>
+    <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tara_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.neto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.ton ? r.ton + ' ton' : '—'}</span></div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeModalForce();
+}
+function closeModalForce() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  currentModalId = null;
+}
+
+function editRecord() {
+  const r = db.find(x => x.id === currentModalId);
+  if (!r) return;
+  closeModalForce();
+  editMode = true;
+
+  const flds = {
+    'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
+    'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
+    'f-boleta': r.boleta, 'f-placas': r.placas,
+    'f-bruto':  r.bruto_kg, 'f-tara': r.tara_kg
+  };
+  Object.entries(flds).forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = v || '';
+  });
+
+  document.getElementById('f-material').value = r.material || '';
+  document.getElementById('f-banco').value    = r.banco    || '';
+  document.getElementById('f-destino').value  = r.destino  || '';
+
+  calcCiclo();
+  calcPesos();
+  updateRangos();
+  // Restaurar rango guardado por si difiere
+  setTimeout(() => {
+    if (r.rango) document.getElementById('f-rango').value = r.rango;
+  }, 30);
+
+  showTab('form');
+}
+
+function deleteRecord() {
+  if (!confirm('¿Eliminar este registro permanentemente?')) return;
+  db = db.filter(r => r.id !== currentModalId);
+  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  closeModalForce();
+  renderDB();
+}
+
+function clearDB() {
+  if (!confirm('¿Borrar TODA la base de datos? Esta acción no se puede deshacer.')) return;
+  db = [];
+  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  renderDB();
+}
+
+// ══════════════════════════════════════════════════════
+// EXPORTAR EXCEL (.xlsx)
+// ══════════════════════════════════════════════════════
+function exportExcel() {
+  if (!db.length) { alert('No hay datos para exportar.'); return; }
+  if (typeof XLSX === 'undefined') {
+    alert('La librería de Excel no está disponible. Usa Exportar CSV.');
+    return;
+  }
+
+  const headers = [
+    'Fecha 1er Pesaje', 'Hora 1er Pesaje', 'Fecha 2do Pesaje', 'Hora 2do Pesaje',
+    'Ciclo', 'Boleta', 'Placas', 'Material', 'Rango Material',
+    'Banco (Origen)', 'Destino',
+    'Peso Bruto (kg)', 'Tara (kg)', 'Peso Neto (kg)', 'Toneladas'
+  ];
+
+  const keys = [
+    'fecha1','hora1','fecha2','hora2',
+    'ciclo','boleta','placas','material','rango',
+    'banco','destino',
+    'bruto_kg','tara_kg','neto_kg','ton'
+  ];
+
+  const rows = db.map(r => keys.map(k => r[k] !== undefined && r[k] !== null ? r[k] : ''));
+
+  const wsData = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Ancho de columnas
+  const colWidths = headers.map((h, i) => ({
+    wch: Math.min(Math.max(h.length, ...rows.map(r => String(r[i]||'').length)) + 2, 30)
+  }));
+  ws['!cols'] = colWidths;
+
+  // Estilos en encabezado
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for (let C = range.s.c; C <= range.e.c; C++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: C });
+    if (!ws[addr]) continue;
+    ws[addr].s = {
+      font: { bold: true, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '0F6E56' } },
+      alignment: { horizontal: 'center' }
+    };
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Acarreos');
+
+  // Hoja de resumen
+  const totalTon = db.reduce((s, r) => s + (r.ton || 0), 0);
+  const porDestino = {};
+  db.forEach(r => {
+    const d = r.destino || 'Sin destino';
+    if (!porDestino[d]) porDestino[d] = { viajes: 0, ton: 0 };
+    porDestino[d].viajes++;
+    porDestino[d].ton += (r.ton || 0);
+  });
+  const porMaterial = {};
+  db.forEach(r => {
+    const m = r.material || 'Sin material';
+    if (!porMaterial[m]) porMaterial[m] = { viajes: 0, ton: 0 };
+    porMaterial[m].viajes++;
+    porMaterial[m].ton += (r.ton || 0);
+  });
+
+  const resumenData = [
+    ['RESUMEN GENERAL', '', ''],
+    ['', '', ''],
+    ['Total de viajes', db.length, ''],
+    ['Total toneladas', totalTon.toFixed(3), 'ton'],
+    ['Fecha generado', new Date().toLocaleString('es-MX'), ''],
+    ['', '', ''],
+    ['RESUMEN POR DESTINO', '', ''],
+    ['Destino', 'Viajes', 'Toneladas'],
+    ...Object.entries(porDestino).map(([d, v]) => [d, v.viajes, v.ton.toFixed(3)]),
+    ['', '', ''],
+    ['RESUMEN POR MATERIAL', '', ''],
+    ['Material', 'Viajes', 'Toneladas'],
+    ...Object.entries(porMaterial).map(([m, v]) => [m, v.viajes, v.ton.toFixed(3)])
+  ];
+  const wsRes = XLSX.utils.aoa_to_sheet(resumenData);
+  wsRes['!cols'] = [{ wch: 25 }, { wch: 12 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
+
+  const fecha = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, 'acarreos_' + fecha + '.xlsx');
+}
+
+// ══════════════════════════════════════════════════════
+// EXPORTAR CSV
+// ══════════════════════════════════════════════════════
+function exportCSV() {
+  if (!db.length) { alert('No hay datos para exportar.'); return; }
+  const headers = ['fecha1','hora1','fecha2','hora2','ciclo','boleta','placas','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
+  const rows = db.map(r => headers.map(h => JSON.stringify(r[h] !== undefined ? r[h] : '')).join(','));
+  const csv  = [headers.join(','), ...rows].join('\n');
+  const a    = document.createElement('a');
+  a.href     = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);
+  a.download = 'acarreos_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+}
+
+
+// ══════════════════════════════════════════════════════
+// GOOGLE SHEETS INTEGRATION
+// ══════════════════════════════════════════════════════
+const SHEETS_URL_KEY = 'acarreos_sheets_url';
+const SHEETS_SENT_KEY = 'acarreos_sheets_sent'; // IDs ya enviados
+
+function openSheetsModal() {
+  if (!db.length) { alert('No hay registros para enviar.'); return; }
+
+  // Restaurar URL guardada
+  const savedUrl = localStorage.getItem(SHEETS_URL_KEY) || 'https://script.google.com/macros/s/AKfycbzWtkSqmSNZcwFoWpoeDpn-zX98Mj09tvIXyKWV5jy6-JM0axYzzg5PY8u3lyuhwUk7xA/exec';
+  document.getElementById('sheets-url').value = savedUrl;
+
+  // Limpiar status
+  const statusEl = document.getElementById('sheets-status');
+  statusEl.style.display = 'none';
+  statusEl.className = 'sheets-status';
+
+  // Calcular pendientes (no enviados aún)
+  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
+  const pending = db.filter(r => !sentIds.includes(r.id));
+
+  const countLabel = document.getElementById('sheets-count-label');
+  const noteEl     = document.getElementById('sheets-note');
+
+  if (pending.length === 0) {
+    countLabel.innerHTML = '✅ <span style="color:var(--accent)">Todos los registros ya fueron enviados.</span>';
+    noteEl.textContent = 'No hay registros nuevos pendientes de envío.';
+    document.getElementById('btn-send-sheets').disabled = true;
+  } else {
+    countLabel.innerHTML = `<span style="color:var(--accent);font-weight:700">${pending.length}</span> registro(s) pendiente(s) de envío`;
+    noteEl.textContent = sentIds.length > 0
+      ? `(${sentIds.length} registro(s) ya enviados anteriormente se omitirán)`
+      : '';
+    document.getElementById('btn-send-sheets').disabled = false;
+  }
+
+  // Tabla preview
+  renderSheetsPreview(pending.slice(0, 10), pending.length);
+
+  document.getElementById('sheets-overlay').classList.add('open');
+}
+
+function renderSheetsPreview(records, total) {
+  const cols = [
+    ['Fecha 1', 'fecha1'], ['Hora 1', 'hora1'],
+    ['Fecha 2', 'fecha2'], ['Hora 2', 'hora2'],
+    ['Ciclo', 'ciclo'], ['Boleta', 'boleta'], ['Placas', 'placas'],
+    ['Material', 'material'], ['Rango', 'rango'],
+    ['Banco', 'banco'], ['Destino', 'destino'],
+    ['Bruto kg', 'bruto_kg'], ['Tara kg', 'tara_kg'],
+    ['Neto kg', 'neto_kg'], ['Toneladas', 'ton']
+  ];
+
+  let th = cols.map(([label]) => `<th>${label}</th>`).join('');
+  let rows = records.map(r =>
+    '<tr>' + cols.map(([, key]) => `<td>${r[key] !== undefined && r[key] !== null && r[key] !== '' ? r[key] : '—'}</td>`).join('') + '</tr>'
+  ).join('');
+
+  const extra = total > 10 ? `<tr><td colspan="${cols.length}" style="text-align:center;color:var(--text-muted);font-style:italic;padding:8px">... y ${total - 10} más</td></tr>` : '';
+
+  document.getElementById('sheets-preview-table').innerHTML =
+    `<thead><tr>${th}</tr></thead><tbody>${rows}${extra}</tbody>`;
+}
+
+function saveSheetUrl() {
+  const url = document.getElementById('sheets-url').value.trim();
+  if (!url) { alert('Ingresa la URL del script.'); return; }
+  localStorage.setItem(SHEETS_URL_KEY, url);
+  showSheetsStatus('URL guardada correctamente.', 'ok');
+}
+
+function closeSheetsModal(e) {
+  if (e && e.target !== document.getElementById('sheets-overlay')) return;
+  document.getElementById('sheets-overlay').classList.remove('open');
+}
+
+async function sendToSheets() {
+  const url = document.getElementById('sheets-url').value.trim();
+  if (!url) {
+    showSheetsStatus('Primero ingresa y guarda la URL de tu Google Apps Script.', 'err');
+    return;
+  }
+  if (!url.startsWith('https://script.google.com/macros/s/')) {
+    showSheetsStatus('La URL no parece válida. Debe empezar con https://script.google.com/macros/s/', 'err');
+    return;
+  }
+
+  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
+  const pending = db.filter(r => !sentIds.includes(r.id));
+
+  if (!pending.length) {
+    showSheetsStatus('No hay registros nuevos para enviar.', 'err');
+    return;
+  }
+
+  const btn = document.getElementById('btn-send-sheets');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Enviando...';
+
+  const rows = pending.map(r => [
+    r.fecha1||'', r.hora1||'', r.fecha2||'', r.hora2||'',
+    r.ciclo||'', r.boleta||'', r.placas||'',
+    r.material||'', r.rango||'',
+    r.banco||'', r.destino||'',
+    r.bruto_kg||0, r.tara_kg||0, r.neto_kg||0, r.ton||0
+  ]);
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows })
+    });
+
+    // no-cors siempre regresa opaque, así que asumimos éxito si no hubo error
+    const newSentIds = [...sentIds, ...pending.map(r => r.id)];
+    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(newSentIds));
+
+    showSheetsStatus(`✅ ${pending.length} registro(s) enviado(s) correctamente a Google Sheets.`, 'ok');
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Confirmar y enviar`;
+    btn.disabled = true;
+
+    // Actualizar label
+    document.getElementById('sheets-count-label').innerHTML = '✅ <span style="color:var(--accent)">Todos los registros fueron enviados.</span>';
+    document.getElementById('sheets-note').textContent = '';
+
+  } catch(err) {
+    showSheetsStatus('Error al conectar con Google Sheets: ' + err.message, 'err');
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Confirmar y enviar`;
+    btn.disabled = false;
+  }
+}
+
+function showSheetsStatus(msg, type) {
+  const el = document.getElementById('sheets-status');
+  el.textContent = msg;
+  el.className = 'sheets-status ' + type;
+  el.style.display = 'block';
+}
+
+// Guardar URL por defecto si no hay ninguna guardada
+if (!localStorage.getItem('acarreos_sheets_url')) {
+  localStorage.setItem('acarreos_sheets_url', 'https://script.google.com/macros/s/AKfycbzWtkSqmSNZcwFoWpoeDpn-zX98Mj09tvIXyKWV5jy6-JM0axYzzg5PY8u3lyuhwUk7xA/exec');
+}
+// Render inicial
+renderDB();
+</script>
+
+<!-- MODAL GOOGLE SHEETS -->
+<div class="modal-overlay" id="sheets-overlay" onclick="closeSheetsModal(event)">
+  <div class="sheets-modal">
+    <div class="modal-header">
+      <h2 style="display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0F9D58" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        Enviar a Google Sheets
+      </h2>
+      <button class="modal-close" onclick="closeSheetsModal()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- URL del script -->
+    <div class="url-hint">
+      <strong>URL de tu Google Apps Script:</strong><br>
+      Pega aquí la URL del Web App que obtuviste al publicar tu script.<br>
+      Se guarda automáticamente en este dispositivo.
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <input type="text" id="sheets-url" placeholder="https://script.google.com/macros/s/..." style="flex:1;height:38px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:12px;background:var(--surface);"/>
+      <button class="btn btn-secondary" style="flex:0;padding:0 14px;font-size:12px" onclick="saveSheetUrl()">Guardar URL</button>
+    </div>
+
+    <!-- Status -->
+    <div class="sheets-status" id="sheets-status"></div>
+
+    <!-- Resumen y preview -->
+    <div id="sheets-preview-section">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;" id="sheets-count-label"></div>
+      <div class="sheets-preview-wrap">
+        <table class="sheets-preview-table" id="sheets-preview-table"></table>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px;" id="sheets-note"></div>
+    </div>
+
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-secondary" onclick="closeSheetsModal()" style="flex:1">Cancelar</button>
+      <button class="btn btn-sheets" onclick="sendToSheets()" id="btn-send-sheets" style="flex:2">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        Confirmar y enviar
+      </button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

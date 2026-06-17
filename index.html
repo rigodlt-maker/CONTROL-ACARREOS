@@ -662,8 +662,40 @@ function saveRecord() {
   }
 
   localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  autoEnviarSheets(data);  // ← LÍNEA NUEVA
   clearForm();
   showTab('db');
+}
+
+// ══════════════════════════════════════════════════════
+// AUTO-ENVÍO A SHEETS AL GUARDAR
+// ══════════════════════════════════════════════════════
+async function autoEnviarSheets(registro) {
+  const url = localStorage.getItem(SHEETS_URL_KEY) || '';
+  if (!url || !url.startsWith('https://script.google.com/macros/s/')) return;
+
+  const row = [
+    registro.fecha1||'', registro.hora1||'', registro.fecha2||'', registro.hora2||'',
+    registro.ciclo||'', registro.boleta||'', registro.placas||'',
+    registro.material||'', registro.rango||'',
+    registro.banco||'', registro.destino||'',
+    registro.bruto_kg||0, registro.tara_kg||0, registro.neto_kg||0, registro.ton||0
+  ];
+
+  try {
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: [row] })
+    });
+    // Marcar como enviado para que el botón manual no lo duplique
+    const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
+    sentIds.push(registro.id);
+    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(sentIds));
+  } catch(e) {
+    console.warn('Auto-envío falló, se enviará manualmente:', e);
+  }
 }
 
 // ══════════════════════════════════════════════════════

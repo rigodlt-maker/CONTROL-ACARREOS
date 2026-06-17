@@ -130,6 +130,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 /* ── SHEETS MODAL ── */
 .sheets-modal { background: var(--surface); border-radius: 16px 16px 0 0; width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 0; }
 
+/* ── SYNC STATUS TOAST ── */
+#sync-toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #1a1a18; color: white; padding: 8px 16px; border-radius: 20px; font-size: 12px; display: none; align-items: center; gap: 7px; z-index: 9999; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+#sync-toast.show { display: flex; }
+#sync-toast.ok { background: var(--accent); }
+#sync-toast.err { background: var(--danger); }
+#sync-toast.pending { background: #555; }
+
 /* ── GOOGLE SHEETS ── */
 .btn-sheets { background: #0F9D58; color: white; border-color: #0F9D58; }
 .btn-sheets:active { background: #0b7a44; }
@@ -598,8 +605,11 @@ function saveRecord() {
   }
 
   localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  const wasNew = !editMode;
   clearForm();
   showTab('db');
+  // Envío automático en segundo plano (solo registros nuevos, no ediciones)
+  if (wasNew) autoSyncToSheets(data);
 }
 
 // ══════════════════════════════════════════════════════
@@ -971,10 +981,56 @@ function showSheetsStatus(msg, type) {
   el.style.display = 'block';
 }
 
-// Guardar URL por defecto si no hay ninguna guardada
-if (!localStorage.getItem('acarreos_sheets_url')) {
-  localStorage.setItem('acarreos_sheets_url', 'https://script.google.com/macros/s/AKfycbzWtkSqmSNZcwFoWpoeDpn-zX98Mj09tvIXyKWV5jy6-JM0axYzzg5PY8u3lyuhwUk7xA/exec');
+// ══════════════════════════════════════════════════════
+// AUTO-SYNC: envío silencioso en segundo plano
+// ══════════════════════════════════════════════════════
+let syncToastTimer = null;
+
+function showSyncToast(icon, msg, type, duration = 3000) {
+  const toast = document.getElementById('sync-toast');
+  document.getElementById('sync-icon').textContent = icon;
+  document.getElementById('sync-msg').textContent = msg;
+  toast.className = 'show ' + type;
+  if (syncToastTimer) clearTimeout(syncToastTimer);
+  syncToastTimer = setTimeout(() => { toast.className = ''; }, duration);
 }
+
+async function autoSyncToSheets(record) {
+  const url = localStorage.getItem(SHEETS_URL_KEY) || '';
+  if (!url) return; // sin URL configurada, no hacer nada
+
+  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
+  if (sentIds.includes(record.id)) return; // ya enviado
+
+  showSyncToast('⏳', 'Guardando en Google Sheets…', 'pending', 99999);
+
+  const row = [
+    record.fecha1||'', record.hora1||'', record.fecha2||'', record.hora2||'',
+    record.ciclo||'', record.boleta||'', record.placas||'',
+    record.material||'', record.rango||'',
+    record.banco||'', record.destino||'',
+    record.bruto_kg||0, record.tara_kg||0, record.neto_kg||0, record.ton||0
+  ];
+
+  try {
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: [row] })
+    });
+    // no-cors siempre regresa opaque — asumimos éxito si no lanzó error
+    const newSentIds = [...sentIds, record.id];
+    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(newSentIds));
+    showSyncToast('✅', 'Guardado en Google Sheets', 'ok');
+  } catch(err) {
+    // Sin internet u otro error — se intentará después desde el modal
+    showSyncToast('⚠️', 'Sin conexión. Pendiente de sincronizar.', 'err');
+  }
+}
+
+// URL del script de Google Sheets (siempre actualizada)
+localStorage.setItem('acarreos_sheets_url', 'https://script.google.com/macros/s/AKfycbyBMxk0WzIfSafi96EKdFKSzUGjFJG0BZuy4fot7eExlc8rtEcjl0NJKx1JB2SkcGUskw/exec');
 // Render inicial
 renderDB();
 </script>
@@ -1014,6 +1070,12 @@ renderDB();
     </div>
 
   </div>
+</div>
+
+<!-- Sync toast -->
+<div id="sync-toast">
+  <span id="sync-icon">⏳</span>
+  <span id="sync-msg">Sincronizando con Sheets...</span>
 </div>
 
 <!-- PWA Install Banner -->

@@ -255,7 +255,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
       </div>
       <div>
         <label>Rango de material</label>
-        <input type="text" id="f-rango" class="calc-field-neutral" readonly placeholder="Selecciona destino y material"/>
+        <input type="text" id="f-rango" class="calc-field-neutral" readonly placeholder="Selecciona destino y material" style="display:block"/>
+        <select id="f-rango-select" style="display:none;width:100%;height:38px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);color:var(--text);">
+          <option value="">— Seleccionar rango —</option>
+        </select>
       </div>
     </div>
     <div class="range-hint" id="range-hint"></div>
@@ -273,7 +276,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
         <label>Destino *</label>
         <select id="f-destino" onchange="updateRangos()">
           <option value="">— Seleccionar —</option>
-          <option value="ACOPIO">Acopio</option>
+          <option value="ACOPIO MARINO">Acopio Marino</option>
+          <option value="ACOPIO TERRESTRE">Acopio Terrestre</option>
           <option value="MURO">Muro</option>
           <option value="CUERPO 1">Cuerpo 1</option>
           <option value="CUERPO 2">Cuerpo 2</option>
@@ -435,6 +439,19 @@ const RANGOS = {
 };
 
 // ══════════════════════════════════════════════════════
+// RANGOS PARA ACOPIO: material → lista de opciones
+// (todos los rangos posibles de ese material, sin duplicados)
+// ══════════════════════════════════════════════════════
+const RANGOS_ACOPIO = {
+  'NUCLEO':         ['0.02 a 0.20 ton', '0.01 a 0.50 ton'],
+  'SECUNDARIA 2':   ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton'],
+  'SECUNDARIA 1':   ['0.30 a 0.50 ton', '0.50 a 1.00 ton', '0.80 a 1.50 ton', '1.00 a 2.00 ton', '1.20 a 2.30 ton', '1.50 a 3.00 ton'],
+  'CORAZA':         ['5.8 ton', '10 ton', '16 ton', '19 ton'],
+  'BERMA':          ['0.30 a 0.50 ton', '0.50 a 1.00 ton', '0.80 a 1.50 ton', '1.00 a 2.00 ton', '1.20 a 2.30 ton', '1.50 a 3.00 ton'],
+  'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
+};
+
+// ══════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════
 let db = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
@@ -507,22 +524,54 @@ function calcPesos() {
 
 // Actualiza el rango de material según destino + material
 function updateRangos() {
-  const destino  = document.getElementById('f-destino').value;
-  const material = document.getElementById('f-material').value;
-  const rangoEl  = document.getElementById('f-rango');
-  const hintEl   = document.getElementById('range-hint');
+  const destino      = document.getElementById('f-destino').value;
+  const material     = document.getElementById('f-material').value;
+  const rangoEl      = document.getElementById('f-rango');
+  const rangoSelEl   = document.getElementById('f-rango-select');
+  const hintEl       = document.getElementById('range-hint');
+
+  // ── Limpiar estado ──
+  rangoEl.value = '';
+  rangoSelEl.innerHTML = '<option value="">— Seleccionar rango —</option>';
+  hintEl.style.display = 'none';
 
   if (!destino || !material) {
-    rangoEl.value = '';
-    hintEl.style.display = 'none';
+    rangoEl.style.display    = 'block';
+    rangoSelEl.style.display = 'none';
     return;
   }
 
+  // ── ACOPIO: mostrar selector con opciones del material ──
+  if (destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE') {
+    rangoEl.style.display    = 'none';
+    rangoSelEl.style.display = 'block';
+    const opciones = RANGOS_ACOPIO[material];
+    if (opciones && opciones.length) {
+      opciones.forEach(op => {
+        const opt = document.createElement('option');
+        opt.value = op;
+        opt.textContent = op;
+        rangoSelEl.appendChild(opt);
+      });
+      hintEl.style.display = 'block';
+      hintEl.innerHTML = `<strong>${destino} / ${material}:</strong> Selecciona el rango que corresponde.`;
+    } else {
+      const opt = document.createElement('option');
+      opt.value = 'Sin rango para este material';
+      opt.textContent = 'Sin rango para este material';
+      rangoSelEl.appendChild(opt);
+      rangoSelEl.value = 'Sin rango para este material';
+    }
+    return;
+  }
+
+  // ── Otros destinos: rango automático (solo lectura) ──
+  rangoEl.style.display    = 'block';
+  rangoSelEl.style.display = 'none';
+
   const destinoRangos = RANGOS[destino];
   if (!destinoRangos) {
-    // Destinos sin tabla (ACOPIO)
     rangoEl.value = 'Sin rango definido';
-    hintEl.style.display = 'none';
     return;
   }
 
@@ -533,7 +582,6 @@ function updateRangos() {
     hintEl.innerHTML = `<strong>Rango ${destino} / ${material}:</strong> ${rango}`;
   } else {
     rangoEl.value = 'Sin rango para esta combinación';
-    hintEl.style.display = 'none';
   }
 }
 
@@ -554,7 +602,9 @@ function getFormData() {
     boleta:   document.getElementById('f-boleta').value.trim(),
     placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
     material: document.getElementById('f-material').value,
-    rango:    document.getElementById('f-rango').value,
+    rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(document.getElementById('f-destino').value)
+                ? document.getElementById('f-rango-select').value
+                : document.getElementById('f-rango').value,
     banco:    document.getElementById('f-banco').value,
     destino:  document.getElementById('f-destino').value,
     bruto_kg: bruto,
@@ -575,6 +625,10 @@ function clearForm() {
   document.getElementById('f-destino').selectedIndex  = 0;
   document.getElementById('f-ciclo').value  = '';
   document.getElementById('f-rango').value  = '';
+  document.getElementById('f-rango').style.display = 'block';
+  const sel = document.getElementById('f-rango-select');
+  sel.innerHTML = '<option value="">— Seleccionar rango —</option>';
+  sel.style.display = 'none';
   document.getElementById('range-hint').style.display = 'none';
   document.getElementById('neto-display').textContent = '—';
   document.getElementById('ton-display').textContent  = '—';
@@ -718,9 +772,15 @@ function editRecord() {
   calcCiclo();
   calcPesos();
   updateRangos();
-  // Restaurar rango guardado por si difiere
+  // Restaurar rango guardado
   setTimeout(() => {
-    if (r.rango) document.getElementById('f-rango').value = r.rango;
+    if (r.rango) {
+      if (r.destino === 'ACOPIO MARINO' || r.destino === 'ACOPIO TERRESTRE') {
+        document.getElementById('f-rango-select').value = r.rango;
+      } else {
+        document.getElementById('f-rango').value = r.rango;
+      }
+    }
   }, 30);
 
   showTab('form');

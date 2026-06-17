@@ -339,7 +339,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
   </div>
   <div class="filter-row">
     <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="renderDB()"/>
+    <button class="btn btn-secondary" id="btn-refresh-db" onclick="fetchSheetsDB(true)" style="flex:0;padding:0 12px" title="Actualizar con los registros de todos">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
+    </button>
   </div>
+  <div id="sync-db-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
   <div id="records-list"></div>
   <div class="export-bar">
     <button class="btn btn-excel" onclick="exportExcel()" style="flex:1">
@@ -464,7 +468,10 @@ function showTab(t) {
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + t).classList.add('active');
   document.getElementById('t-' + t).classList.add('active');
-  if (t === 'db') renderDB();
+  if (t === 'db') {
+    renderDB();
+    fetchSheetsDB(false); // sincroniza en segundo plano, sin bloquear la vista local
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -954,6 +961,85 @@ function exportCSV() {
 // ══════════════════════════════════════════════════════
 const SHEETS_URL_KEY = 'acarreos_sheets_url';
 const SHEETS_SENT_KEY = 'acarreos_sheets_sent'; // IDs ya enviados
+
+// ══════════════════════════════════════════════════════
+// SINCRONIZACIÓN REAL: lee todos los registros desde el
+// Sheet (vía GET ?action=list) y los mezcla con lo que haya
+// en local. Esto es lo que convierte la base de datos en
+// una base CONJUNTA, visible igual en cualquier dispositivo.
+// ══════════════════════════════════════════════════════
+let isSyncingDB = false;
+
+function recordKey(r) {
+  // Clave única basada en datos del registro (no en el id local,
+  // que es solo Date.now() y no existe en lo que viene del Sheet).
+  return [r.boleta, r.fecha1, r.hora1].join('|');
+}
+
+async function fetchSheetsDB(isManual) {
+  const url = localStorage.getItem(SHEETS_URL_KEY) || '';
+  if (!url || !url.startsWith('https://script.google.com/macros/s/')) {
+    if (isManual) showSyncToast('⚠️', 'URL de Sheets no configurada.', 'err');
+    return;
+  }
+  if (isSyncingDB) return;
+  isSyncingDB = true;
+
+  const noteEl = document.getElementById('sync-db-note');
+  const btnEl  = document.getElementById('btn-refresh-db');
+  if (noteEl) noteEl.textContent = 'Actualizando con los registros de todos…';
+  if (btnEl) btnEl.disabled = true;
+
+  try {
+    const resp = await fetch(url + '?action=list', { method: 'GET' });
+    const data = await resp.json();
+
+    if (!data.ok) throw new Error(data.error || 'Respuesta inválida del servidor');
+
+    const remoteRecords = data.records || [];
+
+    // Mapa de lo que ya tenemos en local, por clave única
+    const localByKey = new Map(db.map(r => [recordKey(r), r]));
+
+    remoteRecords.forEach(rem => {
+      const key = recordKey(rem);
+      const existing = localByKey.get(key);
+      const merged = {
+        id:       existing ? existing.id : ('remote_' + key),
+        fecha1:   rem.fecha1, hora1: rem.hora1,
+        fecha2:   rem.fecha2, hora2: rem.hora2,
+        ciclo:    rem.ciclo,
+        boleta:   rem.boleta,
+        placas:   rem.placas,
+        material: rem.material,
+        rango:    rem.rango,
+        banco:    rem.banco,
+        destino:  rem.destino,
+        bruto_kg: parseFloat(rem.bruto_kg) || 0,
+        tara_kg:  parseFloat(rem.tara_kg)  || 0,
+        neto_kg:  parseFloat(rem.neto_kg)  || 0,
+        ton:      parseFloat(rem.ton)      || 0,
+        ts:       existing ? existing.ts : null
+      };
+      localByKey.set(key, merged);
+    });
+
+    db = Array.from(localByKey.values());
+    localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+
+    if (noteEl) noteEl.textContent = '✅ Sincronizado · ' + db.length + ' registro(s) en total (de todos los dispositivos).';
+    if (isManual) showSyncToast('✅', 'Base de datos actualizada', 'ok');
+    renderDB();
+
+  } catch (err) {
+    if (noteEl) noteEl.textContent = '⚠️ No se pudo sincronizar (sin conexión o error). Mostrando datos locales.';
+    if (isManual) showSyncToast('⚠️', 'Error al sincronizar: ' + err.message, 'err');
+  } finally {
+    isSyncingDB = false;
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
 
 function openSheetsModal() {
   if (!db.length) { alert('No hay registros para enviar.'); return; }

@@ -293,6 +293,7 @@ window.logoutUsuario = async function() {
   if (unsubUsers)  { unsubUsers();  unsubUsers  = null; }
   isInitialized = false;
   db = [];
+  window.db = db; // 🦍 <--- LÍNEA AGREGADA: Limpia la copia pública al cerrar sesión
   await signOut(auth);
 }
 
@@ -393,6 +394,8 @@ function startRealtimeSync() {
   unsubscribe = onSnapshot(q,
     (snapshot) => {
       db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
+      window.db = db; // 🦍 <--- LÍNEA AGREGADA: Mantiene la copia pública actualizada
+
       if (!isInitialized) {
         isInitialized = true;
         appReady();

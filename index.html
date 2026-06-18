@@ -191,6 +191,7 @@ const COL_USERS  = "usuarios";
 
 // ─── ESTADO LOCAL ─────────────────────────────────────
 let db             = [];
+  window.db          = db;
 let unsubscribe    = null;
 let unsubUsers     = null;
 let isInitialized  = false;
@@ -238,8 +239,6 @@ window.switchAuthTab = function(tab) {
 }
 
 // ─── REGISTRAR USUARIO ────────────────────────────────
-// 🦍 AQUI ESTA EL CAMBIO QUE DEBES HACER 🦍
-// Cambia "TUCORREO@gmail.com" por tu verdadero correo.
 const ADMIN_EMAILS = ["rodrigo.delatorre.indi@gmail.com"]; 
 
 window.registrarUsuario = async function() {
@@ -295,7 +294,7 @@ window.logoutUsuario = async function() {
   if (unsubUsers)  { unsubUsers();  unsubUsers  = null; }
   isInitialized = false;
   db = [];
-  window.db = db; // 🦍 <--- LÍNEA AGREGADA: Limpia la copia pública al cerrar sesión
+  window.db = db;
   await signOut(auth);
 }
 
@@ -396,7 +395,7 @@ function startRealtimeSync() {
   unsubscribe = onSnapshot(q,
     (snapshot) => {
       db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
-      window.db = db; // 🦍 <--- LÍNEA AGREGADA: Mantiene la copia pública actualizada
+      window.db = db;
 
       if (!isInitialized) {
         isInitialized = true;
@@ -547,14 +546,14 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
     <div class="detail-section" style="margin-top:8px">Pesos</div>
     <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tara_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.neto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tarakg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.netokg,' kg')}</span></div>
     <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.ton ? r.ton + ' ton' : '—'}</span></div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-// ─── EXPORTAR EXCEL ───────────────────────────────────
+// ─── EXPORTAR EXCEL (Reporte completo) ────────────────
 window.exportExcel = function() {
   if (!db.length) { alert('No hay datos para exportar.'); return; }
   if (typeof XLSX === 'undefined') { alert('Librería Excel no disponible. Usa CSV.'); return; }
@@ -581,6 +580,45 @@ window.exportExcel = function() {
   XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
   XLSX.writeFile(wb, 'acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
 }
+
+// ─── EXPORTAR TABLA EJECUTIVA PARA DIRECCIÓN ───────────
+window.exportarExcelAcarreos = function() {
+  if (!window.db || window.db.length === 0) {
+    alert("No hay datos cargados para exportar.");
+    return;
+  }
+
+  const datosFormateados = window.db.map((r, index) => ({
+    "Boleta": r.boleta || "S/B",
+    "Placas": r.placas || "—",
+    "Material": r.material || "—",
+    "Rango Material": r.rango || "—",
+    "Banco (Origen)": r.banco || "—",
+    "Destino": r.destino || "—",
+    "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+    "Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
+    "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
+    "Toneladas": r.ton || "0",
+    "1er Pesaje": (r.fecha1 ? r.fecha1 + ' ' + (r.hora1 || '') : '—'),
+    "2do Pesaje": (r.fecha2 ? r.fecha2 + ' ' + (r.hora2 || '') : '—'),
+    "Ciclo": r.ciclo || "—"
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(datosFormateados);
+  const workbook = XLSX.utils.book_new();
+  
+  worksheet['!cols'] = [
+    {wch: 12}, {wch: 15}, {wch: 18}, {wch: 20}, {wch: 16}, 
+    {wch: 16}, {wch: 15}, {wch: 12}, {wch: 15}, {wch: 12}, 
+    {wch: 18}, {wch: 18}, {wch: 12}
+  ];
+
+  const fechaStr = new Date().toISOString().slice(0, 10);
+  const nombreArchivo = `Reporte_Acarreos_Ejecutivo_${fechaStr}.xlsx`;
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
+  XLSX.writeFile(workbook, nombreArchivo);
+};
 
 // ─── EXPORTAR CSV ─────────────────────────────────────
 window.exportCSV = function() {
@@ -890,6 +928,12 @@ function updateSyncNote(msg) {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Exportar Excel (.xlsx)
     </button>
+    
+    <button onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Reporte Dirección (.xlsx)
+    </button>
+
     <button class="btn btn-secondary" onclick="exportCSV()" style="flex:1">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Exportar CSV
@@ -1224,4 +1268,3 @@ const firebaseConfig = {
 
 </body>
 </html>
-

@@ -339,6 +339,12 @@ onAuthStateChanged(auth, async (user) => {
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
 
+    // 🦍 PASO B: Mostrar botonera de reportes SOLAMENTE si es admin 🦍
+    const exportBar = document.getElementById('export-bar-actions');
+    if (exportBar) {
+      exportBar.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
+    }
+
     startRealtimeSync();
   } catch (e) {
     appError('Error al verificar tu cuenta: ' + e.message);
@@ -546,8 +552,8 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
     <div class="detail-section" style="margin-top:8px">Pesos</div>
     <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tarakg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.netokg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tara_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.neto_kg,' kg')}</span></div>
     <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.ton ? r.ton + ' ton' : '—'}</span></div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
@@ -828,7 +834,7 @@ function updateSyncNote(msg) {
           <option value="BERMA">Berma</option>
           <option value="BERMA DE APOYO">Berma de apoyo</option>
           <option value="SECUNDARIA 1">Secundaria 1</option>
-          <option value="SECUNDARIA 2">Secundaria 2</option>
+          <option value="SECUNDARIA 2">SECUNDARIA 2</option>
           <option value="CORAZA">Coraza</option>
         </select>
       </div>
@@ -923,7 +929,8 @@ function updateSyncNote(msg) {
   </div>
   <div id="sync-db-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
   <div id="records-list"></div>
-  <div class="export-bar">
+  
+  <div class="export-bar" id="export-bar-actions" style="display: none;">
     <button class="btn btn-excel" onclick="exportExcel()" style="flex:1">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Exportar Excel (.xlsx)
@@ -942,6 +949,7 @@ function updateSyncNote(msg) {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
     </button>
   </div>
+
   <div style="padding: 8px 0 4px;">
     <button class="btn btn-secondary" onclick="migrarLocalStorage()" style="width:100%">
       ⬆️ Migrar datos locales a Firestore (solo una vez)

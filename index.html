@@ -470,6 +470,45 @@ let db = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
 let currentModalId = null;
 let editMode = false;
 
+// ── FIX 1: escritura segura a localStorage con detección de cuota ──
+function saveDB() {
+  try {
+    const serialized = JSON.stringify(db);
+    // Advertir si el almacenamiento supera el 80% de ~5 MB
+    const bytes = new Blob([serialized]).size;
+    if (bytes > 4 * 1024 * 1024) {
+      console.warn('⚠️ localStorage cerca del límite:', (bytes / 1024 / 1024).toFixed(2), 'MB');
+      showSyncToast('⚠️', 'Almacenamiento local casi lleno. Exporta y limpia registros antiguos.', 'err', 6000);
+    }
+    localStorage.setItem('acarreos_db_v3', serialized);
+    return true;
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      alert('⚠️ Almacenamiento lleno. El registro NO se guardó localmente.\n\nExporta los datos a Excel o CSV y elimina registros antiguos para liberar espacio.');
+    } else {
+      alert('Error al guardar: ' + e.message);
+    }
+    return false;
+  }
+}
+
+// ── FIX 3: sentIds como objeto {} para lookup O(1) ──
+function getSentSet() {
+  try {
+    return JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '{}');
+  } catch { return {}; }
+}
+function addToSentSet(ids) {
+  const set = getSentSet();
+  ids.forEach(id => { set[id] = 1; });
+  try {
+    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(set));
+  } catch(e) { console.warn('No se pudo guardar sentSet:', e); }
+}
+function isAlreadySent(id) {
+  return !!getSentSet()[id];
+}
+
 // ── Tabs ──
 function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -676,7 +715,7 @@ function saveRecord() {
     db.unshift(data);
   }
 
-  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  saveDB();
   autoEnviarSheets(data);  // ← LÍNEA NUEVA
   clearForm();
   showTab('db');
@@ -705,9 +744,7 @@ async function autoEnviarSheets(registro) {
       body: JSON.stringify({ rows: [row] })
     });
     // Marcar como enviado para que el botón manual no lo duplique
-    const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
-    sentIds.push(registro.id);
-    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(sentIds));
+    addToSentSet([registro.id]);
   } catch(e) {
     console.warn('Auto-envío falló, se enviará manualmente:', e);
   }
@@ -727,29 +764,13 @@ function fmtFecha(val) {
 // ══════════════════════════════════════════════════════
 // BASE DE DATOS
 // ══════════════════════════════════════════════════════
-function renderDB() {
-  const q = (document.getElementById('filter-input').value || '').toLowerCase();
-  const filtered = db.filter(r =>
-    ['boleta','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
-  );
+// ── FIX 2: paginación — se renderizan PAGE_SIZE registros a la vez ──
+const PAGE_SIZE = 50;
+let dbPage = 0;         // página actual
+let dbFiltered = [];    // resultado filtrado completo (solo referencias)
 
-  const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
-  document.getElementById('stat-total').textContent     = filtered.length;
-  document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
-
-  const list = document.getElementById('records-list');
-  if (!filtered.length) {
-    list.innerHTML = `<div class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-        <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/>
-        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
-      </svg>
-      <p>${db.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros.<br>Ve a Captura para agregar el primero.'}</p>
-    </div>`;
-    return;
-  }
-
-  list.innerHTML = filtered.map(r => `
+function recordCardHTML(r) {
+  return `
     <div class="record" onclick="openModal(${r.id})">
       <div class="rec-main">
         <div class="rec-boleta">Boleta #${r.boleta}</div>
@@ -764,7 +785,49 @@ function renderDB() {
         <div class="fecha">${fmtFecha(r.fecha1)}</div>
         ${r.ciclo ? '<div class="fecha" style="margin-top:1px">⏱ '+r.ciclo+'</div>' : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+}
+
+function renderDB(resetPage) {
+  if (resetPage !== false) dbPage = 0;   // resetear al filtrar
+
+  const q = (document.getElementById('filter-input').value || '').toLowerCase();
+  dbFiltered = db.filter(r =>
+    ['boleta','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
+  );
+
+  const totalKg = dbFiltered.reduce((s, r) => s + (r.neto_kg || 0), 0);
+  document.getElementById('stat-total').textContent     = dbFiltered.length;
+  document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
+
+  const list = document.getElementById('records-list');
+
+  if (!dbFiltered.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/>
+        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+      </svg>
+      <p>${db.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros.<br>Ve a Captura para agregar el primero.'}</p>
+    </div>`;
+    return;
+  }
+
+  const visibles = dbFiltered.slice(0, (dbPage + 1) * PAGE_SIZE);
+  const hayMas   = visibles.length < dbFiltered.length;
+  const faltantes = dbFiltered.length - visibles.length;
+
+  list.innerHTML = visibles.map(recordCardHTML).join('') + (hayMas ? `
+    <div style="text-align:center;padding:12px 0;">
+      <button onclick="loadMoreDB()" style="background:var(--surface);border:1px solid var(--border);color:var(--accent);font-weight:600;font-size:13px;padding:10px 24px;border-radius:var(--radius);cursor:pointer;">
+        Ver ${Math.min(PAGE_SIZE, faltantes)} más de ${faltantes} restantes
+      </button>
+    </div>` : '');
+}
+
+function loadMoreDB() {
+  dbPage++;
+  renderDB(false);   // false = no resetear la página
 }
 
 function openModal(id) {
@@ -847,7 +910,7 @@ function editRecord() {
 function deleteRecord() {
   if (!confirm('¿Eliminar este registro permanentemente?')) return;
   db = db.filter(r => r.id !== currentModalId);
-  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  saveDB();
   closeModalForce();
   renderDB();
 }
@@ -855,7 +918,7 @@ function deleteRecord() {
 function clearDB() {
   if (!confirm('¿Borrar TODA la base de datos? Esta acción no se puede deshacer.')) return;
   db = [];
-  localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+  saveDB();
   renderDB();
 }
 
@@ -1033,7 +1096,7 @@ async function fetchSheetsDB(isManual) {
     });
 
     db = Array.from(localByKey.values());
-    localStorage.setItem('acarreos_db_v3', JSON.stringify(db));
+    saveDB();
 
     if (noteEl) noteEl.textContent = '✅ Sincronizado · ' + db.length + ' registro(s) en total (de todos los dispositivos).';
     if (isManual) showSyncToast('✅', 'Base de datos actualizada', 'ok');
@@ -1057,9 +1120,10 @@ function openSheetsModal() {
   statusEl.style.display = 'none';
   statusEl.className = 'sheets-status';
 
-  // Calcular pendientes
-  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
-  const pending = db.filter(r => !sentIds.includes(r.id));
+  // Calcular pendientes — lookup O(1) con objeto {}
+  const sentSet    = getSentSet();
+  const sentCount  = Object.keys(sentSet).length;
+  const pending    = db.filter(r => !sentSet[r.id]);
 
   const countLabel = document.getElementById('sheets-count-label');
   const noteEl     = document.getElementById('sheets-note');
@@ -1071,7 +1135,7 @@ function openSheetsModal() {
     btn.disabled = true;
   } else {
     countLabel.innerHTML = `<span style="color:var(--accent);font-weight:700">${pending.length}</span> registro(s) listo(s) para enviar`;
-    noteEl.textContent = sentIds.length > 0 ? `(${sentIds.length} ya enviado(s) anteriormente se omitirán)` : '';
+    noteEl.textContent = sentCount > 0 ? `(${sentCount} ya enviado(s) anteriormente se omitirán)` : '';
     btn.disabled = false;
   }
 
@@ -1124,8 +1188,8 @@ async function sendToSheets() {
     return;
   }
 
-  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
-  const pending = db.filter(r => !sentIds.includes(r.id));
+  const sentSet = getSentSet();
+  const pending = db.filter(r => !sentSet[r.id]);
 
   if (!pending.length) {
     showSheetsStatus('No hay registros nuevos para enviar.', 'err');
@@ -1153,8 +1217,7 @@ async function sendToSheets() {
     });
 
     // no-cors siempre regresa opaque, así que asumimos éxito si no hubo error
-    const newSentIds = [...sentIds, ...pending.map(r => r.id)];
-    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(newSentIds));
+    addToSentSet(pending.map(r => r.id));
 
     showSheetsStatus(`✅ ${pending.length} registro(s) enviado(s) correctamente a Google Sheets.`, 'ok');
     btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Confirmar y enviar`;
@@ -1196,8 +1259,7 @@ async function autoSyncToSheets(record) {
   const url = localStorage.getItem(SHEETS_URL_KEY) || '';
   if (!url) return; // sin URL configurada, no hacer nada
 
-  const sentIds = JSON.parse(localStorage.getItem(SHEETS_SENT_KEY) || '[]');
-  if (sentIds.includes(record.id)) return; // ya enviado
+  if (isAlreadySent(record.id)) return; // ya enviado
 
   showSyncToast('⏳', 'Guardando en Google Sheets…', 'pending', 99999);
 
@@ -1217,8 +1279,7 @@ async function autoSyncToSheets(record) {
       body: JSON.stringify({ rows: [row] })
     });
     // no-cors siempre regresa opaque — asumimos éxito si no lanzó error
-    const newSentIds = [...sentIds, record.id];
-    localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(newSentIds));
+    addToSentSet([record.id]);
     showSyncToast('✅', 'Guardado en Google Sheets', 'ok');
   } catch(err) {
     // Sin internet u otro error — se intentará después desde el modal
@@ -1228,6 +1289,25 @@ async function autoSyncToSheets(record) {
 
 // URL del script de Google Sheets (siempre actualizada)
 localStorage.setItem('acarreos_sheets_url', 'https://script.google.com/macros/s/AKfycbwE0uuVL4nrmK67BWNAUvGSMBq7_gY8v3PsRcByfd7L0K6PAZN0xy2flt_EA-FrUFYp7Q/exec');
+
+// ── Migración automática: sentIds array → objeto {} (se ejecuta una sola vez) ──
+(function migrateSentIds() {
+  try {
+    const raw = localStorage.getItem(SHEETS_SENT_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Formato antiguo: convertir a objeto
+      const obj = {};
+      parsed.forEach(id => { obj[id] = 1; });
+      localStorage.setItem(SHEETS_SENT_KEY, JSON.stringify(obj));
+      console.log('✅ sentIds migrado a formato objeto (' + parsed.length + ' IDs)');
+    }
+  } catch(e) {
+    console.warn('Error en migración sentIds:', e);
+  }
+})();
+
 // Render inicial
 renderDB();
 </script>

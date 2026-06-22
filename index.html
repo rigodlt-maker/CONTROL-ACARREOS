@@ -426,6 +426,8 @@ function startRealtimeSync() {
 window.saveRecord = async function() {
   const data = getFormData();
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
+  if (!data.folio)        { alert('Ingresa el folio.'); return; }
+  if (!data.economico)    { alert('Ingresa el # económico.'); return; }
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
   if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
   if (!data.fecha2)       { alert('Ingresa la fecha del 2do pesaje.'); return; }
@@ -481,7 +483,8 @@ window.editRecord = function() {
   const flds = {
     'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
     'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
-    'f-boleta': r.boleta, 'f-placas': r.placas,
+    'f-boleta': r.boleta, 'f-folio': r.folio, 'f-economico': r.economico,
+    'f-placas': r.placas,
     'f-bruto':  r.bruto_kg, 'f-tara': r.tara_kg
   };
   Object.entries(flds).forEach(([id, v]) => {
@@ -544,7 +547,9 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Ciclo</span><span class="dv">${fmt(r.ciclo)}</span></div>
     <div class="detail-section" style="margin-top:8px">Identificación</div>
     <div class="detail-row"><span class="dk">Boleta</span><span class="dv">${fmt(r.boleta)}</span></div>
+    <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
     <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
+    <div class="detail-row"><span class="dk"># Económico</span><span class="dv">${fmt(r.economico)}</span></div>
     <div class="detail-section" style="margin-top:8px">Material y Destino</div>
     <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
     <div class="detail-row"><span class="dk">Rango</span><span class="dv">${fmt(r.rango)}</span></div>
@@ -564,8 +569,8 @@ window.exportExcel = function() {
   if (!db.length) { alert('No hay datos para exportar.'); return; }
   if (typeof XLSX === 'undefined') { alert('Librería Excel no disponible. Usa CSV.'); return; }
   
-  const headers = ['Fecha 1er Pesaje','Hora 1er Pesaje','Fecha 2do Pesaje','Hora 2do Pesaje','Ciclo','Boleta','Placas','Material','Rango Material','Banco (Origen)','Destino','Peso Bruto (kg)','Tara (kg)','Peso Neto (kg)','Toneladas'];
-  const keys    = ['fecha1','hora1','fecha2','hora2','ciclo','boleta','placas','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
+  const headers = ['Fecha','Hora 1er Pesaje','Fecha 2do Pesaje','Hora 2do Pesaje','Ciclo','Folio','Boleta','Placas','# Economico','Material','Banco Origen','Destino (Tiro)','Rango de Material','Peso Bruto (kg)','Peso Tara (kg)','Peso Neto (kg)','Peso Neto (ton)'];
+  const keys    = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','banco','destino','rango','bruto_kg','tara_kg','neto_kg','ton'];
   const rows    = db.map(r => keys.map(k => r[k] !== undefined && r[k] !== null ? r[k] : ''));
   
   const wsData  = [headers, ...rows];
@@ -595,28 +600,33 @@ window.exportarExcelAcarreos = function() {
   }
 
   const datosFormateados = window.db.map((r, index) => ({
+    "Fecha": r.fecha1 || "—",
+    "Hora 1er Pesaje": r.hora1 || "—",
+    "Fecha 2do Pesaje": r.fecha2 || "—",
+    "Hora 2do Pesaje": r.hora2 || "—",
+    "Ciclo": r.ciclo || "—",
+    "Folio": r.folio || "—",
     "Boleta": r.boleta || "S/B",
     "Placas": r.placas || "—",
+    "# Economico": r.economico || "—",
     "Material": r.material || "—",
-    "Rango Material": r.rango || "—",
-    "Banco (Origen)": r.banco || "—",
-    "Destino": r.destino || "—",
+    "Banco Origen": r.banco || "—",
+    "Destino (Tiro)": r.destino || "—",
+    "Rango de Material": r.rango || "—",
     "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-    "Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
+    "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
     "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
-    "Toneladas": r.ton || "0",
-    "1er Pesaje": (r.fecha1 ? r.fecha1 + ' ' + (r.hora1 || '') : '—'),
-    "2do Pesaje": (r.fecha2 ? r.fecha2 + ' ' + (r.hora2 || '') : '—'),
-    "Ciclo": r.ciclo || "—"
+    "Peso Neto (ton)": r.ton || "0"
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(datosFormateados);
   const workbook = XLSX.utils.book_new();
   
   worksheet['!cols'] = [
-    {wch: 12}, {wch: 15}, {wch: 18}, {wch: 20}, {wch: 16}, 
-    {wch: 16}, {wch: 15}, {wch: 12}, {wch: 15}, {wch: 12}, 
-    {wch: 18}, {wch: 18}, {wch: 12}
+    {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
+    {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
+    {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
+    {wch: 15}, {wch: 14}
   ];
 
   const fechaStr = new Date().toISOString().slice(0, 10);
@@ -629,7 +639,7 @@ window.exportarExcelAcarreos = function() {
 // ─── EXPORTAR CSV ─────────────────────────────────────
 window.exportCSV = function() {
   if (!db.length) { alert('No hay datos para exportar.'); return; }
-  const headers = ['fecha1','hora1','fecha2','hora2','ciclo','boleta','placas','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
+  const headers = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
   const rows    = db.map(r => headers.map(h => JSON.stringify(r[h] !== undefined ? r[h] : '')).join(','));
   const csv     = [headers.join(','), ...rows].join('\n');
   const a       = document.createElement('a');
@@ -816,6 +826,16 @@ function updateSyncNote(msg) {
       <div>
         <label>Placas *</label>
         <input type="text" id="f-placas" placeholder="Ej: 5XDC16A"/>
+      </div>
+    </div>
+    <div class="field-row two-col">
+      <div>
+        <label>Folio *</label>
+        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
+      </div>
+      <div>
+        <label># Económico *</label>
+        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
       </div>
     </div>
   </div>
@@ -1127,6 +1147,8 @@ function getFormData() {
     hora2:    document.getElementById('f-hora2').value,
     ciclo:    document.getElementById('f-ciclo').value,
     boleta:   document.getElementById('f-boleta').value.trim(),
+    folio:    document.getElementById('f-folio').value.trim(),
+    economico:document.getElementById('f-economico').value.trim().toUpperCase(),
     placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
     material: document.getElementById('f-material').value,
     rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(document.getElementById('f-destino').value)
@@ -1141,7 +1163,7 @@ function getFormData() {
 }
 
 function clearForm() {
-  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-placas','f-bruto','f-tara'].forEach(id => {
+  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-placas','f-bruto','f-tara'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('f-material').selectedIndex = 0;
@@ -1173,7 +1195,7 @@ function renderDB() {
   const registros = window.getDB ? window.getDB() : [];
   
   const filtered = db.filter(r =>
-    ['boleta','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
+    ['boleta','folio','economico','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
   
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);

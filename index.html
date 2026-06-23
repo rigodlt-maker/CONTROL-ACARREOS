@@ -95,7 +95,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 .filter-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .filter-row input { flex: 1; height: 36px; border: 0.5px solid var(--border-strong); border-radius: var(--radius); padding: 0 10px; font-size: 13px; background: var(--surface); }
 .export-bar { display: flex; gap: 8px; padding: 12px 0 4px; border-top: 0.5px solid var(--border); margin-top: 12px; flex-wrap: wrap; }
-.export-bar .btn { font-size: 12px; padding: 9px 10px; }
+.export-bar .btn { font-size: 13px; padding: 10px; }
 
 /* ── MODAL ── */
 .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; align-items: flex-end; justify-content: center; }
@@ -339,7 +339,7 @@ onAuthStateChanged(auth, async (user) => {
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
 
-    // 🦍 PASO B: Mostrar botonera de reportes SOLAMENTE si es admin 🦍
+    // Mostrar botonera de reportes SOLAMENTE si es admin
     const exportBar = document.getElementById('export-bar-actions');
     if (exportBar) {
       exportBar.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
@@ -564,50 +564,16 @@ window.openModal = function(fid) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-// ─── FUNCION AUXILIAR PARA FECHAS EXCEL ───────────────
+// ─── FUNCION AUXILIAR PARA FECHAS EXCEL SIN ZONAS HORARIAS ───────────────
 function parseDateForExcel(isoString) {
   if (!isoString || !isoString.includes('-')) return '';
   const [y, m, d] = isoString.split('-');
-  return new Date(Date.UTC(y, m - 1, d)); // Convierte a objeto fecha real
+  // OJO AQUÍ: Generamos la fecha exacta a las 00:00:00 en hora local (no UTC) 
+  // para evitar que Excel sume o reste horas y cause el "05:59:24 p. m."
+  return new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
 }
 
-// ─── EXPORTAR EXCEL (Reporte completo) ────────────────
-window.exportExcel = function() {
-  if (!db.length) { alert('No hay datos para exportar.'); return; }
-  if (typeof XLSX === 'undefined') { alert('Librería Excel no disponible. Usa CSV.'); return; }
-  
-  const headers = ['Fecha','Hora 1er Pesaje','Fecha 2do Pesaje','Hora 2do Pesaje','Ciclo','Folio','Boleta','Placas','# Economico','Material','Banco Origen','Destino (Tiro)','Rango de Material','Peso Bruto (kg)','Peso Tara (kg)','Peso Neto (kg)','Peso Neto (ton)'];
-  const keys    = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','banco','destino','rango','bruto_kg','tara_kg','neto_kg','ton'];
-  
-  const rows = db.map(r => keys.map(k => {
-    // Si es columna de fecha, la convertimos a un objeto Date real
-    if (k === 'fecha1' || k === 'fecha2') {
-      return r[k] ? parseDateForExcel(r[k]) : '';
-    }
-    return r[k] !== undefined && r[k] !== null ? r[k] : '';
-  }));
-  
-  const wsData  = [headers, ...rows];
-  // Le indicamos a SheetJS que use celdas tipo fecha (cellDates: true) y las formatee como dd/mm/yyyy
-  const ws      = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true, dateNF: 'dd/mm/yyyy' });
-  ws['!cols']   = headers.map((h, i) => ({ wch: Math.min(Math.max(h.length, ...rows.map(r => String(r[i]||'').length)) + 2, 30) }));
-  
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Acarreos');
-  
-  const totalTon   = db.reduce((s,r) => s + (r.ton||0), 0);
-  const porDestino = {}; db.forEach(r => { const d = r.destino||'Sin destino'; if (!porDestino[d]) porDestino[d]={viajes:0,ton:0}; porDestino[d].viajes++; porDestino[d].ton+=(r.ton||0); });
-  const porMat     = {}; db.forEach(r => { const m = r.material||'Sin material'; if (!porMat[m]) porMat[m]={viajes:0,ton:0}; porMat[m].viajes++; porMat[m].ton+=(r.ton||0); });
-  
-  const resData = [['RESUMEN GENERAL','',''],['','',''],['Total de viajes',db.length,''],['Total toneladas',totalTon.toFixed(3),'ton'],['Fecha generado',new Date().toLocaleString('es-MX'),''],['','',''],['RESUMEN POR DESTINO','',''],['Destino','Viajes','Toneladas'],...Object.entries(porDestino).map(([d,v])=>[d,v.viajes,v.ton.toFixed(3)]),['','',''],['RESUMEN POR MATERIAL','',''],['Material','Viajes','Toneladas'],...Object.entries(porMat).map(([m,v])=>[m,v.viajes,v.ton.toFixed(3)])];
-  const wsRes = XLSX.utils.aoa_to_sheet(resData);
-  wsRes['!cols'] = [{wch:25},{wch:12},{wch:14}];
-  
-  XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
-  XLSX.writeFile(wb, 'acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
-}
-
-// ─── EXPORTAR TABLA EJECUTIVA PARA DIRECCIÓN ───────────
+// ─── REPORTE (Sustituye a todos los anteriores) ───────────
 window.exportarExcelAcarreos = function() {
   if (!window.db || window.db.length === 0) {
     alert("No hay datos cargados para exportar.");
@@ -615,7 +581,6 @@ window.exportarExcelAcarreos = function() {
   }
 
   const datosFormateados = window.db.map((r) => ({
-    // Pasamos el objeto Date para que Excel lo detecte nativamente como Fecha
     "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
     "Hora 1er Pesaje": r.hora1 || "—",
     "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
@@ -635,8 +600,17 @@ window.exportarExcelAcarreos = function() {
     "Peso Neto (ton)": r.ton || "0"
   }));
 
-  // Le indicamos cellDates y el formato
-  const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true, dateNF: 'dd/mm/yyyy' });
+  const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
+  
+  // Forzar formato de fecha corta (dd/mm/yyyy) en las celdas directamente
+  for (let cellAddress in worksheet) {
+    if (cellAddress[0] === '!') continue; 
+    let cell = worksheet[cellAddress];
+    if (cell.t === 'd') { // Si la celda es de tipo Fecha
+      cell.z = 'dd/mm/yyyy'; // Le indicamos a Excel que omita totalmente la hora
+    }
+  }
+
   const workbook = XLSX.utils.book_new();
   
   worksheet['!cols'] = [
@@ -653,21 +627,10 @@ window.exportarExcelAcarreos = function() {
   XLSX.writeFile(workbook, nombreArchivo);
 };
 
-// ─── EXPORTAR CSV ─────────────────────────────────────
-window.exportCSV = function() {
-  if (!db.length) { alert('No hay datos para exportar.'); return; }
-  const headers = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
-  const rows    = db.map(r => headers.map(h => {
-    let val = r[h] !== undefined ? r[h] : '';
-    // Formatea como dd/mm/yyyy para el archivo CSV en texto plano
-    if (h === 'fecha1' || h === 'fecha2') val = fmtFecha(val); 
-    return JSON.stringify(val);
-  }).join(','));
-  const csv     = [headers.join(','), ...rows].join('\n');
-  const a       = document.createElement('a');
-  a.href        = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);
-  a.download    = 'acarreos_' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
+// ─── VER GRÁFICOS (Módulo en preparación) ─────────────
+window.verGraficos = function() {
+  console.log("Módulo de gráficos en construcción...");
+  alert("Próximamente: Módulo de visualización de gráficos y métricas.");
 }
 
 // ─── MIGRAR LOCALSTORAGE → FIRESTORE ─────────────────
@@ -975,20 +938,17 @@ function updateSyncNote(msg) {
   <div id="records-list"></div>
   
   <div class="export-bar" id="export-bar-actions" style="display: none;">
-    <button class="btn btn-excel" onclick="exportExcel()" style="flex:1">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Exportar Excel (.xlsx)
-    </button>
     
-    <button onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+    <button onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Reporte Dirección (.xlsx)
+      Generar Reporte
     </button>
 
-    <button class="btn btn-secondary" onclick="exportCSV()" style="flex:1">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Exportar CSV
+    <button class="btn btn-secondary" onclick="verGraficos()" style="flex:1; font-size: 13px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Ver Gráficos
     </button>
+
     <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
     </button>

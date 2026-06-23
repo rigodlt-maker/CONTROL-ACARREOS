@@ -167,9 +167,38 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 /* ── DASHBOARD / GRÁFICOS ── */
 .slicers-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
 .slicers-card h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
-.slicers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.slicers-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .slicers-grid .full { grid-column: 1 / -1; }
 .slicer-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ── Multi-select dropdown slicer ── */
+.ms-wrap { position: relative; }
+.ms-btn {
+  width: 100%; height: 38px; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  padding: 0 28px 0 10px; font-size: 13px; background: var(--surface); color: var(--text);
+  cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+}
+.ms-btn .ms-arrow { flex-shrink:0; transition: transform .15s; }
+.ms-btn.open .ms-arrow { transform: rotate(180deg); }
+.ms-btn .ms-tag-count {
+  background: var(--accent); color: white; border-radius: 999px;
+  font-size: 10px; font-weight: 700; padding: 1px 6px; flex-shrink:0;
+}
+.ms-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 300;
+  background: var(--surface); border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14); max-height: 220px; overflow-y: auto;
+}
+.ms-dropdown.open { display: block; }
+.ms-option {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  font-size: 13px; cursor: pointer; border-bottom: 0.5px solid var(--border);
+}
+.ms-option:last-child { border-bottom: none; }
+.ms-option:hover { background: var(--bg); }
+.ms-option input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; flex-shrink:0; cursor:pointer; }
+.ms-option label { cursor:pointer; flex:1; }
 .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .kpi-card { background: var(--accent-light); border: 0.5px solid rgba(15,110,86,0.25); border-radius: var(--radius); padding: 12px; text-align: center; }
 .kpi-card .val { font-size: 20px; font-weight: 700; color: var(--accent); }
@@ -999,29 +1028,68 @@ function updateSyncNote(msg) {
           <label>Hasta</label>
           <input type="date" id="dash-fecha-hasta" onchange="renderDashboard()"/>
         </div>
+        <!-- Spacer for 3rd column on date row -->
+        <div></div>
+
+        <!-- Banco multiselect -->
         <div>
           <label>Banco (Origen)</label>
-          <select id="dash-banco" onchange="renderDashboard()">
-            <option value="">— Todos —</option>
-            <option value="EL TAJO">El Tajo</option>
-            <option value="TRITURA">Tritura</option>
-            <option value="MOZOMBOA1">Mozomboa Lerma</option>
-            <option value="MOZOMBOA2">Mozomboa XXX</option>
-            <option value="MOZOMBOA3">Mozomboa YYY</option>
-          </select>
+          <div class="ms-wrap" id="ms-banco-wrap">
+            <button type="button" class="ms-btn" id="ms-banco-btn" onclick="toggleMS('banco')">
+              <span id="ms-banco-label">— Todos —</span>
+              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="ms-dropdown" id="ms-banco-dd">
+              <div class="ms-option"><input type="checkbox" id="cb-banco-TAJO" value="EL TAJO" onchange="onMsChange('banco')"><label for="cb-banco-TAJO">El Tajo</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-banco-TRITURA" value="TRITURA" onchange="onMsChange('banco')"><label for="cb-banco-TRITURA">Tritura</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('banco')"><label for="cb-banco-MOZ1">Mozomboa Lerma</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('banco')"><label for="cb-banco-MOZ2">Mozomboa XXX</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('banco')"><label for="cb-banco-MOZ3">Mozomboa YYY</label></div>
+            </div>
+          </div>
         </div>
+
+        <!-- Material multiselect -->
         <div>
           <label>Material</label>
-          <select id="dash-material" onchange="renderDashboard()">
-            <option value="">— Todos —</option>
-            <option value="NUCLEO">Núcleo</option>
-            <option value="BERMA">Berma</option>
-            <option value="BERMA DE APOYO">Berma de apoyo</option>
-            <option value="SECUNDARIA 1">Secundaria 1</option>
-            <option value="SECUNDARIA 2">Secundaria 2</option>
-            <option value="CORAZA">Coraza</option>
-          </select>
+          <div class="ms-wrap" id="ms-material-wrap">
+            <button type="button" class="ms-btn" id="ms-material-btn" onclick="toggleMS('material')">
+              <span id="ms-material-label">— Todos —</span>
+              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="ms-dropdown" id="ms-material-dd">
+              <div class="ms-option"><input type="checkbox" id="cb-mat-NUC" value="NUCLEO" onchange="onMsChange('material')"><label for="cb-mat-NUC">Núcleo</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-mat-BER" value="BERMA" onchange="onMsChange('material')"><label for="cb-mat-BER">Berma</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('material')"><label for="cb-mat-BAP">Berma de apoyo</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('material')"><label for="cb-mat-SEC1">Secundaria 1</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('material')"><label for="cb-mat-SEC2">Secundaria 2</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-mat-COR" value="CORAZA" onchange="onMsChange('material')"><label for="cb-mat-COR">Coraza</label></div>
+            </div>
+          </div>
         </div>
+
+        <!-- Cuerpo (Destino) multiselect -->
+        <div>
+          <label>Cuerpo (Destino)</label>
+          <div class="ms-wrap" id="ms-cuerpo-wrap">
+            <button type="button" class="ms-btn" id="ms-cuerpo-btn" onclick="toggleMS('cuerpo')">
+              <span id="ms-cuerpo-label">— Todos —</span>
+              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="ms-dropdown" id="ms-cuerpo-dd">
+              <div class="ms-option"><input type="checkbox" id="cb-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('cuerpo')"><label for="cb-dest-AM">Acopio Marino</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('cuerpo')"><label for="cb-dest-AT">Acopio Terrestre</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-MU" value="MURO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MU">Muro</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-MO" value="MORRO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MO">Morro</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-C1" value="CUERPO 1" onchange="onMsChange('cuerpo')"><label for="cb-dest-C1">Cuerpo 1</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-C2" value="CUERPO 2" onchange="onMsChange('cuerpo')"><label for="cb-dest-C2">Cuerpo 2</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-C3" value="CUERPO 3" onchange="onMsChange('cuerpo')"><label for="cb-dest-C3">Cuerpo 3</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-C4" value="CUERPO 4" onchange="onMsChange('cuerpo')"><label for="cb-dest-C4">Cuerpo 4</label></div>
+              <div class="ms-option"><input type="checkbox" id="cb-dest-C5" value="CUERPO 5" onchange="onMsChange('cuerpo')"><label for="cb-dest-C5">Cuerpo 5</label></div>
+            </div>
+          </div>
+        </div>
+
       </div>
       <div class="slicer-actions">
         <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()">
@@ -1341,27 +1409,92 @@ function showSyncToast(icon, msg, type, duration = 3000) {
 let chartMaterial = null;
 let chartBanco    = null;
 
+// ── Multiselect helpers ──
+function getMsSelected(key) {
+  const dd = document.getElementById('ms-' + key + '-dd');
+  if (!dd) return [];
+  return Array.from(dd.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+function getMsLabel(key) {
+  const labels = { banco: 'Banco', material: 'Material', cuerpo: 'Cuerpo' };
+  const sel = getMsSelected(key);
+  const dd = document.getElementById('ms-' + key + '-dd');
+  const total = dd ? dd.querySelectorAll('input[type="checkbox"]').length : 0;
+  if (!sel.length || sel.length === total) return '— Todos —';
+  if (sel.length === 1) {
+    const cb = dd.querySelector('input[value="' + sel[0] + '"]');
+    return cb ? cb.nextElementSibling.textContent : sel[0];
+  }
+  return sel.length + ' seleccionados';
+}
+
+function updateMsBtn(key) {
+  const lbl = document.getElementById('ms-' + key + '-label');
+  const btn = document.getElementById('ms-' + key + '-btn');
+  const sel = getMsSelected(key);
+  if (lbl) lbl.textContent = getMsLabel(key);
+  // badge count
+  const old = btn ? btn.querySelector('.ms-tag-count') : null;
+  if (old) old.remove();
+  if (sel.length > 1) {
+    const badge = document.createElement('span');
+    badge.className = 'ms-tag-count';
+    badge.textContent = sel.length;
+    if (btn) btn.insertBefore(badge, btn.querySelector('.ms-arrow'));
+  }
+}
+
+function toggleMS(key) {
+  const dd  = document.getElementById('ms-' + key + '-dd');
+  const btn = document.getElementById('ms-' + key + '-btn');
+  const isOpen = dd.classList.contains('open');
+  // close all first
+  document.querySelectorAll('.ms-dropdown').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.ms-btn').forEach(b => b.classList.remove('open'));
+  if (!isOpen) { dd.classList.add('open'); btn.classList.add('open'); }
+}
+
+function onMsChange(key) {
+  updateMsBtn(key);
+  renderDashboard();
+}
+
+// Close dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.ms-wrap')) {
+    document.querySelectorAll('.ms-dropdown').forEach(d => d.classList.remove('open'));
+    document.querySelectorAll('.ms-btn').forEach(b => b.classList.remove('open'));
+  }
+});
+
 function limpiarFiltrosDashboard() {
   document.getElementById('dash-fecha-desde').value = '';
   document.getElementById('dash-fecha-hasta').value = '';
-  document.getElementById('dash-banco').value = '';
-  document.getElementById('dash-material').value = '';
+  // uncheck all ms checkboxes
+  ['banco','material','cuerpo'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
   renderDashboard();
 }
 
 function getDashboardFiltered() {
   const desde    = document.getElementById('dash-fecha-desde').value;
   const hasta    = document.getElementById('dash-fecha-hasta').value;
-  const banco    = document.getElementById('dash-banco').value;
-  const material = document.getElementById('dash-material').value;
+  const bancos   = getMsSelected('banco');
+  const materiales = getMsSelected('material');
+  const cuerpos  = getMsSelected('cuerpo');
   const datos = (window.db || []);
 
   return datos.filter(r => {
     if (!r.fecha1) return false;
     if (desde && r.fecha1 < desde) return false;
     if (hasta && r.fecha1 > hasta) return false;
-    if (banco && r.banco !== banco) return false;
-    if (material && r.material !== material) return false;
+    if (bancos.length    && !bancos.includes(r.banco))    return false;
+    if (materiales.length && !materiales.includes(r.material)) return false;
+    if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
     return true;
   });
 }

@@ -212,8 +212,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, collection, addDoc,
          getDocs, doc, updateDoc, deleteDoc,
-         query, orderBy, onSnapshot,
-         serverTimestamp, setDoc }                from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         query, orderBy, onSnapshot, where, limit, startAfter,
+         serverTimestamp, setDoc, increment, writeBatch,
+         getAggregateFromServer, sum }            from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, onAuthStateChanged,
          createUserWithEmailAndPassword,
          signInWithEmailAndPassword,
@@ -233,15 +234,26 @@ const db_f       = getFirestore(app);
 const auth       = getAuth(app);
 const COL        = "acarreos";
 const COL_USERS  = "usuarios";
+const COL_RESUMEN = "resumenes";   // 1 documento por mes (YYYY-MM) con totales acumulados
 
 // ─── ESTADO LOCAL ─────────────────────────────────────
-let db             = [];
+let db             = [];   // ventana reciente (la que se mantiene sincronizada en vivo)
   window.db          = db;
+let dbHistorial    = [];   // resultados puntuales de "buscar en historial completo"
+  window.dbHistorial = dbHistorial;
 let unsubscribe    = null;
 let unsubUsers     = null;
 let isInitialized  = false;
 let currentUser    = null;
 let currentUserDoc = null;
+let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10); // días que se cargan por defecto
+let dashboardToken = 0;    // evita que respuestas async fuera de orden pisen la última
+
+// Encuentra un registro ya sea en la ventana cargada o en resultados de historial
+function findRecord(fid) {
+  return db.find(x => x._fid === fid) || dbHistorial.find(x => x._fid === fid);
+}
+window.findRecord = findRecord;
 
 // ─── FUNCIONES DE PANTALLA ────────────────────────────
 function appReady() {
@@ -250,6 +262,8 @@ function appReady() {
   document.getElementById('login-screen').style.display  = 'none';
   document.getElementById('pending-screen').style.display= 'none';
   document.getElementById('app-shell').style.display     = 'block';
+  const selVentana = document.getElementById('db-ventana');
+  if (selVentana) selVentana.value = String(ventanaDias);
 }
 function showLogin() {
   document.getElementById('fb-loading').style.display    = 'none';
@@ -443,9 +457,28 @@ window.cambiarStatusUsuario = async function(uid, nuevoStatus) {
   }
 }
 
-// ─── SYNC EN TIEMPO REAL ─────────────────────────────
+// ─── SYNC EN TIEMPO REAL (solo ventana reciente) ──────
+// 🔴 OJO: antes esto traía TODA la colección de un jalón.
+// Ahora solo se suscribe a los últimos `ventanaDias` días (por fecha1).
+// Esto evita congelar la app cuando la colección crece a cientos de miles de registros.
+function cutoffFecha(dias) {
+  const d = new Date();
+  d.setDate(d.getDate() - dias);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
 function startRealtimeSync() {
-  const q = query(collection(db_f, COL), orderBy("ts", "desc"));
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+
+  // Nota: esta consulta usa un índice de un solo campo (fecha1), que Firestore
+  // crea automáticamente — no requiere índice compuesto.
+  const q = query(
+    collection(db_f, COL),
+    where('fecha1', '>=', cutoffFecha(ventanaDias)),
+    orderBy('fecha1', 'desc'),
+    limit(3000) // tope de seguridad incluso dentro de la ventana
+  );
+
   unsubscribe = onSnapshot(q,
     (snapshot) => {
       db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
@@ -455,10 +488,11 @@ function startRealtimeSync() {
         isInitialized = true;
         appReady();
         renderDB();
+        cargarTotalesHistoricos();
       } else {
         renderDB();
         if (document.getElementById('tab-db').classList.contains('active')) {
-          updateSyncNote('✅ Sincronizado en tiempo real · ' + db.length + ' registro(s)');
+          updateSyncNote('✅ Sincronizado en tiempo real · ' + db.length + ' registro(s) en la ventana cargada');
         }
       }
     },
@@ -470,7 +504,122 @@ function startRealtimeSync() {
   );
 }
 
-// ─── GUARDAR REGISTRO (Firestore) ─────────────────────
+// ─── CAMBIAR LA VENTANA DE CARGA (7/30/90/365 días) ──
+window.cambiarVentana = function() {
+  const sel = document.getElementById('db-ventana');
+  if (!sel) return;
+  ventanaDias = parseInt(sel.value, 10) || 30;
+  localStorage.setItem('db_ventana_dias', String(ventanaDias));
+  dbHistorial = []; window.dbHistorial = dbHistorial;
+  updateSyncNote('⏳ Cargando últimos ' + ventanaDias + ' días…');
+  startRealtimeSync();
+}
+
+// ══════════════════════════════════════════════════════
+// PASO 2 — RESUMEN AGREGADO (1 documento por mes)
+// ══════════════════════════════════════════════════════
+// En vez de leer 300,000 registros para graficar "toneladas por mes",
+// mantenemos un documento por mes (acarreos -> resumenes/YYYY-MM) que se
+// actualiza con `increment()` cada vez que se guarda, edita o borra un viaje.
+// Leer esta colección completa cuesta unas pocas decenas de lecturas
+// (1 por mes de operación), nunca una por viaje.
+
+function mesKeyFromFecha(fecha1) {
+  return (fecha1 && /^\d{4}-\d{2}/.test(fecha1)) ? fecha1.slice(0, 7) : null;
+}
+
+// Aplica (signo=+1) o revierte (signo=-1) la contribución de un registro
+// al documento de resumen de su mes.
+async function aplicarResumen(rec, signo) {
+  if (!rec || !rec.fecha1) return;
+  const mes = mesKeyFromFecha(rec.fecha1);
+  if (!mes) return;
+  const ton = rec.ton || ((rec.neto_kg || 0) / 1000);
+  const ref = doc(db_f, COL_RESUMEN, mes);
+  const payload = {
+    total_viajes: increment(signo),
+    total_ton:    increment(signo * ton)
+  };
+  if (rec.material) payload['por_material.' + rec.material] = increment(signo * ton);
+  if (rec.banco)    payload['por_banco.'    + rec.banco]    = increment(signo * ton);
+  if (rec.destino)  payload['por_destino.'  + rec.destino]  = increment(signo * ton);
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (e) {
+    console.error('No se pudo actualizar el resumen de ' + mes + ':', e);
+  }
+}
+
+// Mueve la contribución de un registro de su estado "antes" a su estado "después"
+// (usado al editar, ya que pudo cambiar de mes, material, banco o destino).
+async function moverResumen(antes, despues) {
+  if (antes) await aplicarResumen(antes, -1);
+  if (despues) await aplicarResumen(despues, +1);
+}
+
+// ── Totales históricos (para mostrarlos en la pestaña Base de datos) ──
+async function cargarTotalesHistoricos() {
+  const el = document.getElementById('stat-historico');
+  if (!el) return;
+  try {
+    const snap = await getDocs(collection(db_f, COL_RESUMEN));
+    let viajes = 0, ton = 0;
+    snap.forEach(d => {
+      const v = d.data();
+      viajes += v.total_viajes || 0;
+      ton    += v.total_ton    || 0;
+    });
+    el.textContent = '📊 Histórico total (todas las fechas): ' + viajes.toLocaleString('es-MX') + ' viajes · ' + ton.toFixed(2) + ' t';
+  } catch (e) {
+    console.error('Error al leer resumen histórico:', e);
+    el.textContent = '';
+  }
+}
+window.cargarTotalesHistoricos = cargarTotalesHistoricos;
+
+// ── Herramienta admin: reconstruir el resumen leyendo TODA la colección ──
+// Solo debe usarse una vez (o si se detecta que el resumen quedó desincronizado).
+// A diferencia de la carga normal de la app, esta es una acción explícita,
+// disparada a propósito por un administrador, no algo que ocurre al abrir la app.
+window.recalcularResumen = async function() {
+  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir el resumen mensual. En una base muy grande puede tardar bastante y generar muchas lecturas. ¿Continuar?')) return;
+  const btn = document.getElementById('btn-recalcular-resumen');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo toda la colección…'; }
+  try {
+    const snap = await getDocs(collection(db_f, COL));
+    const porMes = {};
+    snap.forEach(docSnap => {
+      const r = docSnap.data();
+      const mes = mesKeyFromFecha(r.fecha1);
+      if (!mes) return;
+      const ton = r.ton || ((r.neto_kg || 0) / 1000);
+      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {} };
+      const m = porMes[mes];
+      m.total_viajes += 1;
+      m.total_ton    += ton;
+      if (r.material) m.por_material[r.material] = (m.por_material[r.material] || 0) + ton;
+      if (r.banco)    m.por_banco[r.banco]       = (m.por_banco[r.banco]       || 0) + ton;
+      if (r.destino)  m.por_destino[r.destino]   = (m.por_destino[r.destino]   || 0) + ton;
+    });
+
+    const meses = Object.keys(porMes);
+    // Firestore permite máximo 500 escrituras por batch.
+    for (let i = 0; i < meses.length; i += 450) {
+      const batch = writeBatch(db_f);
+      meses.slice(i, i + 450).forEach(mes => {
+        batch.set(doc(db_f, COL_RESUMEN, mes), porMes[mes]); // overwrite total, no merge
+      });
+      await batch.commit();
+    }
+    alert('✅ Resumen reconstruido: ' + meses.length + ' mes(es) a partir de ' + snap.size + ' registro(s).');
+    cargarTotalesHistoricos();
+  } catch (e) {
+    alert('Error al recalcular el resumen: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Recalcular resumen (lee toda la base)'; }
+  }
+}
+
 window.saveRecord = async function() {
   const data = getFormData();
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
@@ -495,7 +644,15 @@ window.saveRecord = async function() {
   
   try {
     if (!window._editFid) {
-      const dup = db.find(r => r.boleta === data.boleta);
+      // Boleta duplicada: primero se revisa lo que ya está cargado en memoria;
+      // si no aparece ahí (porque está fuera de la ventana reciente), se hace
+      // UNA consulta puntual a Firestore por esa boleta exacta — no se trae
+      // toda la colección solo para validar un duplicado.
+      let dup = db.find(r => r.boleta === data.boleta) || dbHistorial.find(r => r.boleta === data.boleta);
+      if (!dup) {
+        const dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', data.boleta), limit(1)));
+        if (!dupSnap.empty) dup = { _fid: dupSnap.docs[0].id, ...dupSnap.docs[0].data() };
+      }
       if (dup && !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) {
         saveBtn.disabled = false;
         saveBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar registro';
@@ -504,16 +661,21 @@ window.saveRecord = async function() {
       const { id: _localId, ...payload } = data;
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
+      aplicarResumen(data, +1); // Paso 2: actualizar el resumen mensual (no bloquea el guardado)
       showSyncToast('✅', 'Registro guardado en la nube', 'ok');
     } else {
+      const original = window._editOriginal || null;
       const { id: _localId, _fid: _fid2, ...payload } = data;
       payload.ts_updated = serverTimestamp();
       await updateDoc(doc(db_f, COL, window._editFid), payload);
+      moverResumen(original, data); // Paso 2: revierte el aporte anterior y aplica el nuevo
       window._editFid = null;
+      window._editOriginal = null;
       showSyncToast('✅', 'Registro actualizado', 'ok');
     }
     clearForm();
     showTab('db');
+    cargarTotalesHistoricos();
   } catch(err) {
     alert('Error al guardar: ' + err.message);
   } finally {
@@ -524,10 +686,11 @@ window.saveRecord = async function() {
 
 // ─── EDITAR REGISTRO ──────────────────────────────────
 window.editRecord = function() {
-  const r = db.find(x => x._fid === window._currentFid);
+  const r = findRecord(window._currentFid);
   if (!r) return;
   closeModalForce();
   window._editFid = r._fid;
+  window._editOriginal = { ...r }; // copia "antes" para poder ajustar el resumen al guardar
   const flds = {
     'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
     'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
@@ -556,33 +719,40 @@ window.editRecord = function() {
 window.deleteRecord = async function() {
   if (!confirm('¿Eliminar este registro permanentemente?')) return;
   try {
+    const r = findRecord(window._currentFid);
     await deleteDoc(doc(db_f, COL, window._currentFid));
+    aplicarResumen(r, -1); // Paso 2: descontar del resumen mensual
     closeModalForce();
     showSyncToast('✅', 'Registro eliminado', 'ok');
+    cargarTotalesHistoricos();
   } catch(err) { alert('Error al eliminar: ' + err.message); }
 }
 
 // ─── BORRAR TODA LA BD ────────────────────────────────
 window.clearDB = async function() {
-  if (!confirm('¿Borrar TODA la base de datos? Esta acción no se puede deshacer.')) return;
-  if (!confirm('⚠️ SEGUNDA CONFIRMACIÓN: se eliminarán ' + db.length + ' registros de Firestore para TODOS los usuarios. ¿Continuar?')) return;
+  if (!confirm('¿Borrar TODA la base de datos (acarreos y resumen)? Esta acción no se puede deshacer.')) return;
+  if (!confirm('⚠️ SEGUNDA CONFIRMACIÓN: se eliminarán TODOS los registros de Firestore para TODOS los usuarios. ¿Continuar?')) return;
   try {
     const snap = await getDocs(collection(db_f, COL));
     await Promise.all(snap.docs.map(d => deleteDoc(doc(db_f, COL, d.id))));
+    const snapResumen = await getDocs(collection(db_f, COL_RESUMEN));
+    await Promise.all(snapResumen.docs.map(d => deleteDoc(doc(db_f, COL_RESUMEN, d.id))));
     showSyncToast('✅', 'Base de datos borrada', 'ok');
+    cargarTotalesHistoricos();
   } catch(err) { alert('Error: ' + err.message); }
 }
 
 // ─── SYNC MANUAL (botón refresh) ──────────────────────
 window.manualSync = function() {
   showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
-  updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s)');
+  updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
+  cargarTotalesHistoricos();
 }
 
 // ─── ABRIR MODAL DETALLE ──────────────────────────────
 window.openModal = function(fid) {
   window._currentFid = fid;
-  const r = db.find(x => x._fid === fid);
+  const r = findRecord(fid);
   if (!r) return;
   document.getElementById('modal-title').textContent = 'Boleta #' + r.boleta;
   const fmt    = (v, s='') => (v !== undefined && v !== null && v !== '') ? v + s : '—';
@@ -620,54 +790,99 @@ function parseDateForExcel(isoString) {
 }
 
 // ─── REPORTE EXCEL ───────────
-window.exportarExcelAcarreos = function() {
-  if (!window.db || window.db.length === 0) {
-    alert("No hay datos cargados para exportar.");
-    return;
+// 🔴 Antes este reporte exportaba solo lo que estuviera cargado en memoria
+// (window.db). Después de limitar la carga a una ventana reciente, eso
+// dejaba fuera todo el historial. Ahora el reporte consulta Firestore
+// directamente por el rango de fechas que elijas (vacío = todo el historial,
+// con advertencia), paginando para no intentar traer todo de un jalón.
+window.exportarExcelAcarreos = async function() {
+  const desde = (document.getElementById('export-fecha-desde') || {}).value || '';
+  const hasta = (document.getElementById('export-fecha-hasta') || {}).value || '';
+
+  if (!desde && !hasta) {
+    if (!confirm('No elegiste un rango de fechas: se exportará TODO el historial. En una base de datos grande esto puede tardar varios minutos. ¿Continuar?')) return;
   }
 
-  const datosFormateados = window.db.map((r) => ({
-    "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
-    "Hora 1er Pesaje": r.hora1 || "—",
-    "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
-    "Hora 2do Pesaje": r.hora2 || "—",
-    "Ciclo": r.ciclo || "—",
-    "Folio": r.folio || "—",
-    "Boleta": r.boleta || "S/B",
-    "Placas": r.placas || "—",
-    "# Economico": r.economico || "—",
-    "Material": r.material || "—",
-    "Banco Origen": r.banco || "—",
-    "Destino (Tiro)": r.destino || "—",
-    "Rango de Material": r.rango || "—",
-    "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-    "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
-    "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
-    "Peso Neto (ton)": r.ton || "0"
-  }));
+  const btn = document.getElementById('btn-exportar-excel');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; }
 
-  const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
-  
-  for (let cellAddress in worksheet) {
-    if (cellAddress[0] === '!') continue; 
-    let cell = worksheet[cellAddress];
-    if (cell.t === 'd') cell.z = 'dd/mm/yyyy'; 
+  try {
+    const PAGE = 1500;
+    let registros = [];
+    let cursor = null;
+    let pagina = 0;
+    while (true) {
+      const constraints = [orderBy('fecha1', 'asc')];
+      if (desde) constraints.push(where('fecha1', '>=', desde));
+      if (hasta) constraints.push(where('fecha1', '<=', hasta));
+      if (cursor) constraints.push(startAfter(cursor));
+      constraints.push(limit(PAGE));
+      const snap = await getDocs(query(collection(db_f, COL), ...constraints));
+      if (snap.empty) break;
+      registros = registros.concat(snap.docs.map(d => ({ _fid: d.id, ...d.data() })));
+      pagina++;
+      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + registros.length.toLocaleString('es-MX') + ')';
+      if (snap.docs.length < PAGE) break;
+      cursor = snap.docs[snap.docs.length - 1];
+      if (registros.length > 100000) { // tope de seguridad
+        alert('Se alcanzaron 100,000 registros. Acota el rango de fechas para exportar en partes más pequeñas.');
+        break;
+      }
+    }
+
+    if (!registros.length) {
+      alert('No hay registros en ese rango para exportar.');
+      return;
+    }
+
+    const datosFormateados = registros.map((r) => ({
+      "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
+      "Hora 1er Pesaje": r.hora1 || "—",
+      "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
+      "Hora 2do Pesaje": r.hora2 || "—",
+      "Ciclo": r.ciclo || "—",
+      "Folio": r.folio || "—",
+      "Boleta": r.boleta || "S/B",
+      "Placas": r.placas || "—",
+      "# Economico": r.economico || "—",
+      "Material": r.material || "—",
+      "Banco Origen": r.banco || "—",
+      "Destino (Tiro)": r.destino || "—",
+      "Rango de Material": r.rango || "—",
+      "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+      "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
+      "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
+      "Peso Neto (ton)": r.ton || "0"
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
+
+    for (let cellAddress in worksheet) {
+      if (cellAddress[0] === '!') continue;
+      let cell = worksheet[cellAddress];
+      if (cell.t === 'd') cell.z = 'dd/mm/yyyy';
+    }
+
+    const workbook = XLSX.utils.book_new();
+
+    worksheet['!cols'] = [
+      {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
+      {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
+      {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
+      {wch: 15}, {wch: 14}
+    ];
+
+    const fechaStr = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `Reporte_Acarreos_Ejecutivo_${fechaStr}.xlsx`;
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
+    XLSX.writeFile(workbook, nombreArchivo);
+  } catch (err) {
+    handleFirestoreIndexError(err) || alert('Error al generar el reporte: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
   }
-
-  const workbook = XLSX.utils.book_new();
-  
-  worksheet['!cols'] = [
-    {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
-    {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
-    {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
-    {wch: 15}, {wch: 14}
-  ];
-
-  const fechaStr = new Date().toISOString().slice(0, 10);
-  const nombreArchivo = `Reporte_Acarreos_Ejecutivo_${fechaStr}.xlsx`;
-
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
-  XLSX.writeFile(workbook, nombreArchivo);
 };
 
 // ─── MIGRAR LOCALSTORAGE → FIRESTORE ─────────────────
@@ -682,17 +897,31 @@ window.migrarLocalStorage = async function() {
       const { id: _id, _fid: _f, ...payload } = r;
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
+      aplicarResumen(r, +1); // mantener el resumen mensual consistente con la migración
       ok++;
     } catch(e) { fail++; }
   }
   alert(`✅ Migrados: ${ok} | ❌ Fallidos: ${fail}`);
   if (ok > 0) localStorage.removeItem('acarreos_db_v3');
+  cargarTotalesHistoricos();
 }
 
 // ─── UTILS ────────────────────────────────────────────
 function updateSyncNote(msg) {
   const el = document.getElementById('sync-db-note');
   if (el) el.textContent = msg;
+}
+
+// Paso 3: cuando una consulta combinada (banco/material/destino + fecha) necesita
+// un índice compuesto que todavía no existe, Firestore lo dice en el mensaje de
+// error e incluye un enlace para crearlo con un clic en la consola. Esta función
+// detecta ese caso y se lo muestra claramente al usuario en vez de un error críptico.
+function handleFirestoreIndexError(err) {
+  if (err && err.code === 'failed-precondition' && /index/i.test(err.message || '')) {
+    alert('⚠️ Esta combinación de filtros necesita un índice de Firestore que aún no existe.\n\nPide al administrador del proyecto que abra este enlace y presione "Crear índice" (puede tardar unos minutos en activarse):\n\n' + err.message);
+    return true;
+  }
+  return false;
 }
 </script>
 </head>
@@ -965,27 +1194,59 @@ function updateSyncNote(msg) {
 </div>
 
 <div class="tab-content" id="tab-db">
-  <div class="stats-row">
-    <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes registrados</div></div>
-    <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas acumuladas</div></div>
+  <div class="filter-row" style="margin-bottom:10px;">
+    <div style="flex:1">
+      <label style="margin-bottom:3px;">Ventana de carga</label>
+      <select id="db-ventana" onchange="cambiarVentana()" style="width:100%;height:36px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 8px;font-size:13px;background:var(--surface);">
+        <option value="7">Últimos 7 días</option>
+        <option value="30" selected>Últimos 30 días</option>
+        <option value="90">Últimos 90 días</option>
+        <option value="365">Último año</option>
+      </select>
+    </div>
   </div>
+  <div class="stats-row">
+    <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes (ventana cargada)</div></div>
+    <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
+  </div>
+  <div id="stat-historico" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:12px;"></div>
   <div class="filter-row">
-    <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="renderDB()"/>
+    <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="onFilterInput()"/>
     <button class="btn btn-secondary" id="btn-refresh-db" onclick="manualSync()" style="flex:0;padding:0 12px" title="Actualizar">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
     </button>
   </div>
   <div id="sync-db-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
+
+  <div style="padding: 0 0 10px;">
+    <button class="btn btn-secondary" id="btn-buscar-historial" onclick="buscarHistorial()" style="width:100%;font-size:12px;">
+      🔍 Buscar también en todo el historial (boleta / placas / folio / # económico, coincidencia exacta)
+    </button>
+  </div>
+
   <div id="records-list"></div>
   
-  <div class="export-bar" id="export-bar-actions" style="display: none;">
-    <button onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Generar Reporte Excel
-    </button>
-    <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-    </button>
+  <div class="export-bar" id="export-bar-actions" style="display: none; flex-direction:column; align-items:stretch;">
+    <div class="field-row two-col" style="margin-bottom:8px;">
+      <div>
+        <label>Exportar desde</label>
+        <input type="date" id="export-fecha-desde">
+      </div>
+      <div>
+        <label>Exportar hasta</label>
+        <input type="date" id="export-fecha-hasta">
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial (puede tardar en bases muy grandes).</div>
+    <div style="display:flex;gap:8px;">
+      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Generar Reporte Excel
+      </button>
+      <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      </button>
+    </div>
   </div>
 
   <div style="padding: 8px 0 4px;">
@@ -1330,11 +1591,15 @@ function fmtFecha(val) {
 // ── Render base de datos ──
 function renderDB() {
   const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
-  
-  const filtered = db.filter(r =>
+
+  // Combina la ventana reciente cargada con los resultados puntuales de
+  // "buscar en historial" (si los hay), sin duplicar por _fid.
+  const combinados = db.concat((window.dbHistorial||[]).filter(h => !db.some(d => d._fid === h._fid)));
+
+  const filtered = combinados.filter(r =>
     ['boleta','folio','economico','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
-  
+
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
   document.getElementById('stat-total').textContent     = filtered.length;
   document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
@@ -1343,7 +1608,7 @@ function renderDB() {
   if (!filtered.length) {
     list.innerHTML = `<div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
-      <p>${db.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros. Ve a Captura para agregar el primero.'}</p>
+      <p>${combinados.length ? 'Sin resultados para tu búsqueda. Prueba "Buscar en todo el historial" abajo.' : 'Sin registros. Ve a Captura para agregar el primero.'}</p>
     </div>`;
     return;
   }
@@ -1351,7 +1616,7 @@ function renderDB() {
   list.innerHTML = filtered.map(r => `
     <div class="record" onclick="openModal('${r._fid}')">
       <div class="rec-main">
-        <div class="rec-boleta">Boleta #${r.boleta}</div>
+        <div class="rec-boleta">Boleta #${r.boleta}${r._historial ? ' <span style="font-size:10px;color:var(--info);font-weight:500;">· histórico</span>' : ''}</div>
         <div class="rec-detail">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${r.banco   ? '<span class="badge badge-blue">'+r.banco+'</span>'   : ''}
@@ -1364,6 +1629,13 @@ function renderDB() {
         ${r.ciclo ? '<div class="fecha" style="margin-top:1px">⏱ '+r.ciclo+'</div>' : ''}
       </div>
     </div>`).join('');
+}
+
+// Al cambiar el texto de búsqueda se descartan resultados de historial
+// previos (correspondían a una búsqueda distinta).
+function onFilterInput() {
+  if ((window.dbHistorial||[]).length) { window.dbHistorial = []; }
+  renderDB();
 }
 
 function closeModal(e) {

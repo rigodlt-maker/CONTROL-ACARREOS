@@ -172,7 +172,7 @@ import { getFirestore, collection, addDoc,
 import { getAuth, onAuthStateChanged,
          createUserWithEmailAndPassword,
          signInWithEmailAndPassword,
-         signOut }                                 from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+         signOut }                                from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // ─── CONFIG ───────────────────────────────────────────
 const firebaseConfig = {
@@ -564,6 +564,13 @@ window.openModal = function(fid) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
+// ─── FUNCION AUXILIAR PARA FECHAS EXCEL ───────────────
+function parseDateForExcel(isoString) {
+  if (!isoString || !isoString.includes('-')) return '';
+  const [y, m, d] = isoString.split('-');
+  return new Date(Date.UTC(y, m - 1, d)); // Convierte a objeto fecha real
+}
+
 // ─── EXPORTAR EXCEL (Reporte completo) ────────────────
 window.exportExcel = function() {
   if (!db.length) { alert('No hay datos para exportar.'); return; }
@@ -571,10 +578,18 @@ window.exportExcel = function() {
   
   const headers = ['Fecha','Hora 1er Pesaje','Fecha 2do Pesaje','Hora 2do Pesaje','Ciclo','Folio','Boleta','Placas','# Economico','Material','Banco Origen','Destino (Tiro)','Rango de Material','Peso Bruto (kg)','Peso Tara (kg)','Peso Neto (kg)','Peso Neto (ton)'];
   const keys    = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','banco','destino','rango','bruto_kg','tara_kg','neto_kg','ton'];
-  const rows    = db.map(r => keys.map(k => r[k] !== undefined && r[k] !== null ? r[k] : ''));
+  
+  const rows = db.map(r => keys.map(k => {
+    // Si es columna de fecha, la convertimos a un objeto Date real
+    if (k === 'fecha1' || k === 'fecha2') {
+      return r[k] ? parseDateForExcel(r[k]) : '';
+    }
+    return r[k] !== undefined && r[k] !== null ? r[k] : '';
+  }));
   
   const wsData  = [headers, ...rows];
-  const ws      = XLSX.utils.aoa_to_sheet(wsData);
+  // Le indicamos a SheetJS que use celdas tipo fecha (cellDates: true) y las formatee como dd/mm/yyyy
+  const ws      = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true, dateNF: 'dd/mm/yyyy' });
   ws['!cols']   = headers.map((h, i) => ({ wch: Math.min(Math.max(h.length, ...rows.map(r => String(r[i]||'').length)) + 2, 30) }));
   
   const wb = XLSX.utils.book_new();
@@ -599,10 +614,11 @@ window.exportarExcelAcarreos = function() {
     return;
   }
 
-  const datosFormateados = window.db.map((r, index) => ({
-    "Fecha": r.fecha1 || "—",
+  const datosFormateados = window.db.map((r) => ({
+    // Pasamos el objeto Date para que Excel lo detecte nativamente como Fecha
+    "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
     "Hora 1er Pesaje": r.hora1 || "—",
-    "Fecha 2do Pesaje": r.fecha2 || "—",
+    "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
     "Hora 2do Pesaje": r.hora2 || "—",
     "Ciclo": r.ciclo || "—",
     "Folio": r.folio || "—",
@@ -619,7 +635,8 @@ window.exportarExcelAcarreos = function() {
     "Peso Neto (ton)": r.ton || "0"
   }));
 
-  const worksheet = XLSX.utils.json_to_sheet(datosFormateados);
+  // Le indicamos cellDates y el formato
+  const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true, dateNF: 'dd/mm/yyyy' });
   const workbook = XLSX.utils.book_new();
   
   worksheet['!cols'] = [
@@ -640,7 +657,12 @@ window.exportarExcelAcarreos = function() {
 window.exportCSV = function() {
   if (!db.length) { alert('No hay datos para exportar.'); return; }
   const headers = ['fecha1','hora1','fecha2','hora2','ciclo','folio','boleta','placas','economico','material','rango','banco','destino','bruto_kg','tara_kg','neto_kg','ton'];
-  const rows    = db.map(r => headers.map(h => JSON.stringify(r[h] !== undefined ? r[h] : '')).join(','));
+  const rows    = db.map(r => headers.map(h => {
+    let val = r[h] !== undefined ? r[h] : '';
+    // Formatea como dd/mm/yyyy para el archivo CSV en texto plano
+    if (h === 'fecha1' || h === 'fecha2') val = fmtFecha(val); 
+    return JSON.stringify(val);
+  }).join(','));
   const csv     = [headers.join(','), ...rows].join('\n');
   const a       = document.createElement('a');
   a.href        = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);

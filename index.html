@@ -481,8 +481,12 @@ function startRealtimeSync() {
   // adelante tu BD crece mucho más, sube LIMITE_VENTANA['365'] o, mejor,
   // usa el botón "Ver TODO el histórico" de la pestaña Base de datos
   // (que pagina sin límite, ver cargarTodoElHistorico()).
-  const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 12000, 365: 40000 };
-  const tope = LIMITE_VENTANA[ventanaDias] || 6000;
+  // 🔴 Firestore rechaza cualquier limit() mayor a 10,000 (error
+  // "Limit value in the structured query is over the maximum value of
+  // 10000"). Los valores de 90 y 365 días superaban ese tope y por eso
+  // tronaba la conexión. Se bajan a un máximo seguro de 9,500.
+  const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 9500, 365: 9500 };
+  const tope = Math.min(LIMITE_VENTANA[ventanaDias] || 6000, 9500);
 
   const q = query(
     collection(db_f, COL),

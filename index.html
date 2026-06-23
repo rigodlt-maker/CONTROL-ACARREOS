@@ -911,7 +911,20 @@ async function traerTodoFirestore(desde, hasta, onProgreso) {
 let dbHistoricoCompleto       = null;  // null = aún no se ha cargado
   window.dbHistoricoCompleto  = dbHistoricoCompleto;
 let usandoHistoricoCompleto   = false; // toggle: ventana reciente vs. histórico completo
+  window.usandoHistoricoCompleto = usandoHistoricoCompleto;
 let cargandoHistoricoCompleto = false;
+
+// 🔴 BUG CORREGIDO: getDashboardFiltered() vive en el bloque "script" plano
+// (sin atributo "type=module"), mientras que estas variables viven en el
+// bloque de módulo ES de Firebase (el que sí lleva ese atributo). Un módulo
+// ES tiene su propio scope — sus variables NO son visibles desde fuera
+// aunque ambos bloques estén en el mismo HTML. Antes solo se exponía
+// window.dbHistoricoCompleto, pero NO window.usandoHistoricoCompleto, así
+// que el script plano siempre leía "usandoHistoricoCompleto" como undefined
+// (variable global vacía) y por eso el dashboard ignoraba el botón "Ver
+// TODO el histórico" — se quedaba pegado en la ventana reciente sin
+// importar qué eligieras. Ahora se sincroniza window.usandoHistoricoCompleto
+// en cada cambio.
 
 // Trae TODOS los registros de la colección (paginado) para usarlos en el
 // dashboard. Pediste explícitamente que los gráficos tomen absolutamente
@@ -922,6 +935,7 @@ window.cargarHistoricoCompleto = async function(forzar) {
   if (cargandoHistoricoCompleto) return;
   if (dbHistoricoCompleto && !forzar) {
     usandoHistoricoCompleto = true;
+    window.usandoHistoricoCompleto = true;
     renderDashboard();
     return;
   }
@@ -934,6 +948,7 @@ window.cargarHistoricoCompleto = async function(forzar) {
     });
     window.dbHistoricoCompleto = dbHistoricoCompleto;
     usandoHistoricoCompleto = true;
+    window.usandoHistoricoCompleto = true;
     if (nota) nota.textContent = '✅ Histórico completo cargado: ' + dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
     renderDashboard();
   } catch (e) {
@@ -947,6 +962,7 @@ window.cargarHistoricoCompleto = async function(forzar) {
 // Volver a usar solo la ventana reciente (más rápido) en el dashboard.
 window.usarVentanaRecienteEnDashboard = function() {
   usandoHistoricoCompleto = false;
+  window.usandoHistoricoCompleto = false;
   const nota = document.getElementById('dash-historico-nota');
   if (nota) nota.textContent = '';
   renderDashboard();
@@ -2035,8 +2051,11 @@ function getDashboardFiltered() {
   // ventana reciente sincronizada en vivo. Cuando el toggle "Histórico
   // completo" está activo y ya se cargó, se usa ese array completo;
   // si no, se usa la ventana reciente (window.db) como antes.
-  const datos = (usandoHistoricoCompleto && dbHistoricoCompleto)
-    ? dbHistoricoCompleto
+  // (Se lee con el prefijo window. a propósito: estas variables viven en
+  // el bloque de módulo ES de Firebase, y solo lo que se expone
+  // explícitamente en window queda visible para este bloque de script plano.)
+  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+    ? window.dbHistoricoCompleto
     : (window.db || []);
 
   return datos.filter(r => {
@@ -2060,8 +2079,8 @@ function renderDashboard() {
   const btnVentana = document.getElementById('btn-dash-ventana');
   const btnHistorico = document.getElementById('btn-dash-historico');
   if (fuenteEl) {
-    if (usandoHistoricoCompleto && dbHistoricoCompleto) {
-      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
+    if (window.usandoHistoricoCompleto && window.dbHistoricoCompleto) {
+      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
       if (btnVentana)   { btnVentana.className   = 'btn btn-secondary'; }
       if (btnHistorico) { btnHistorico.className = 'btn btn-primary'; }
     } else {

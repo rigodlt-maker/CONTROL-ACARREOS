@@ -14,6 +14,8 @@
 <link rel="manifest" href="./manifest.json">
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -161,6 +163,22 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 
 /* ── Admin panel ── */
 #tab-admin { padding: 16px; }
+
+/* ── DASHBOARD / GRÁFICOS ── */
+.slicers-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
+.slicers-card h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+.slicers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.slicers-grid .full { grid-column: 1 / -1; }
+.slicer-actions { display: flex; gap: 8px; margin-top: 10px; }
+.kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.kpi-card { background: var(--accent-light); border: 0.5px solid rgba(15,110,86,0.25); border-radius: var(--radius); padding: 12px; text-align: center; }
+.kpi-card .val { font-size: 20px; font-weight: 700; color: var(--accent); }
+.kpi-card .lbl { font-size: 11px; color: var(--accent); opacity: 0.85; margin-top: 2px; }
+.chart-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
+.chart-card h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+.chart-wrap { position: relative; height: 260px; width: 100%; }
+#pdf-export-area { background: var(--bg); }
+.dash-empty { text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 13px; }
 </style>
 
 <script type="module">
@@ -338,6 +356,9 @@ onAuthStateChanged(auth, async (user) => {
 
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
+
+    const graficosBtn = document.getElementById('btn-graficos-tab');
+    if (graficosBtn) graficosBtn.style.display = currentUserDoc.rol === 'admin' ? 'flex' : 'none';
 
     // Mostrar botonera de reportes SOLAMENTE si es admin
     const exportBar = document.getElementById('export-bar-actions');
@@ -760,6 +781,10 @@ function updateSyncNote(msg) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
     Base de datos
   </button>
+  <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    Gráficos
+  </button>
   <button class="tab-btn" onclick="showTab('admin'); cargarPanelAdmin();" id="btn-admin-tab" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
     Admin
@@ -956,6 +981,89 @@ function updateSyncNote(msg) {
   </div>
 </div>
 
+<div class="tab-content" id="tab-graficos">
+
+  <div id="pdf-export-area">
+
+    <div class="slicers-card">
+      <h3>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        Filtros del dashboard
+      </h3>
+      <div class="slicers-grid">
+        <div>
+          <label>Desde</label>
+          <input type="date" id="dash-fecha-desde" onchange="renderDashboard()"/>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" id="dash-fecha-hasta" onchange="renderDashboard()"/>
+        </div>
+        <div>
+          <label>Banco (Origen)</label>
+          <select id="dash-banco" onchange="renderDashboard()">
+            <option value="">— Todos —</option>
+            <option value="EL TAJO">El Tajo</option>
+            <option value="TRITURA">Tritura</option>
+            <option value="MOZOMBOA1">Mozomboa Lerma</option>
+            <option value="MOZOMBOA2">Mozomboa XXX</option>
+            <option value="MOZOMBOA3">Mozomboa YYY</option>
+          </select>
+        </div>
+        <div>
+          <label>Material</label>
+          <select id="dash-material" onchange="renderDashboard()">
+            <option value="">— Todos —</option>
+            <option value="NUCLEO">Núcleo</option>
+            <option value="BERMA">Berma</option>
+            <option value="BERMA DE APOYO">Berma de apoyo</option>
+            <option value="SECUNDARIA 1">Secundaria 1</option>
+            <option value="SECUNDARIA 2">Secundaria 2</option>
+            <option value="CORAZA">Coraza</option>
+          </select>
+        </div>
+      </div>
+      <div class="slicer-actions">
+        <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+          Limpiar filtros
+        </button>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="val" id="dash-kpi-viajes">0</div>
+        <div class="lbl">Viajes (filtrados)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="val" id="dash-kpi-toneladas">0 t</div>
+        <div class="lbl">Toneladas (filtradas)</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Toneladas totales por Material</h3>
+      <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Toneladas totales por Banco (Origen)</h3>
+      <div class="chart-wrap"><canvas id="chart-banco"></canvas></div>
+    </div>
+
+    <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
+
+  </div>
+
+  <div style="margin-top:4px;margin-bottom:24px;">
+    <button class="btn btn-primary" style="width:100%" onclick="exportarDashboardPDF()" id="btn-pdf-dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      GENERAR PDF
+    </button>
+  </div>
+</div>
+
 <div class="tab-content" id="tab-admin">
   <div class="form-card">
     <h3>
@@ -1035,7 +1143,9 @@ function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + t).classList.add('active');
-  const tabBtn = t === 'admin' ? document.getElementById('btn-admin-tab') : document.getElementById('t-' + t);
+  const tabBtn = t === 'admin' ? document.getElementById('btn-admin-tab')
+               : t === 'graficos' ? document.getElementById('btn-graficos-tab')
+               : document.getElementById('t-' + t);
   if (tabBtn) tabBtn.classList.add('active');
   if (t === 'db') renderDB();
 }
@@ -1224,6 +1334,151 @@ function showSyncToast(icon, msg, type, duration = 3000) {
   if (syncToastTimer) clearTimeout(syncToastTimer);
   syncToastTimer = setTimeout(() => { toast.className = ''; }, duration);
 }
+
+// ══════════════════════════════════════════════════════
+// DASHBOARD DE GRÁFICOS (solo admin)
+// ══════════════════════════════════════════════════════
+let chartMaterial = null;
+let chartBanco    = null;
+
+function limpiarFiltrosDashboard() {
+  document.getElementById('dash-fecha-desde').value = '';
+  document.getElementById('dash-fecha-hasta').value = '';
+  document.getElementById('dash-banco').value = '';
+  document.getElementById('dash-material').value = '';
+  renderDashboard();
+}
+
+function getDashboardFiltered() {
+  const desde    = document.getElementById('dash-fecha-desde').value;
+  const hasta    = document.getElementById('dash-fecha-hasta').value;
+  const banco    = document.getElementById('dash-banco').value;
+  const material = document.getElementById('dash-material').value;
+  const datos = (window.db || []);
+
+  return datos.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (banco && r.banco !== banco) return false;
+    if (material && r.material !== material) return false;
+    return true;
+  });
+}
+
+function renderDashboard() {
+  if (typeof Chart === 'undefined') return;
+  const filtered = getDashboardFiltered();
+  const emptyState = document.getElementById('dash-empty-state');
+
+  // KPIs
+  const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+  document.getElementById('dash-kpi-viajes').textContent     = filtered.length;
+  document.getElementById('dash-kpi-toneladas').textContent  = totalTon.toFixed(2) + ' t';
+
+  emptyState.style.display = filtered.length ? 'none' : 'block';
+
+  // Agrupar por material
+  const porMaterial = {};
+  filtered.forEach(r => {
+    const key = r.material || 'Sin material';
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    porMaterial[key] = (porMaterial[key] || 0) + ton;
+  });
+
+  // Agrupar por banco
+  const porBanco = {};
+  filtered.forEach(r => {
+    const key = r.banco || 'Sin banco';
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    porBanco[key] = (porBanco[key] || 0) + ton;
+  });
+
+  const colores = ['#0f6e56','#1d9e75','#1a4f8a','#854f0b','#a32d2d','#5f5e5a','#2c8fb3','#8a5fb0'];
+
+  // ── Chart Material (Dona) ──
+  const ctxMat = document.getElementById('chart-material').getContext('2d');
+  const matLabels = Object.keys(porMaterial);
+  const matValues = Object.values(porMaterial).map(v => +v.toFixed(2));
+  if (chartMaterial) chartMaterial.destroy();
+  chartMaterial = new Chart(ctxMat, {
+    type: 'doughnut',
+    data: {
+      labels: matLabels,
+      datasets: [{ data: matValues, backgroundColor: colores, borderWidth: 1, borderColor: '#ffffff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed.toFixed(2) + ' t' } }
+      }
+    }
+  });
+
+  // ── Chart Banco (Barras) ──
+  const ctxBanco = document.getElementById('chart-banco').getContext('2d');
+  const bancoLabels = Object.keys(porBanco);
+  const bancoValues = Object.values(porBanco).map(v => +v.toFixed(2));
+  if (chartBanco) chartBanco.destroy();
+  chartBanco = new Chart(ctxBanco, {
+    type: 'bar',
+    data: {
+      labels: bancoLabels,
+      datasets: [{ label: 'Toneladas', data: bancoValues, backgroundColor: '#0f6e56', borderRadius: 6 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' t' } }
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { font: { size: 11 } } },
+        x: { ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+// ── Exportar Dashboard a PDF (Carta, vertical) ──
+function exportarDashboardPDF() {
+  if (typeof html2pdf === 'undefined') {
+    alert('No se pudo cargar el módulo de exportación PDF.');
+    return;
+  }
+  const btn = document.getElementById('btn-pdf-dashboard');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Generando PDF…';
+
+  const area = document.getElementById('pdf-export-area');
+  const fechaStr = new Date().toISOString().slice(0, 10);
+
+  const opciones = {
+    margin:       [10, 10, 10, 10],
+    filename:     `Dashboard_Acarreos_${fechaStr}.pdf`,
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#f5f4f0' },
+    jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+  };
+
+  // Pequeño delay para asegurar que Chart.js terminó de pintar antes de capturar
+  setTimeout(() => {
+    html2pdf().set(opciones).from(area).save().then(() => {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }).catch((err) => {
+      alert('Error al generar PDF: ' + err.message);
+      btn.disabled = false;
+      btn.innerHTML = original;
+    });
+  }, 300);
+}
+
+window.renderDashboard          = renderDashboard;
+window.limpiarFiltrosDashboard  = limpiarFiltrosDashboard;
+window.exportarDashboardPDF     = exportarDashboardPDF;
 
 // ── PWA ──
 let deferredPrompt = null;

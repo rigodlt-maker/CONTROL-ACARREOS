@@ -472,17 +472,34 @@ function startRealtimeSync() {
 
   // Nota: esta consulta usa un índice de un solo campo (fecha1), que Firestore
   // crea automáticamente — no requiere índice compuesto.
+  //
+  // 🔴 OJO (corregido): antes había un limit(3000) fijo aquí, sin importar
+  // qué ventana eligieras. Con 4,200+ registros/año eso recortaba en
+  // silencio el filtro de "Último año" (y se recortaría más con 300k).
+  // Ahora el tope escala con la ventana elegida, y para "Último año" se
+  // sube lo suficiente para no perder datos en tu volumen actual. Si más
+  // adelante tu BD crece mucho más, sube LIMITE_VENTANA['365'] o, mejor,
+  // usa el botón "Ver TODO el histórico" de la pestaña Base de datos
+  // (que pagina sin límite, ver cargarTodoElHistorico()).
+  const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 12000, 365: 40000 };
+  const tope = LIMITE_VENTANA[ventanaDias] || 6000;
+
   const q = query(
     collection(db_f, COL),
     where('fecha1', '>=', cutoffFecha(ventanaDias)),
     orderBy('fecha1', 'desc'),
-    limit(3000) // tope de seguridad incluso dentro de la ventana
+    limit(tope)
   );
 
   unsubscribe = onSnapshot(q,
     (snapshot) => {
       db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
       window.db = db;
+
+      // Si llegamos exactamente al tope, probablemente hay más registros en
+      // esta ventana de los que se cargaron. Avisamos en vez de fallar en
+      // silencio (que era el problema original).
+      const recortado = db.length >= tope;
 
       if (!isInitialized) {
         isInitialized = true;
@@ -492,7 +509,12 @@ function startRealtimeSync() {
       } else {
         renderDB();
         if (document.getElementById('tab-db').classList.contains('active')) {
-          updateSyncNote('✅ Sincronizado en tiempo real · ' + db.length + ' registro(s) en la ventana cargada');
+          updateSyncNote(
+            (recortado
+              ? '⚠️ Se alcanzó el tope de carga (' + tope.toLocaleString('es-MX') + '). Pueden faltar registros más antiguos de esta ventana — usa "Ver TODO el histórico" para buscarlos. · '
+              : '✅ Sincronizado en tiempo real · ')
+            + db.length.toLocaleString('es-MX') + ' registro(s) en la ventana cargada'
+          );
         }
       }
     },
@@ -576,6 +598,63 @@ async function cargarTotalesHistoricos() {
   }
 }
 window.cargarTotalesHistoricos = cargarTotalesHistoricos;
+
+// ══════════════════════════════════════════════════════
+// BUSCAR EN TODO EL HISTORIAL (coincidencia exacta)
+// ══════════════════════════════════════════════════════
+// 🔴 Esta es la función que el botón "Buscar también en todo el historial"
+// llamaba (onclick="buscarHistorial()") pero que nunca se llegó a escribir
+// — por eso "se trababa" al usarla. Hace consultas puntuales a Firestore
+// (where ==) por boleta, folio, # económico y placas, SIN traer la
+// colección completa. Cada campo es como máximo 1 lectura indexada de
+// un solo campo (Firestore las crea automático), así que es barato
+// incluso con 300k registros.
+window.buscarHistorial = async function() {
+  const qtexto = (document.getElementById('filter-input').value || '').trim();
+  if (!qtexto) { alert('Escribe algo en el buscador (boleta, folio, placas o # económico) y vuelve a intentar.'); return; }
+
+  const btn = document.getElementById('btn-buscar-historial');
+  const btnHtmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Buscando en todo el historial…'; }
+
+  try {
+    const campos = ['boleta', 'folio', 'economico', 'placas'];
+    const vistos = new Set();
+    let encontrados = [];
+
+    for (const campo of campos) {
+      try {
+        const snap = await getDocs(
+          query(collection(db_f, COL), where(campo, '==', qtexto), limit(500))
+        );
+        snap.forEach(d => {
+          if (!vistos.has(d.id)) {
+            vistos.add(d.id);
+            encontrados.push({ _fid: d.id, _historial: true, ...d.data() });
+          }
+        });
+      } catch (e) {
+        // Si falta un índice de un campo específico (poco común, Firestore
+        // los crea solo), avisamos pero seguimos con los demás campos.
+        if (!handleFirestoreIndexError(e)) console.warn('Error buscando por ' + campo + ':', e);
+      }
+    }
+
+    dbHistorial = encontrados;
+    window.dbHistorial = dbHistorial;
+
+    if (!encontrados.length) {
+      updateSyncNote('🔍 Sin resultados en el historial completo para "' + qtexto + '" (coincidencia exacta).');
+    } else {
+      updateSyncNote('🔍 ' + encontrados.length + ' registro(s) encontrado(s) en todo el historial para "' + qtexto + '".');
+    }
+    renderDB();
+  } catch (e) {
+    alert('Error al buscar en el historial: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
+  }
+};
 
 // ── Herramienta admin: reconstruir el resumen leyendo TODA la colección ──
 // Solo debe usarse una vez (o si se detecta que el resumen quedó desincronizado).
@@ -789,6 +868,122 @@ function parseDateForExcel(isoString) {
   return new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
 }
 
+// ══════════════════════════════════════════════════════
+// TRAER TODO FIRESTORE, PAGINADO (sin tope de 3000)
+// ══════════════════════════════════════════════════════
+// Función genérica que pagina por fecha1 en bloques de PAGE documentos,
+// usada tanto por el exportador de Excel como por la carga histórica
+// completa de los gráficos. Nunca trae todo de un solo jalón a memoria
+// del lado de Firestore (cada getDocs trae como máximo PAGE), aunque al
+// final sí junta todo en un array de JS — por diseño, porque para hacer
+// las gráficas necesitamos los registros agregables en el cliente.
+// Con cientos de miles de registros, esto puede tardar y usar bastante
+// memoria; ver advertencia en cargarHistoricoCompleto().
+async function traerTodoFirestore(desde, hasta, onProgreso) {
+  const PAGE = 1500;
+  let registros = [];
+  let cursor = null;
+  while (true) {
+    const constraints = [orderBy('fecha1', 'asc')];
+    if (desde) constraints.push(where('fecha1', '>=', desde));
+    if (hasta) constraints.push(where('fecha1', '<=', hasta));
+    if (cursor) constraints.push(startAfter(cursor));
+    constraints.push(limit(PAGE));
+    const snap = await getDocs(query(collection(db_f, COL), ...constraints));
+    if (snap.empty) break;
+    registros = registros.concat(snap.docs.map(d => ({ _fid: d.id, ...d.data() })));
+    if (onProgreso) onProgreso(registros.length);
+    if (snap.docs.length < PAGE) break;
+    cursor = snap.docs[snap.docs.length - 1];
+    if (registros.length > 500000) { // tope de seguridad extremo
+      console.warn('Se alcanzaron 500,000 registros leídos; se corta por seguridad.');
+      break;
+    }
+  }
+  return registros;
+}
+
+// ── Estado del histórico completo para el dashboard ──
+let dbHistoricoCompleto       = null;  // null = aún no se ha cargado
+  window.dbHistoricoCompleto  = dbHistoricoCompleto;
+let usandoHistoricoCompleto   = false; // toggle: ventana reciente vs. histórico completo
+let cargandoHistoricoCompleto = false;
+
+// Trae TODOS los registros de la colección (paginado) para usarlos en el
+// dashboard. Pediste explícitamente que los gráficos tomen absolutamente
+// todo el histórico, no solo la ventana reciente — esto es lo que lo logra.
+// Se cachea en memoria mientras la pestaña esté abierta; el botón
+// "🔄 Actualizar histórico" lo vuelve a traer si agregaste registros nuevos.
+window.cargarHistoricoCompleto = async function(forzar) {
+  if (cargandoHistoricoCompleto) return;
+  if (dbHistoricoCompleto && !forzar) {
+    usandoHistoricoCompleto = true;
+    renderDashboard();
+    return;
+  }
+  cargandoHistoricoCompleto = true;
+  const nota = document.getElementById('dash-historico-nota');
+  if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
+  try {
+    dbHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+      if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+    });
+    window.dbHistoricoCompleto = dbHistoricoCompleto;
+    usandoHistoricoCompleto = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+    renderDashboard();
+  } catch (e) {
+    if (nota) nota.textContent = '';
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    cargandoHistoricoCompleto = false;
+  }
+};
+
+// Volver a usar solo la ventana reciente (más rápido) en el dashboard.
+window.usarVentanaRecienteEnDashboard = function() {
+  usandoHistoricoCompleto = false;
+  const nota = document.getElementById('dash-historico-nota');
+  if (nota) nota.textContent = '';
+  renderDashboard();
+};
+
+// ── Histórico completo para la pestaña BASE DE DATOS (lista de registros) ──
+// Pediste explícitamente una opción que muestre más de 3,000 registros en
+// la hoja de Base de datos sin perder los presets de 7/30/90/365 días.
+// Reutiliza traerTodoFirestore() (paginado, sin tope real) y los pone en
+// dbHistorial, que renderDB() ya combina con la ventana reciente.
+let cargandoHistorialDBCompleto = false;
+window.verTodoElHistorialDB = async function() {
+  if (cargandoHistorialDBCompleto) return;
+  cargandoHistorialDBCompleto = true;
+  const btn = document.getElementById('btn-ver-todo-db');
+  const btnHtmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; }
+  try {
+    dbHistorial = await traerTodoFirestore(null, null, (n) => {
+      if (btn) btn.innerHTML = '<span class="spin"></span> Cargando todo… (' + n.toLocaleString('es-MX') + ')';
+      updateSyncNote('⏳ Cargando todo el histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora');
+    });
+    window.dbHistorial = dbHistorial;
+    updateSyncNote('📊 Mostrando TODO el histórico: ' + dbHistorial.length.toLocaleString('es-MX') + ' registro(s) en total (puede tardar más en filtrar/desplazar).');
+    renderDB();
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar todo el histórico: ' + e.message);
+  } finally {
+    cargandoHistorialDBCompleto = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
+  }
+};
+
+// Volver a la ventana reciente (7/30/90/365) en la lista de la base de datos,
+// descartando el histórico completo que se haya cargado con el botón de arriba.
+window.salirDeHistorialCompletoDB = function() {
+  dbHistorial = []; window.dbHistorial = dbHistorial;
+  updateSyncNote('✅ Mostrando solo la ventana cargada (' + ventanaDias + ' días) · ' + db.length.toLocaleString('es-MX') + ' registro(s)');
+  renderDB();
+};
+
 // ─── REPORTE EXCEL ───────────
 // 🔴 Antes este reporte exportaba solo lo que estuviera cargado en memoria
 // (window.db). Después de limitar la carga a una ventana reciente, eso
@@ -808,28 +1003,9 @@ window.exportarExcelAcarreos = async function() {
   if (btn) { btn.disabled = true; }
 
   try {
-    const PAGE = 1500;
-    let registros = [];
-    let cursor = null;
-    let pagina = 0;
-    while (true) {
-      const constraints = [orderBy('fecha1', 'asc')];
-      if (desde) constraints.push(where('fecha1', '>=', desde));
-      if (hasta) constraints.push(where('fecha1', '<=', hasta));
-      if (cursor) constraints.push(startAfter(cursor));
-      constraints.push(limit(PAGE));
-      const snap = await getDocs(query(collection(db_f, COL), ...constraints));
-      if (snap.empty) break;
-      registros = registros.concat(snap.docs.map(d => ({ _fid: d.id, ...d.data() })));
-      pagina++;
-      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + registros.length.toLocaleString('es-MX') + ')';
-      if (snap.docs.length < PAGE) break;
-      cursor = snap.docs[snap.docs.length - 1];
-      if (registros.length > 100000) { // tope de seguridad
-        alert('Se alcanzaron 100,000 registros. Acota el rango de fechas para exportar en partes más pequeñas.');
-        break;
-      }
-    }
+    const registros = await traerTodoFirestore(desde, hasta, (n) => {
+      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + n.toLocaleString('es-MX') + ')';
+    });
 
     if (!registros.length) {
       alert('No hay registros en ese rango para exportar.');
@@ -912,10 +1088,35 @@ function updateSyncNote(msg) {
   if (el) el.textContent = msg;
 }
 
-// Paso 3: cuando una consulta combinada (banco/material/destino + fecha) necesita
-// un índice compuesto que todavía no existe, Firestore lo dice en el mensaje de
-// error e incluye un enlace para crearlo con un clic en la consola. Esta función
-// detecta ese caso y se lo muestra claramente al usuario en vez de un error críptico.
+// ══════════════════════════════════════════════════════
+// PASO 3 — ÍNDICES DE FIRESTORE (estado real, leer esto)
+// ══════════════════════════════════════════════════════
+// Con el diseño ACTUAL de esta app, todas las consultas que se mandan a
+// Firestore son de un solo campo (fecha1, boleta, folio, economico,
+// placas). Esos índices Firestore los crea AUTOMÁTICAMENTE — no se
+// necesita configurar nada a mano para que la app funcione hoy:
+//   - startRealtimeSync(): where(fecha1>=) + orderBy(fecha1)  → índice simple, automático
+//   - buscarHistorial():    where(boleta/folio/economico/placas ==) → índice simple, automático
+//   - exportarExcelAcarreos()/cargarHistoricoCompleto(): where(fecha1>=, <=) + orderBy(fecha1) → índice simple, automático
+// Los filtros de banco/material/destino del dashboard NO se mandan a
+// Firestore: se aplican en JavaScript sobre el array ya cargado
+// (getDashboardFiltered), así que tampoco requieren índice.
+//
+// ¿Cuándo SÍ necesitarías un índice compuesto? Si en el futuro decides
+// que el dashboard filtre directamente en Firestore por banco+fecha o
+// material+fecha (en vez de traer todo y filtrar en el cliente), esas
+// consultas combinadas SÍ necesitan un índice compuesto. Para ese
+// escenario te dejo listo el archivo firestore.indexes.json (banco+fecha1,
+// material+fecha1, destino+fecha1). Para desplegarlo:
+//   1) Instala Firebase CLI: npm install -g firebase-tools
+//   2) firebase login
+//   3) firebase deploy --only firestore:indexes
+// (necesitas el firestore.indexes.json en la raíz de tu proyecto, junto
+// a tu firebase.json). Mientras no mandes esas consultas combinadas a
+// Firestore, no es urgente — pero si algún día Firestore te tira un
+// error "failed-precondition... requires an index", la función de abajo
+// te muestra el link directo para crearlo con un clic, sin esperar al
+// deploy del archivo.
 function handleFirestoreIndexError(err) {
   if (err && err.code === 'failed-precondition' && /index/i.test(err.message || '')) {
     alert('⚠️ Esta combinación de filtros necesita un índice de Firestore que aún no existe.\n\nPide al administrador del proyecto que abra este enlace y presione "Crear índice" (puede tardar unos minutos en activarse):\n\n' + err.message);
@@ -1224,6 +1425,18 @@ function handleFirestoreIndexError(err) {
     </button>
   </div>
 
+  <div style="display:flex; gap:8px; padding: 0 0 10px;">
+    <button class="btn btn-primary" id="btn-ver-todo-db" onclick="verTodoElHistorialDB()" style="flex:1;font-size:12px;">
+      📊 Ver TODO el histórico (sin tope)
+    </button>
+    <button class="btn btn-secondary" onclick="salirDeHistorialCompletoDB()" style="flex:0 0 auto;font-size:12px;padding:0 12px;">
+      Volver a la ventana
+    </button>
+  </div>
+  <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 10px;">
+    Usa esto si necesitas ver/buscar entre más de los registros de la ventana actual (por ejemplo, más de 3,000). Trae todos los registros de Firestore en bloques — con bases muy grandes puede tardar y usar más memoria del teléfono.
+  </div>
+
   <div id="records-list"></div>
   
   <div class="export-bar" id="export-bar-actions" style="display: none; flex-direction:column; align-items:stretch;">
@@ -1259,6 +1472,22 @@ function handleFirestoreIndexError(err) {
 <div class="tab-content" id="tab-graficos">
 
   <div>
+
+    <div class="slicers-card" style="margin-bottom:10px;">
+      <h3>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Fuente de datos del dashboard
+      </h3>
+      <div style="display:flex; gap:8px; margin-bottom:6px;">
+        <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
+          Ventana reciente cargada
+        </button>
+        <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompleto()" style="font-size:12px;">
+          📊 Ver TODO el histórico
+        </button>
+      </div>
+      <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+    </div>
 
     <div class="slicers-card">
       <h3>
@@ -1339,6 +1568,8 @@ function handleFirestoreIndexError(err) {
         </button>
       </div>
     </div>
+
+    <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:8px;"></div>
 
     <div class="kpi-row">
       <div class="kpi-card">
@@ -1460,6 +1691,7 @@ function showTab(t) {
                : document.getElementById('t-' + t);
   if (tabBtn) tabBtn.classList.add('active');
   if (t === 'db') renderDB();
+  if (t === 'graficos') renderDashboard();
 }
 
 // ── Cálculos automáticos ──
@@ -1794,7 +2026,14 @@ function getDashboardFiltered() {
   const bancos   = getMsSelected('banco');
   const materiales = getMsSelected('material');
   const cuerpos  = getMsSelected('cuerpo');
-  const datos = (window.db || []);
+
+  // Pediste que los gráficos puedan tomar TODO el histórico, no solo la
+  // ventana reciente sincronizada en vivo. Cuando el toggle "Histórico
+  // completo" está activo y ya se cargó, se usa ese array completo;
+  // si no, se usa la ventana reciente (window.db) como antes.
+  const datos = (usandoHistoricoCompleto && dbHistoricoCompleto)
+    ? dbHistoricoCompleto
+    : (window.db || []);
 
   return datos.filter(r => {
     if (!r.fecha1) return false;
@@ -1811,6 +2050,22 @@ function renderDashboard() {
   if (typeof Chart === 'undefined') return;
   const filtered = getDashboardFiltered();
   const emptyState = document.getElementById('dash-empty-state');
+
+  // Indicador de qué fuente de datos están usando los gráficos en este momento.
+  const fuenteEl = document.getElementById('dash-fuente-actual');
+  const btnVentana = document.getElementById('btn-dash-ventana');
+  const btnHistorico = document.getElementById('btn-dash-historico');
+  if (fuenteEl) {
+    if (usandoHistoricoCompleto && dbHistoricoCompleto) {
+      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
+      if (btnVentana)   { btnVentana.className   = 'btn btn-secondary'; }
+      if (btnHistorico) { btnHistorico.className = 'btn btn-primary'; }
+    } else {
+      fuenteEl.textContent = '🕐 Mostrando solo la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s)) · usa "Ver TODO el histórico" arriba para incluir todo';
+      if (btnVentana)   { btnVentana.className   = 'btn btn-primary'; }
+      if (btnHistorico) { btnHistorico.className = 'btn btn-secondary'; }
+    }
+  }
 
   // KPIs
   const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);

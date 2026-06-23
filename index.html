@@ -1,14 +1,4 @@
-¡Entendido, Rigo! Ese error de las horas extra (como las `05:59:24 p.m.`) pasaba porque Excel estaba intentando interpretar la zona horaria (UTC vs CST) al exportar, y le estaba asignando horas extrañas en lugar de dejar el día "limpio".
 
-Ya hice las modificaciones:
-
-1. **Limpié la interfaz:** Quité los botones de Exportar Excel Completo y CSV.
-2. **Nuevos botones:** Renombré el botón verde a **"Generar Reporte"** y agregué el de **"Ver Gráficos"** a su lado con un icono (por ahora no hace nada, como me pediste, dejé la función preparada).
-3. **Formato de Fecha Perfecto en Excel:** Modifiqué el motor de generación del reporte para que **obligue** a Excel a formatear esas dos columnas estrictamente como `dd/mm/yyyy` (Fecha Corta nativa), cortando de tajo cualquier metadato de hora.
-
-Aquí tienes tu código completo y actualizado:
-
-```html
 <!DOCTYPE html>
 <html lang="es">
 <head>

@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="Control Acarreos">
 <meta name="application-name" content="Control Acarreos">
 <meta name="theme-color" content="#0f6e56">
-<title>4CONTROL ACARREOS - Rompeolas Oriente · Veracruz</title>
+<title>CONTROL ACARREOS - Rompeolas Oriente · Veracruz</title>
 
 <link rel="manifest" href="./manifest.json">
 
@@ -430,9 +430,6 @@ window.cargarPanelAdmin = function() {
   unsubUsers = onSnapshot(collection(db_f, COL_USERS), (snap) => {
     const users = snap.docs.map(d => ({ _uid: d.id, ...d.data() }));
     const esMaster = (window._currentUserRol === 'master');
-    // 🟡 TEMPORAL (quitar cuando ya exista al menos un usuario master):
-    // dejamos que un admin también vea el selector de rol para poder auto-ascenderse a master.
-    const puedeAsignarRoles = esMaster || (window._currentUserRol === 'admin');
     users.sort((a, b) => (a.status === 'pendiente' ? -1 : 1) - (b.status === 'pendiente' ? -1 : 1));
     if (!users.length) {
       wrap.innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Sin usuarios.</p>';
@@ -447,7 +444,7 @@ window.cargarPanelAdmin = function() {
             <div style="font-size:11px;color:${u.status === 'autorizado' ? 'var(--accent)' : 'var(--danger)'}">
               ${u.status === 'autorizado' ? '✅ Autorizado' : '⏳ Pendiente'} · ${u.rol || 'capturista'}
             </div>
-            ${puedeAsignarRoles ? `
+            ${esMaster ? `
             <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
               <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">Rol:</span>
               <select onchange="cambiarRolUsuario('${u._uid}', this.value)"

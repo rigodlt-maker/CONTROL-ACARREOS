@@ -678,6 +678,7 @@ window.saveRecord = async function() {
   if (!data.material)     { alert('Selecciona el material.'); return; }
   if (!data.banco)        { alert('Selecciona el banco de origen.'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
+  if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
     if (data.tara_kg  <= 0) { alert('Ingresa la tara (o marca "Dejar como pendiente").'); return; }
@@ -742,6 +743,7 @@ window.editRecord = function() {
   document.getElementById('f-material').value = r.material || '';
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
+  document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
   document.getElementById('f-pendiente').checked = (r.status === 'pendiente');
   togglePendienteForm();
   calcCiclo(); calcPesos(); updateRangos();
@@ -841,6 +843,7 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
     <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
     <div class="detail-row"><span class="dk"># Económico</span><span class="dv">${fmt(r.economico)}</span></div>
+    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${fmt(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : r.tipo_camion))}</span></div>
     <div class="detail-section" style="margin-top:8px">Material y Destino</div>
     <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
     <div class="detail-row"><span class="dk">Rango</span><span class="dv">${fmt(r.rango)}</span></div>
@@ -1021,6 +1024,7 @@ window.exportarExcelAcarreos = async function() {
       "Folio":             r.folio || "—",
       "Boleta":            r.boleta || "S/B",
       "Placas":            r.placas || "—",
+      "Tipo de Camión":    r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : '—'),
       "# Economico":       r.economico || "—",
       "Material":          r.material || "—",
       "Banco Origen":      r.banco || "—",
@@ -1040,9 +1044,9 @@ window.exportarExcelAcarreos = async function() {
     const workbook = XLSX.utils.book_new();
     worksheet['!cols'] = [
       {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
-      {wch:12},{wch:12},{wch:15},{wch:14},{wch:18},
-      {wch:16},{wch:16},{wch:20},{wch:15},{wch:14},
-      {wch:15},{wch:14},{wch:18}
+      {wch:12},{wch:12},{wch:15},{wch:13},{wch:14},
+      {wch:18},{wch:16},{wch:16},{wch:20},{wch:15},
+      {wch:14},{wch:15},{wch:14},{wch:18}
     ];
     XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
     XLSX.writeFile(workbook, 'Reporte_Acarreos_Ejecutivo_' + new Date().toISOString().slice(0,10) + '.xlsx');
@@ -1273,6 +1277,14 @@ function handleFirestoreIndexError(err) {
         <label># Económico *</label>
         <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
       </div>
+    </div>
+    <div class="field-row">
+      <label>Tipo de camión *</label>
+      <select id="f-tipo-camion">
+        <option value="">— Seleccionar —</option>
+        <option value="VOLTEO">Volteo</option>
+        <option value="GONDOLA">Góndola</option>
+      </select>
     </div>
   </div>
 
@@ -1586,10 +1598,168 @@ function handleFirestoreIndexError(err) {
 </div>
 
 <div class="tab-content" id="tab-resumen">
-  <div class="dash-empty" style="padding:60px 16px;">
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 12px;display:block;opacity:0.35;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-    Pestaña "Resumen" — pendiente de definir.
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
+        Ventana reciente cargada
+      </button>
+      <button class="btn btn-primary" id="btn-resumen-historico" onclick="cargarHistoricoCompletoResumen()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+    </div>
+    <div id="resumen-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
   </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Periodo
+    </h3>
+    <div class="slicers-grid">
+      <div class="full">
+        <label>Ver por</label>
+        <select id="resumen-periodo-tipo" onchange="cambiarPeriodoResumen()">
+          <option value="dia">Día</option>
+          <option value="semana">Semana</option>
+          <option value="mes">Mes</option>
+          <option value="rango">Rango de días</option>
+        </select>
+      </div>
+      <div class="full" id="resumen-periodo-dia-wrap">
+        <label>Fecha</label>
+        <input type="date" id="resumen-fecha-dia" onchange="renderResumen()"/>
+      </div>
+      <div class="full" id="resumen-periodo-semana-wrap" style="display:none">
+        <label>Semana (cualquier día de esa semana)</label>
+        <input type="date" id="resumen-fecha-semana" onchange="renderResumen()"/>
+      </div>
+      <div class="full" id="resumen-periodo-mes-wrap" style="display:none">
+        <label>Mes</label>
+        <input type="month" id="resumen-fecha-mes" onchange="renderResumen()"/>
+      </div>
+      <div id="resumen-periodo-rango-wrap" style="display:none">
+        <label>Desde</label>
+        <input type="date" id="resumen-fecha-desde" onchange="renderResumen()"/>
+      </div>
+      <div id="resumen-periodo-rango-wrap2" style="display:none">
+        <label>Hasta</label>
+        <input type="date" id="resumen-fecha-hasta" onchange="renderResumen()"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-resumen-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-banco-btn" onclick="toggleMS('resumen-banco')">
+            <span id="ms-resumen-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-TAJO" value="EL TAJO" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-TRITURA" value="TRITURA" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-resumen-material-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-material-btn" onclick="toggleMS('resumen-material')">
+            <span id="ms-resumen-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-NUC" value="NUCLEO" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-BER" value="BERMA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-COR" value="CORAZA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-resumen-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-cuerpo-btn" onclick="toggleMS('resumen-cuerpo')">
+            <span id="ms-resumen-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MU" value="MURO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MO" value="MORRO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C1" value="CUERPO 1" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C2" value="CUERPO 2" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C3" value="CUERPO 3" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C4" value="CUERPO 4" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C5" value="CUERPO 5" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Tipo de camión</label>
+        <div class="ms-wrap" id="ms-resumen-tipocamion-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-tipocamion-btn" onclick="toggleMS('resumen-tipocamion')">
+            <span id="ms-resumen-tipocamion-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-tipocamion-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-VOLTEO">Volteo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-GONDOLA">Góndola</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosResumen()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <div id="resumen-dia-card" class="form-card" style="display:none;background:var(--accent-light);border-color:rgba(15,110,86,0.25);">
+    <h3 style="color:var(--accent);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Resumen del día (hasta el momento)
+    </h3>
+    <div id="resumen-dia-contenido" style="font-size:13px;line-height:1.7;color:var(--text);"></div>
+  </div>
+
+  <div id="resumen-titulo-card" style="text-align:center;margin-bottom:14px;">
+    <div style="font-size:15px;font-weight:700;color:var(--text);">ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ</div>
+    <div id="resumen-subtitulo-fecha" style="font-size:12px;color:var(--text-muted);margin-top:3px;"></div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="resumen-kpi-viajes">0</div>
+      <div class="lbl">Viajes totales</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="resumen-kpi-toneladas">0 t</div>
+      <div class="lbl">Toneladas totales</div>
+    </div>
+  </div>
+
+  <div id="resumen-tabla-jerarquica"></div>
+
+  <div id="resumen-empty-state" class="dash-empty" style="display:none">Sin datos para el periodo y filtros seleccionados.</div>
 </div>
 
 <div class="tab-content" id="tab-excel">
@@ -1790,6 +1960,7 @@ function showTab(t) {
   if (t === 'db') renderDB();
   if (t === 'graficos') renderDashboard();
   if (t === 'pendientes') renderPendientes();
+  if (t === 'resumen') initResumenTab();
 }
 
 function calcCiclo() {
@@ -1882,6 +2053,7 @@ function getFormData() {
                 : document.getElementById('f-rango').value,
     banco:    document.getElementById('f-banco').value,
     destino:  document.getElementById('f-destino').value,
+    tipo_camion: document.getElementById('f-tipo-camion').value,
     bruto_kg: bruto, tara_kg: esPendiente ? 0 : tara, neto_kg: esPendiente ? 0 : neto,
     ton:      (!esPendiente && neto > 0) ? parseFloat((neto / 1000).toFixed(3)) : 0,
     status:   esPendiente ? 'pendiente' : 'completo',
@@ -1896,6 +2068,7 @@ function clearForm() {
   document.getElementById('f-material').selectedIndex = 0;
   document.getElementById('f-banco').selectedIndex    = 0;
   document.getElementById('f-destino').selectedIndex  = 0;
+  document.getElementById('f-tipo-camion').selectedIndex = 0;
   document.getElementById('f-ciclo').value = '';
   document.getElementById('f-rango').value = '';
   document.getElementById('f-rango').style.display = 'block';
@@ -2097,6 +2270,7 @@ function toggleMS(key) {
 function onMsChange(key) {
   updateMsBtn(key);
   if (key.startsWith('excel-')) return;
+  if (key.startsWith('resumen-')) { renderResumen(); return; }
   renderDashboard();
 }
 
@@ -2346,6 +2520,293 @@ function limpiarFiltrosExcel() {
 }
 window.limpiarFiltrosExcel = limpiarFiltrosExcel;
 
+// ══════════════════════════════════════════════════════
+// PESTAÑA RESUMEN
+// ══════════════════════════════════════════════════════
+function initResumenTab() {
+  const nota = document.getElementById('resumen-historico-nota');
+  if (nota) {
+    nota.textContent = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+  cambiarPeriodoResumen();
+}
+window.initResumenTab = initResumenTab;
+
+window.usarVentanaRecienteEnResumen = function() {
+  window.usarVentanaRecienteEnDashboard();
+  initResumenTab();
+  renderResumen();
+};
+
+window.cargarHistoricoCompletoResumen = async function() {
+  const btn = document.getElementById('btn-resumen-historico');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
+  try {
+    await window.cargarHistoricoCompleto(false);
+  } finally {
+    initResumenTab();
+    renderResumen();
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
+
+function limpiarFiltrosResumen() {
+  ['resumen-banco','resumen-material','resumen-cuerpo','resumen-tipocamion'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+  renderResumen();
+}
+window.limpiarFiltrosResumen = limpiarFiltrosResumen;
+
+function isoHoy() {
+  const d = new Date();
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function cambiarPeriodoResumen() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  document.getElementById('resumen-periodo-dia-wrap').style.display    = (tipo === 'dia')    ? 'block' : 'none';
+  document.getElementById('resumen-periodo-semana-wrap').style.display = (tipo === 'semana') ? 'block' : 'none';
+  document.getElementById('resumen-periodo-mes-wrap').style.display    = (tipo === 'mes')    ? 'block' : 'none';
+  document.getElementById('resumen-periodo-rango-wrap').style.display  = (tipo === 'rango')  ? 'block' : 'none';
+  document.getElementById('resumen-periodo-rango-wrap2').style.display = (tipo === 'rango')  ? 'block' : 'none';
+  const fDia = document.getElementById('resumen-fecha-dia');
+  if (tipo === 'dia' && !fDia.value) fDia.value = isoHoy();
+  const fSemana = document.getElementById('resumen-fecha-semana');
+  if (tipo === 'semana' && !fSemana.value) fSemana.value = isoHoy();
+  const fMes = document.getElementById('resumen-fecha-mes');
+  if (tipo === 'mes' && !fMes.value) fMes.value = isoHoy().slice(0,7);
+  renderResumen();
+}
+window.cambiarPeriodoResumen = cambiarPeriodoResumen;
+
+// Devuelve {desde, hasta} en formato YYYY-MM-DD según el periodo seleccionado
+function getRangoPeriodoResumen() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  if (tipo === 'dia') {
+    const f = document.getElementById('resumen-fecha-dia').value || isoHoy();
+    return { desde: f, hasta: f };
+  }
+  if (tipo === 'semana') {
+    const base = document.getElementById('resumen-fecha-semana').value || isoHoy();
+    const [y,m,d] = base.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const diaSemana = dt.getDay(); // 0=domingo
+    const offsetLunes = (diaSemana === 0) ? 6 : diaSemana - 1;
+    const lunes = new Date(dt); lunes.setDate(dt.getDate() - offsetLunes);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    const toIso = (x) => x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+    return { desde: toIso(lunes), hasta: toIso(domingo) };
+  }
+  if (tipo === 'mes') {
+    const base = document.getElementById('resumen-fecha-mes').value || isoHoy().slice(0,7);
+    const [y,m] = base.split('-').map(Number);
+    const ultimoDia = new Date(y, m, 0).getDate();
+    return { desde: `${base}-01`, hasta: `${base}-${String(ultimoDia).padStart(2,'0')}` };
+  }
+  // rango
+  const desde = document.getElementById('resumen-fecha-desde').value;
+  const hasta = document.getElementById('resumen-fecha-hasta').value;
+  return { desde: desde || null, hasta: hasta || null };
+}
+
+function getResumenFiltradoBase() {
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const bancos      = getMsSelected('resumen-banco');
+  const materiales  = getMsSelected('resumen-material');
+  const cuerpos     = getMsSelected('resumen-cuerpo');
+  const tiposCamion = getMsSelected('resumen-tipocamion');
+  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+    ? window.dbHistoricoCompleto
+    : (window.db || []);
+  return datos.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (bancos.length      && !bancos.includes(r.banco))            return false;
+    if (materiales.length  && !materiales.includes(r.material))     return false;
+    if (cuerpos.length     && !cuerpos.includes(r.destino))         return false;
+    if (tiposCamion.length && !tiposCamion.includes(r.tipo_camion)) return false;
+    return true;
+  });
+}
+
+const NOMBRES_BANCO = {
+  'EL TAJO': 'EL TAJO', 'TRITURA': 'TRITURA',
+  'MOZOMBOA1': 'MOZOMBOA GAMI', 'MOZOMBOA2': 'MOZOMBOA LERMA', 'MOZOMBOA3': 'MOZOMBOA PORFIRIO'
+};
+const NOMBRES_MATERIAL = {
+  'NUCLEO': 'NÚCLEO', 'BERMA': 'BERMA', 'BERMA DE APOYO': 'BERMA DE APOYO',
+  'SECUNDARIA 1': 'SECUNDARIA 1', 'SECUNDARIA 2': 'SECUNDARIA 2', 'CORAZA': 'CORAZA'
+};
+function nombreBanco(b)    { return NOMBRES_BANCO[b]    || b || 'Sin banco'; }
+function nombreMaterial(m) { return NOMBRES_MATERIAL[m] || m || 'Sin material'; }
+function nombreTipoCamion(t) { return t === 'GONDOLA' ? 'Góndola' : (t === 'VOLTEO' ? 'Volteo' : 'sin tipo de camión'); }
+
+function fmtFechaCorta(iso) {
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return d + '/' + m + '/' + y;
+}
+
+function renderResumenDia() {
+  const card = document.getElementById('resumen-dia-card');
+  const cont = document.getElementById('resumen-dia-contenido');
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const hoy = isoHoy();
+  // Solo se muestra cuando el periodo seleccionado es "día" y coincide con la fecha de hoy.
+  if (tipo !== 'dia' || desde !== hoy) { card.style.display = 'none'; return; }
+
+  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+    ? window.dbHistoricoCompleto
+    : (window.db || []);
+  const delDia = datos.filter(r => r.fecha1 === hoy);
+
+  if (!delDia.length) {
+    card.style.display = 'block';
+    cont.innerHTML = '<div style="color:var(--text-muted);">Sin viajes registrados hasta el momento.</div>';
+    return;
+  }
+
+  // Agrupar por banco > material > destino > tipo de camión
+  const porBanco = {};
+  delDia.forEach(r => {
+    const b = r.banco || 'SIN BANCO';
+    if (!porBanco[b]) porBanco[b] = {};
+    const m = r.material || 'SIN MATERIAL';
+    if (!porBanco[b][m]) porBanco[b][m] = {};
+    const d = r.destino || 'SIN DESTINO';
+    if (!porBanco[b][m][d]) porBanco[b][m][d] = {};
+    const tc = r.tipo_camion || 'SIN_TIPO';
+    porBanco[b][m][d][tc] = (porBanco[b][m][d][tc] || 0) + 1;
+  });
+
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  let html = `<div style="font-weight:700;margin-bottom:8px;">Hasta el momento: ${delDia.length} viaje${delDia.length === 1 ? '' : 's'}</div>`;
+  ordenBancos.forEach(b => {
+    html += `<div style="margin-top:6px;"><strong>BANCO ${nombreBanco(b)}:</strong></div>`;
+    Object.keys(porBanco[b]).forEach(m => {
+      Object.keys(porBanco[b][m]).forEach(d => {
+        Object.keys(porBanco[b][m][d]).forEach(tc => {
+          const n = porBanco[b][m][d][tc];
+          const destinoTxt = (d === 'SIN DESTINO') ? 'sin destino registrado' : 'al ' + d.toLowerCase();
+          const tcTxt = (tc === 'SIN_TIPO') ? 'sin tipo de camión' : '(' + nombreTipoCamion(tc) + ')';
+          html += `<div style="padding-left:10px;">${n} viaje${n===1?'':'s'} de ${nombreMaterial(m).toLowerCase()} ${destinoTxt} ${tcTxt}</div>`;
+        });
+      });
+    });
+  });
+
+  card.style.display = 'block';
+  cont.innerHTML = html;
+}
+
+function renderResumenTitulo() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const sub = document.getElementById('resumen-subtitulo-fecha');
+  if (!desde && !hasta) { sub.textContent = 'Todas las fechas'; return; }
+  if (tipo === 'dia' || desde === hasta) {
+    sub.textContent = fmtFechaCorta(desde);
+  } else if (tipo === 'semana') {
+    sub.textContent = 'Semana del ' + fmtFechaCorta(desde) + ' al ' + fmtFechaCorta(hasta);
+  } else if (tipo === 'mes') {
+    const base = document.getElementById('resumen-fecha-mes').value;
+    const [y,m] = (base || '').split('-').map(Number);
+    const nombreMes = m ? new Date(y, m-1, 1).toLocaleString('es-MX', { month: 'long' }).toUpperCase() : '';
+    sub.textContent = nombreMes + ' ' + y;
+  } else {
+    sub.textContent = (desde ? fmtFechaCorta(desde) : '…') + ' — ' + (hasta ? fmtFechaCorta(hasta) : '…');
+  }
+}
+
+function renderResumenTablaJerarquica(filtered) {
+  const wrap = document.getElementById('resumen-tabla-jerarquica');
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  // Estructura: banco -> material -> destino -> { viajes, ton }
+  const porBanco = {};
+  filtered.forEach(r => {
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    const b = r.banco || 'SIN BANCO';
+    const m = r.material || 'SIN MATERIAL';
+    const d = r.destino || 'SIN DESTINO';
+    if (!porBanco[b]) porBanco[b] = { viajes: 0, ton: 0, materiales: {} };
+    porBanco[b].viajes += 1; porBanco[b].ton += ton;
+    if (!porBanco[b].materiales[m]) porBanco[b].materiales[m] = { viajes: 0, ton: 0, destinos: {} };
+    porBanco[b].materiales[m].viajes += 1; porBanco[b].materiales[m].ton += ton;
+    if (!porBanco[b].materiales[m].destinos[d]) porBanco[b].materiales[m].destinos[d] = { viajes: 0, ton: 0 };
+    porBanco[b].materiales[m].destinos[d].viajes += 1;
+    porBanco[b].materiales[m].destinos[d].ton += ton;
+  });
+
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+
+  let html = '<div class="chart-card" style="padding:0;overflow:hidden;">';
+  html += `
+    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;background:var(--accent);color:white;font-size:11px;font-weight:700;padding:10px 12px;">
+      <div>BANCO</div><div style="text-align:right;">VIAJES</div><div style="text-align:right;">TON.</div><div style="text-align:right;">TON. PROM.</div>
+    </div>`;
+
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    html += `
+      <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:10px 12px;background:var(--accent-light);font-weight:700;font-size:13px;border-bottom:0.5px solid var(--border);">
+        <div>${nombreBanco(b)}</div><div style="text-align:right;">${bd.viajes}</div><div style="text-align:right;">${fmtTon(bd.ton)}</div><div style="text-align:right;">${fmtProm(bd.ton, bd.viajes)}</div>
+      </div>`;
+    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
+    materiales.forEach(m => {
+      const md = bd.materiales[m];
+      html += `
+        <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:8px 12px 8px 22px;background:var(--surface);font-weight:600;font-size:12.5px;border-bottom:0.5px solid var(--border);">
+          <div>${nombreMaterial(m)}</div><div style="text-align:right;">${md.viajes}</div><div style="text-align:right;">${fmtTon(md.ton)}</div><div style="text-align:right;">${fmtProm(md.ton, md.viajes)}</div>
+        </div>`;
+      const destinos = Object.keys(md.destinos).sort();
+      destinos.forEach(d => {
+        const dd = md.destinos[d];
+        html += `
+          <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:7px 12px 7px 34px;background:var(--surface);font-size:12px;color:var(--text-muted);border-bottom:0.5px solid var(--border);">
+            <div>${d === 'SIN DESTINO' ? '— sin destino —' : d}</div><div style="text-align:right;">${dd.viajes}</div><div style="text-align:right;">${fmtTon(dd.ton)}</div><div style="text-align:right;">${fmtProm(dd.ton, dd.viajes)}</div>
+          </div>`;
+      });
+    });
+  });
+
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  html += `
+    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:11px 12px;background:var(--text);color:white;font-weight:700;font-size:13px;">
+      <div>TOTAL GENERAL</div><div style="text-align:right;">${totalViajes}</div><div style="text-align:right;">${fmtTon(totalTon)}</div><div style="text-align:right;">${fmtProm(totalTon, totalViajes)}</div>
+    </div>`;
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function renderResumen() {
+  const filtered = getResumenFiltradoBase();
+  const emptyState = document.getElementById('resumen-empty-state');
+
+  renderResumenTitulo();
+  renderResumenDia();
+
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  document.getElementById('resumen-kpi-viajes').textContent     = filtered.length;
+  document.getElementById('resumen-kpi-toneladas').textContent  = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+  emptyState.style.display = filtered.length ? 'none' : 'block';
+
+  renderResumenTablaJerarquica(filtered);
+}
+window.renderResumen = renderResumen;
+
 // CORRECCIÓN 1: descargarExcelDesdeTab ahora usa XLSX directamente
 // (disponible globalmente desde el CDN cargado al inicio del HTML)
 window.descargarExcelDesdeTab = function() {
@@ -2390,6 +2851,7 @@ window.descargarExcelDesdeTab = function() {
       "Folio":             r.folio || "—",
       "Boleta":            r.boleta || "S/B",
       "Placas":            r.placas || "—",
+      "Tipo de Camión":    r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : '—'),
       "# Economico":       r.economico || "—",
       "Material":          r.material || "—",
       "Banco Origen":      r.banco || "—",
@@ -2409,9 +2871,9 @@ window.descargarExcelDesdeTab = function() {
     }
     worksheet['!cols'] = [
       {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
-      {wch:12},{wch:12},{wch:15},{wch:14},{wch:18},
-      {wch:16},{wch:16},{wch:20},{wch:15},{wch:14},
-      {wch:15},{wch:14},{wch:18}
+      {wch:12},{wch:12},{wch:15},{wch:13},{wch:14},
+      {wch:18},{wch:16},{wch:16},{wch:20},{wch:15},
+      {wch:14},{wch:15},{wch:14},{wch:18}
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");

@@ -583,25 +583,7 @@ async function moverResumen(antes, despues) {
   if (despues) await aplicarResumen(despues, +1);
 }
 
-// ── Totales históricos (para mostrarlos en la pestaña Base de datos) ──
-async function cargarTotalesHistoricos() {
-  const el = document.getElementById('stat-historico');
-  if (!el) return;
-  try {
-    const snap = await getDocs(collection(db_f, COL_RESUMEN));
-    let viajes = 0, ton = 0;
-    snap.forEach(d => {
-      const v = d.data();
-      viajes += v.total_viajes || 0;
-      ton    += v.total_ton    || 0;
-    });
-    el.textContent = '📊 Histórico total (todas las fechas): ' + viajes.toLocaleString('es-MX') + ' viajes · ' + ton.toFixed(2) + ' t';
-  } catch (e) {
-    console.error('Error al leer resumen histórico:', e);
-    el.textContent = '';
-  }
-}
-window.cargarTotalesHistoricos = cargarTotalesHistoricos;
+
 
 // ══════════════════════════════════════════════════════
 // BUSCAR EN TODO EL HISTORIAL (coincidencia exacta)

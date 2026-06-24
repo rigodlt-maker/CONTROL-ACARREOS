@@ -467,6 +467,7 @@ function cutoffFecha(dias) {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+
 function startRealtimeSync() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
 
@@ -509,7 +510,6 @@ function startRealtimeSync() {
         isInitialized = true;
         appReady();
         renderDB();
-        cargarTotalesHistoricos();
       } else {
         renderDB();
         if (document.getElementById('tab-db').classList.contains('active')) {
@@ -677,7 +677,6 @@ window.recalcularResumen = async function() {
       await batch.commit();
     }
     alert('✅ Resumen reconstruido: ' + meses.length + ' mes(es) a partir de ' + snap.size + ' registro(s).');
-    cargarTotalesHistoricos();
   } catch (e) {
     alert('Error al recalcular el resumen: ' + e.message);
   } finally {
@@ -740,7 +739,6 @@ window.saveRecord = async function() {
     }
     clearForm();
     showTab('db');
-    cargarTotalesHistoricos();
   } catch(err) {
     alert('Error al guardar: ' + err.message);
   } finally {
@@ -789,7 +787,6 @@ window.deleteRecord = async function() {
     aplicarResumen(r, -1); // Paso 2: descontar del resumen mensual
     closeModalForce();
     showSyncToast('✅', 'Registro eliminado', 'ok');
-    cargarTotalesHistoricos();
   } catch(err) { alert('Error al eliminar: ' + err.message); }
 }
 
@@ -803,7 +800,6 @@ window.clearDB = async function() {
     const snapResumen = await getDocs(collection(db_f, COL_RESUMEN));
     await Promise.all(snapResumen.docs.map(d => deleteDoc(doc(db_f, COL_RESUMEN, d.id))));
     showSyncToast('✅', 'Base de datos borrada', 'ok');
-    cargarTotalesHistoricos();
   } catch(err) { alert('Error: ' + err.message); }
 }
 
@@ -811,7 +807,6 @@ window.clearDB = async function() {
 window.manualSync = function() {
   showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
   updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
-  cargarTotalesHistoricos();
 }
 
 // ─── ABRIR MODAL DETALLE ──────────────────────────────
@@ -1081,7 +1076,6 @@ window.migrarLocalStorage = async function() {
   }
   alert(`✅ Migrados: ${ok} | ❌ Fallidos: ${fail}`);
   if (ok > 0) localStorage.removeItem('acarreos_db_v3');
-  cargarTotalesHistoricos();
 }
 
 // ─── UTILS ────────────────────────────────────────────
@@ -1412,7 +1406,6 @@ function handleFirestoreIndexError(err) {
     <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes (ventana cargada)</div></div>
     <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
   </div>
-  <div id="stat-historico" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:12px;"></div>
   <div class="filter-row">
     <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="onFilterInput()"/>
     <button class="btn btn-secondary" id="btn-refresh-db" onclick="manualSync()" style="flex:0;padding:0 12px" title="Actualizar">

@@ -32,8 +32,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
 header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; }
 header p { font-size: 11px; opacity: 0.8; }
-.tab-bar { display: flex; background: var(--surface); border-bottom: 0.5px solid var(--border); position: sticky; top: 60px; z-index: 99; }
-.tab-btn { flex: 1; padding: 10px 4px 9px; border: none; background: none; font-size: 12px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; }
+.tab-bar { display: flex; background: var(--surface); border-bottom: 0.5px solid var(--border); position: sticky; top: 60px; z-index: 99; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab-btn { flex: 1 0 auto; min-width: 64px; padding: 10px 8px 9px; border: none; background: none; font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; white-space: nowrap; }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab-btn svg { width: 20px; height: 20px; }
 .tab-content { display: none; padding: 16px; }
@@ -393,25 +394,64 @@ onAuthStateChanged(auth, async (user) => {
     }
 
     const rol = currentUserDoc.rol || 'capturista';
-    const esMaster = rol === 'master';
-    const esAdmin  = rol === 'admin' || esMaster;
+    const esMaster     = rol === 'master';
+    const esAdmin      = rol === 'admin';
+    const esVisor      = rol === 'visor';
+    const esCapturista = rol === 'capturista';
+    // esAdminOMaster: tiene panel Admin con permisos (master además puede borrar a todos)
+    const esAdminOMaster = esAdmin || esMaster;
 
     const tag = document.getElementById('user-tag');
-    if (tag) tag.textContent = currentUserDoc.nombre + (esMaster ? ' (master)' : esAdmin ? ' (admin)' : '');
+    const etiquetaRol = esMaster ? ' (master)' : esAdmin ? ' (admin)' : esVisor ? ' (visor)' : ' (capturista)';
+    if (tag) tag.textContent = currentUserDoc.nombre + etiquetaRol;
 
-    // Exponer rol globalmente para que openModal() pueda controlar el botón eliminar
+    // Exponer rol globalmente para que openModal()/cargarPanelAdmin() controlen permisos finos
     window._currentUserRol = rol;
 
-    const adminBtn = document.getElementById('btn-admin-tab');
-    if (adminBtn) adminBtn.style.display = esAdmin ? 'flex' : 'none';
+    // ── Visibilidad de pestañas por rol ──
+    // Captura, Pendientes y Base de datos: capturista y admin (NO master, NO visor)
+    const captBtn = document.getElementById('t-form');
+    if (captBtn) captBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
 
+    const pendientesBtn = document.getElementById('btn-pendientes-tab');
+    if (pendientesBtn) pendientesBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
+
+    const dbBtn = document.getElementById('t-db');
+    if (dbBtn) dbBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
+
+    // Gráficos: admin, master, visor (NO capturista)
     const graficosBtn = document.getElementById('btn-graficos-tab');
-    if (graficosBtn) graficosBtn.style.display = esAdmin ? 'flex' : 'none';
+    if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
 
-    // Mostrar botonera de reportes SOLAMENTE si es admin o master
+    // Resumen: admin, master (pendiente de definir su contenido; visor no, capturista no)
+    const resumenBtn = document.getElementById('btn-resumen-tab');
+    if (resumenBtn) resumenBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+
+    // Excel: admin, master, visor (NO capturista)
+    const excelBtn = document.getElementById('btn-excel-tab');
+    if (excelBtn) excelBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
+
+    // Admin: admin y master únicamente
+    const adminBtn = document.getElementById('btn-admin-tab');
+    if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+
+    // Botonera de exportar Excel dentro de "Base de datos": solo admin/master la usan ahí
     const exportBar = document.getElementById('export-bar-actions');
     if (exportBar) {
-      exportBar.style.display = esAdmin ? 'flex' : 'none';
+      exportBar.style.display = esAdminOMaster ? 'flex' : 'none';
+    }
+
+    // Si el usuario quedó "atrapado" en una pestaña a la que ya no tiene
+    // acceso (p.ej. cambio de rol en caliente), lo mandamos a una pestaña
+    // permitida para evitar una pantalla en blanco.
+    const tabsPermitidas = [];
+    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'db');
+    if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel');
+    if (esAdminOMaster) tabsPermitidas.push('resumen', 'admin');
+    const tabActivaEl = document.querySelector('.tab-content.active');
+    const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form';
+    if (!tabsPermitidas.includes(tabActivaId) && tabsPermitidas.length) {
+      showTab(tabsPermitidas[0]);
     }
 
     startRealtimeSync();
@@ -430,28 +470,35 @@ window.cargarPanelAdmin = function() {
   unsubUsers = onSnapshot(collection(db_f, COL_USERS), (snap) => {
     const users = snap.docs.map(d => ({ _uid: d.id, ...d.data() }));
     const esMaster = (window._currentUserRol === 'master');
+    const esAdmin  = (window._currentUserRol === 'admin');
     users.sort((a, b) => (a.status === 'pendiente' ? -1 : 1) - (b.status === 'pendiente' ? -1 : 1));
     if (!users.length) {
       wrap.innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Sin usuarios.</p>';
       return;
     }
-    wrap.innerHTML = users.map(u => `
+    wrap.innerHTML = users.map(u => {
+      const rolUsuario = u.rol || 'capturista';
+      // Master elimina a cualquiera (incluido otro master).
+      // Admin elimina solo roles "inferiores": visor o capturista. Nunca a master, nunca a otro admin.
+      const puedeEliminar = esMaster || (esAdmin && (rolUsuario === 'visor' || rolUsuario === 'capturista'));
+      return `
       <div class="form-card" style="margin-bottom:10px;padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1;min-width:0">
             <div style="font-weight:600">${u.nombre || '(sin nombre)'}</div>
             <div style="font-size:12px;color:var(--text-muted)">${u.email}</div>
             <div style="font-size:11px;color:${u.status === 'autorizado' ? 'var(--accent)' : 'var(--danger)'}">
-              ${u.status === 'autorizado' ? '✅ Autorizado' : '⏳ Pendiente'} · ${u.rol || 'capturista'}
+              ${u.status === 'autorizado' ? '✅ Autorizado' : '⏳ Pendiente'} · ${rolUsuario}
             </div>
             ${esMaster ? `
             <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
               <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">Rol:</span>
               <select onchange="cambiarRolUsuario('${u._uid}', this.value)"
                 style="height:30px;border:0.5px solid var(--border-strong);border-radius:8px;padding:0 8px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;">
-                <option value="capturista" ${(u.rol||'capturista')==='capturista'?'selected':''}>capturista</option>
-                <option value="admin"      ${(u.rol||'')==='admin'?'selected':''}>admin</option>
-                <option value="master"     ${(u.rol||'')==='master'?'selected':''}>master</option>
+                <option value="capturista" ${rolUsuario==='capturista'?'selected':''}>capturista</option>
+                <option value="visor"      ${rolUsuario==='visor'?'selected':''}>visor</option>
+                <option value="admin"      ${rolUsuario==='admin'?'selected':''}>admin</option>
+                <option value="master"     ${rolUsuario==='master'?'selected':''}>master</option>
               </select>
             </div>` : ''}
           </div>
@@ -460,10 +507,15 @@ window.cargarPanelAdmin = function() {
               ? `<button onclick="cambiarStatusUsuario('${u._uid}','autorizado')" style="background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Autorizar</button>`
               : `<button onclick="cambiarStatusUsuario('${u._uid}','pendiente')" style="background:var(--danger);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Revocar</button>`
             }
+            ${puedeEliminar
+              ? `<button onclick="eliminarUsuario('${u._uid}','${(u.nombre||u.email||'').replace(/'/g,"\\'")}')" style="background:var(--danger-light);color:var(--danger);border:0.5px solid rgba(163,45,45,0.3);padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">🗑️ Eliminar</button>`
+              : ''
+            }
           </div>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   });
 }
 
@@ -476,11 +528,38 @@ window.cambiarStatusUsuario = async function(uid, nuevoStatus) {
 }
 
 window.cambiarRolUsuario = async function(uid, nuevoRol) {
-  if (!['capturista','admin','master'].includes(nuevoRol)) return;
+  if (!['capturista','visor','admin','master'].includes(nuevoRol)) return;
   try {
     await updateDoc(doc(db_f, COL_USERS, uid), { rol: nuevoRol });
   } catch (e) {
     alert('Error al cambiar rol: ' + e.message);
+  }
+}
+
+// ─── ELIMINAR USUARIO ─────────────────────────────────
+// Reglas: master puede eliminar a cualquiera. Admin solo puede eliminar
+// usuarios con rol "visor" o "capturista" — nunca a "master" ni a otro "admin".
+// Esto solo borra el documento de perfil en Firestore (no la cuenta de
+// Firebase Auth, que requeriría privilegios de servidor/Admin SDK).
+window.eliminarUsuario = async function(uid, nombre) {
+  try {
+    const snap = await getDocs(collection(db_f, COL_USERS));
+    const target = snap.docs.find(d => d.id === uid);
+    if (!target) { alert('No se encontró ese usuario.'); return; }
+    const rolTarget = target.data().rol || 'capturista';
+    const miRol = window._currentUserRol;
+
+    const permitido = miRol === 'master' || (miRol === 'admin' && (rolTarget === 'visor' || rolTarget === 'capturista'));
+    if (!permitido) {
+      alert('No tienes permiso para eliminar a este usuario.');
+      return;
+    }
+    if (!confirm('¿Eliminar permanentemente a "' + nombre + '" (' + rolTarget + ')? Esta acción no se puede deshacer.')) return;
+
+    await deleteDoc(doc(db_f, COL_USERS, uid));
+    showSyncToast('✅', 'Usuario eliminado', 'ok');
+  } catch (e) {
+    alert('Error al eliminar usuario: ' + e.message);
   }
 }
 
@@ -713,21 +792,26 @@ window.recalcularResumen = async function() {
 
 window.saveRecord = async function() {
   const data = getFormData();
+  const esPendiente = data.status === 'pendiente';
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
   if (!data.folio)        { alert('Ingresa el folio.'); return; }
   if (!data.economico)    { alert('Ingresa el # económico.'); return; }
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
   if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
-  if (!data.fecha2)       { alert('Ingresa la fecha del 2do pesaje.'); return; }
-  if (!data.hora2)        { alert('Ingresa la hora del 2do pesaje.'); return; }
-  if (!data.ciclo)        { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
+  if (!esPendiente) {
+    if (!data.fecha2)       { alert('Ingresa la fecha del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.hora2)        { alert('Ingresa la hora del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.ciclo)        { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
+  }
   if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
   if (!data.banco)        { alert('Selecciona el banco de origen.'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
-  if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
-  if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  if (!esPendiente) {
+    if (data.tara_kg  <= 0) { alert('Ingresa la tara (o marca "Dejar como pendiente").'); return; }
+    if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  }
   
   const saveBtn = document.getElementById('btn-guardar');
   saveBtn.disabled = true;
@@ -753,7 +837,7 @@ window.saveRecord = async function() {
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
       aplicarResumen(data, +1); // Paso 2: actualizar el resumen mensual (no bloquea el guardado)
-      showSyncToast('✅', 'Registro guardado en la nube', 'ok');
+      showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
     } else {
       const original = window._editOriginal || null;
       const { id: _localId, _fid: _fid2, ...payload } = data;
@@ -762,10 +846,10 @@ window.saveRecord = async function() {
       moverResumen(original, data); // Paso 2: revierte el aporte anterior y aplica el nuevo
       window._editFid = null;
       window._editOriginal = null;
-      showSyncToast('✅', 'Registro actualizado', 'ok');
+      showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
     }
     clearForm();
-    showTab('db');
+    showTab(esPendiente ? 'pendientes' : 'db');
   } catch(err) {
     alert('Error al guardar: ' + err.message);
   } finally {
@@ -794,6 +878,8 @@ window.editRecord = function() {
   document.getElementById('f-material').value = r.material || '';
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
+  document.getElementById('f-pendiente').checked = (r.status === 'pendiente');
+  togglePendienteForm();
   calcCiclo(); calcPesos(); updateRangos();
   setTimeout(() => {
     if (r.rango) {
@@ -846,10 +932,11 @@ window.openModal = function(fid) {
   const fmtNum = (v, s='') => v ? Number(v).toLocaleString('es-MX') + s : '—';
   
   document.getElementById('modal-body').innerHTML = `
+    ${r.status === 'pendiente' ? '<div class="banner banner-warning" style="margin-bottom:10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Pendiente de 2do pesaje y tara. Complétalo en la pestaña "Pendientes".</span></div>' : ''}
     <div class="detail-section">Pesajes</div>
     <div class="detail-row"><span class="dk">1er pesaje</span><span class="dv">${fmtFecha(r.fecha1)} ${fmt(r.hora1)}</span></div>
-    <div class="detail-row"><span class="dk">2do pesaje</span><span class="dv">${fmtFecha(r.fecha2)} ${fmt(r.hora2)}</span></div>
-    <div class="detail-row"><span class="dk">Ciclo</span><span class="dv">${fmt(r.ciclo)}</span></div>
+    <div class="detail-row"><span class="dk">2do pesaje</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtFecha(r.fecha2) + ' ' + fmt(r.hora2)}</span></div>
+    <div class="detail-row"><span class="dk">Ciclo</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmt(r.ciclo)}</span></div>
     <div class="detail-section" style="margin-top:8px">Identificación</div>
     <div class="detail-row"><span class="dk">Boleta</span><span class="dv">${fmt(r.boleta)}</span></div>
     <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
@@ -862,9 +949,9 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
     <div class="detail-section" style="margin-top:8px">Pesos</div>
     <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${fmtNum(r.tara_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${fmtNum(r.neto_kg,' kg')}</span></div>
-    <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.ton ? r.ton + ' ton' : '—'}</span></div>
+    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtNum(r.tara_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtNum(r.neto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : (r.ton ? r.ton + ' ton' : '—')}</span></div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
 
@@ -1245,10 +1332,14 @@ function handleFirestoreIndexError(err) {
   </div>
 </header>
 
-<div class="tab-bar">
+<div class="tab-bar" style="overflow-x:auto;">
   <button class="tab-btn active" onclick="showTab('form')" id="t-form">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
     Captura
+  </button>
+  <button class="tab-btn" onclick="showTab('pendientes'); renderPendientes();" id="btn-pendientes-tab" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    Pendientes
   </button>
   <button class="tab-btn" onclick="showTab('db')" id="t-db">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
@@ -1257,6 +1348,14 @@ function handleFirestoreIndexError(err) {
   <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
     Gráficos
+  </button>
+  <button class="tab-btn" onclick="showTab('resumen')" id="btn-resumen-tab" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    Resumen
+  </button>
+  <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Excel
   </button>
   <button class="tab-btn" onclick="showTab('admin'); cargarPanelAdmin();" id="btn-admin-tab" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
@@ -1280,7 +1379,11 @@ function handleFirestoreIndexError(err) {
         <input type="time" id="f-hora1" oninput="calcCiclo()"/>
       </div>
     </div>
-    <div class="field-row two-col">
+    <div class="field-row" style="display:flex;align-items:center;gap:8px;background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
+      <input type="checkbox" id="f-pendiente" onchange="togglePendienteForm()" style="width:18px;height:18px;accent-color:var(--warning);flex-shrink:0;cursor:pointer;">
+      <label for="f-pendiente" style="margin:0;font-size:13px;color:var(--warning);font-weight:600;cursor:pointer;">Dejar 2do pesaje y tara como pendientes</label>
+    </div>
+    <div class="field-row two-col" id="row-fecha2-hora2">
       <div>
         <label>Fecha 2do pesaje *</label>
         <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
@@ -1290,7 +1393,7 @@ function handleFirestoreIndexError(err) {
         <input type="time" id="f-hora2" oninput="calcCiclo()"/>
       </div>
     </div>
-    <div class="field-row">
+    <div class="field-row" id="row-ciclo">
       <label>Ciclo (tiempo entre pesajes)</label>
       <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
     </div>
@@ -1390,7 +1493,7 @@ function handleFirestoreIndexError(err) {
         <label>Peso Bruto (kg) *</label>
         <input type="number" id="f-bruto" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
       </div>
-      <div>
+      <div id="row-tara">
         <label>Tara (kg) *</label>
         <input type="number" id="f-tara" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
       </div>
@@ -1421,6 +1524,14 @@ function handleFirestoreIndexError(err) {
   </div>
 </div>
 
+<div class="tab-content" id="tab-pendientes">
+  <div class="banner banner-warning" style="margin-bottom:14px;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span>Viajes con 1er pesaje registrado a los que falta el 2do pesaje y/o la tara. Complétalos aquí.</span>
+  </div>
+  <div id="pendientes-list"></div>
+</div>
+
 <div class="tab-content" id="tab-db">
   <div class="filter-row" style="margin-bottom:10px;">
     <div style="flex:1">
@@ -1437,6 +1548,30 @@ function handleFirestoreIndexError(err) {
     <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes (ventana cargada)</div></div>
     <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
   </div>
+
+  <div class="export-bar" id="export-bar-actions" style="display: none; flex-direction:column; align-items:stretch; border-top:none; margin-top:0; padding-top:0;">
+    <div class="field-row two-col" style="margin-bottom:8px;">
+      <div>
+        <label>Exportar desde</label>
+        <input type="date" id="export-fecha-desde">
+      </div>
+      <div>
+        <label>Exportar hasta</label>
+        <input type="date" id="export-fecha-hasta">
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial (puede tardar en bases muy grandes).</div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Generar Reporte Excel
+      </button>
+      <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      </button>
+    </div>
+  </div>
+
   <div class="filter-row">
     <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="onFilterInput()"/>
     <button class="btn btn-secondary" id="btn-refresh-db" onclick="manualSync()" style="flex:0;padding:0 12px" title="Actualizar">
@@ -1464,29 +1599,6 @@ function handleFirestoreIndexError(err) {
   </div>
 
   <div id="records-list"></div>
-  
-  <div class="export-bar" id="export-bar-actions" style="display: none; flex-direction:column; align-items:stretch;">
-    <div class="field-row two-col" style="margin-bottom:8px;">
-      <div>
-        <label>Exportar desde</label>
-        <input type="date" id="export-fecha-desde">
-      </div>
-      <div>
-        <label>Exportar hasta</label>
-        <input type="date" id="export-fecha-hasta">
-      </div>
-    </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial (puede tardar en bases muy grandes).</div>
-    <div style="display:flex;gap:8px;">
-      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Generar Reporte Excel
-      </button>
-      <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-      </button>
-    </div>
-  </div>
 
   <div style="padding: 8px 0 4px;">
     <button class="btn btn-secondary" onclick="migrarLocalStorage()" style="width:100%">
@@ -1633,6 +1745,119 @@ function handleFirestoreIndexError(err) {
 
 </div>
 
+<div class="tab-content" id="tab-resumen">
+  <div class="dash-empty" style="padding:60px 16px;">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 12px;display:block;opacity:0.35;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    Pestaña "Resumen" — pendiente de definir.
+  </div>
+</div>
+
+<div class="tab-content" id="tab-excel">
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos
+    </h3>
+    <div style="display:flex; gap:8px; margin-bottom:6px;">
+      <button class="btn btn-secondary" id="btn-excel-ventana" onclick="usarVentanaRecienteEnExcel()" style="font-size:12px;">
+        Ventana reciente cargada
+      </button>
+      <button class="btn btn-primary" id="btn-excel-historico" onclick="cargarHistoricoCompletoExcel()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+    </div>
+    <div id="excel-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Desde</label>
+        <input type="date" id="excel-fecha-desde"/>
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" id="excel-fecha-hasta"/>
+      </div>
+
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-excel-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-banco-btn" onclick="toggleMS('excel-banco')">
+            <span id="ms-excel-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-TAJO" value="EL TAJO" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-TRITURA" value="TRITURA" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-excel-material-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-material-btn" onclick="toggleMS('excel-material')">
+            <span id="ms-excel-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-NUC" value="NUCLEO" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-BER" value="BERMA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-COR" value="CORAZA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="full">
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-excel-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-cuerpo-btn" onclick="toggleMS('excel-cuerpo')">
+            <span id="ms-excel-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MU" value="MURO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MO" value="MORRO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C1" value="CUERPO 1" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C2" value="CUERPO 2" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C3" value="CUERPO 3" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C4" value="CUERPO 4" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C5" value="CUERPO 5" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosExcel()" style="margin-top: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <button id="btn-descargar-excel" onclick="descargarExcelDesdeTab()" style="width:100%; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 13px; margin-top:4px;">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Descargar excel
+  </button>
+
+  <button class="btn btn-secondary" disabled title="Pendiente de definir" style="width:100%; margin-top:10px; opacity:0.55; cursor:not-allowed;">
+    Resumen
+  </button>
+</div>
+
 <div class="tab-content" id="tab-admin">
   <div class="form-card">
     <h3>
@@ -1712,12 +1937,18 @@ function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + t).classList.add('active');
-  const tabBtn = t === 'admin' ? document.getElementById('btn-admin-tab')
-               : t === 'graficos' ? document.getElementById('btn-graficos-tab')
-               : document.getElementById('t-' + t);
+  const tabBtnMap = {
+    admin: 'btn-admin-tab',
+    graficos: 'btn-graficos-tab',
+    resumen: 'btn-resumen-tab',
+    excel: 'btn-excel-tab',
+    pendientes: 'btn-pendientes-tab'
+  };
+  const tabBtn = tabBtnMap[t] ? document.getElementById(tabBtnMap[t]) : document.getElementById('t-' + t);
   if (tabBtn) tabBtn.classList.add('active');
   if (t === 'db') renderDB();
   if (t === 'graficos') renderDashboard();
+  if (t === 'pendientes') renderPendientes();
 }
 
 // ── Cálculos automáticos ──
@@ -1796,13 +2027,14 @@ function getFormData() {
   const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
   const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
   const neto  = bruto - tara;
+  const esPendiente = document.getElementById('f-pendiente').checked;
   return {
     id:       Date.now(),
     fecha1:   document.getElementById('f-fecha1').value,
     hora1:    document.getElementById('f-hora1').value,
-    fecha2:   document.getElementById('f-fecha2').value,
-    hora2:    document.getElementById('f-hora2').value,
-    ciclo:    document.getElementById('f-ciclo').value,
+    fecha2:   esPendiente ? '' : document.getElementById('f-fecha2').value,
+    hora2:    esPendiente ? '' : document.getElementById('f-hora2').value,
+    ciclo:    esPendiente ? '' : document.getElementById('f-ciclo').value,
     boleta:   document.getElementById('f-boleta').value.trim(),
     folio:    document.getElementById('f-folio').value.trim(),
     economico:document.getElementById('f-economico').value.trim().toUpperCase(),
@@ -1813,8 +2045,9 @@ function getFormData() {
                 : document.getElementById('f-rango').value,
     banco:    document.getElementById('f-banco').value,
     destino:  document.getElementById('f-destino').value,
-    bruto_kg: bruto, tara_kg: tara, neto_kg: neto,
-    ton:      neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    bruto_kg: bruto, tara_kg: esPendiente ? 0 : tara, neto_kg: esPendiente ? 0 : neto,
+    ton:      (!esPendiente && neto > 0) ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    status:   esPendiente ? 'pendiente' : 'completo',
     ts:       new Date().toISOString()
   };
 }
@@ -1835,8 +2068,37 @@ function clearForm() {
   document.getElementById('range-hint').style.display = 'none';
   document.getElementById('neto-display').textContent = '—';
   document.getElementById('ton-display').textContent  = '—';
+  document.getElementById('f-pendiente').checked = false;
+  togglePendienteForm();
   window._editFid = null;
 }
+
+// ── Marcar/desmarcar 2do pesaje y tara como pendientes en Captura ──
+function togglePendienteForm() {
+  const pendiente = document.getElementById('f-pendiente').checked;
+  const fecha2El = document.getElementById('f-fecha2');
+  const hora2El  = document.getElementById('f-hora2');
+  const taraEl   = document.getElementById('f-tara');
+  const rowFecha2 = document.getElementById('row-fecha2-hora2');
+  const rowCiclo  = document.getElementById('row-ciclo');
+  const rowTara   = document.getElementById('row-tara');
+
+  fecha2El.disabled = pendiente;
+  hora2El.disabled   = pendiente;
+  taraEl.disabled    = pendiente;
+
+  rowFecha2.style.opacity = pendiente ? '0.4' : '1';
+  rowCiclo.style.opacity  = pendiente ? '0.4' : '1';
+  rowTara.style.opacity   = pendiente ? '0.4' : '1';
+
+  if (pendiente) {
+    fecha2El.value = ''; hora2El.value = ''; taraEl.value = '';
+    document.getElementById('f-ciclo').value = '';
+    document.getElementById('neto-display').textContent = '—';
+    document.getElementById('ton-display').textContent  = '—';
+  }
+}
+window.togglePendienteForm = togglePendienteForm;
 
 // ── Formato de fecha ──
 function fmtFecha(val) {
@@ -1877,12 +2139,13 @@ function renderDB() {
         <div class="rec-boleta">Boleta #${r.boleta}${r._historial ? ' <span style="font-size:10px;color:var(--info);font-weight:500;">· histórico</span>' : ''}</div>
         <div class="rec-detail">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
           ${r.banco   ? '<span class="badge badge-blue">'+r.banco+'</span>'   : ''}
           ${r.destino ? '<span class="badge badge-green">'+r.destino+'</span>' : ''}
         </div>
       </div>
       <div class="rec-peso">
-        <div class="kg">${((r.neto_kg||0)/1000).toFixed(3)} t</div>
+        <div class="kg">${r.status === 'pendiente' ? '— t' : ((r.neto_kg||0)/1000).toFixed(3) + ' t'}</div>
         <div class="fecha">${fmtFecha(r.fecha1)}</div>
         ${r.ciclo ? '<div class="fecha" style="margin-top:1px">⏱ '+r.ciclo+'</div>' : ''}
       </div>
@@ -1987,7 +2250,7 @@ function getMsSelected(key) {
 }
 
 function getMsLabel(key) {
-  const labels = { banco: 'Banco', material: 'Material', cuerpo: 'Cuerpo' };
+  const labels = { banco: 'Banco', material: 'Material', cuerpo: 'Cuerpo', 'excel-banco': 'Banco', 'excel-material': 'Material', 'excel-cuerpo': 'Cuerpo' };
   const sel = getMsSelected(key);
   const dd = document.getElementById('ms-' + key + '-dd');
   const total = dd ? dd.querySelectorAll('input[type="checkbox"]').length : 0;
@@ -2025,6 +2288,7 @@ function toggleMS(key) {
 
 function onMsChange(key) {
   updateMsBtn(key);
+  if (key.startsWith('excel-')) return; // los slicers de Excel se leen al momento de descargar, no repintan nada en vivo
   renderDashboard();
 }
 
@@ -2237,6 +2501,232 @@ function renderDashboard() {
 
 window.renderDashboard          = renderDashboard;
 window.limpiarFiltrosDashboard  = limpiarFiltrosDashboard;
+
+// ══════════════════════════════════════════════════════
+// PESTAÑA "PENDIENTES"
+// ══════════════════════════════════════════════════════
+// Muestra los registros con status === 'pendiente' (capturados con 1er
+// pesaje pero sin 2do pesaje/tara) que estén dentro de la ventana reciente
+// cargada (window.db) o en resultados de búsqueda de historial. Permite
+// llenar SOLO lo que falta (fecha2, hora2, tara) sin reabrir el formulario
+// completo, para no saturar de campos esta pantalla.
+function getPendientesFiltered() {
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
+  return combinados.filter(r => r.status === 'pendiente');
+}
+
+function renderPendientes() {
+  const list = document.getElementById('pendientes-list');
+  if (!list) return;
+  const pendientes = getPendientesFiltered().sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
+
+  if (!pendientes.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <p>Sin viajes pendientes de destare por ahora.</p>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = pendientes.map(r => `
+    <div class="form-card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div>
+          <div style="font-weight:600;font-size:14px;">Boleta #${r.boleta || '—'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">1er pesaje: ${fmtFecha(r.fecha1)} ${r.hora1||''} · Bruto: ${r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX')+' kg' : '—'}</div>
+        </div>
+        <span class="badge" style="background:var(--warning-light);color:var(--warning);white-space:nowrap;">⏳ Pendiente</span>
+      </div>
+      <div class="field-row two-col">
+        <div>
+          <label>Fecha 2do pesaje</label>
+          <input type="date" id="pend-fecha2-${r._fid}">
+        </div>
+        <div>
+          <label>Hora 2do pesaje</label>
+          <input type="time" id="pend-hora2-${r._fid}">
+        </div>
+      </div>
+      <div class="field-row">
+        <label>Tara (kg)</label>
+        <input type="number" id="pend-tara-${r._fid}" placeholder="0000" inputmode="decimal">
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="completarPendiente('${r._fid}')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Completar destare
+      </button>
+    </div>
+  `).join('');
+}
+window.renderPendientes = renderPendientes;
+
+// Completa un registro pendiente con fecha2/hora2/tara, recalcula el ciclo
+// y el peso neto/toneladas, y ajusta el resumen mensual (que ya tenía el
+// viaje contado pero con 0 toneladas) sumando ahora el peso real.
+window.completarPendiente = async function(fid) {
+  const r = findRecord(fid);
+  if (!r) { alert('No se encontró el registro.'); return; }
+
+  const fecha2 = (document.getElementById('pend-fecha2-' + fid) || {}).value || '';
+  const hora2  = (document.getElementById('pend-hora2-'  + fid) || {}).value || '';
+  const tara   = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
+
+  if (!fecha2) { alert('Ingresa la fecha del 2do pesaje.'); return; }
+  if (!hora2)  { alert('Ingresa la hora del 2do pesaje.'); return; }
+  if (tara <= 0) { alert('Ingresa la tara.'); return; }
+
+  const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00') + ':00');
+  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+  const diffMs = dt2 - dt1;
+  if (diffMs < 0) { alert('La fecha/hora del 2do pesaje no puede ser anterior a la del 1er pesaje.'); return; }
+  const totalMin = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  const ciclo = hrs > 0 ? hrs + 'h ' + String(min).padStart(2, '0') + 'min' : min + ' min';
+
+  const bruto = r.bruto_kg || 0;
+  const neto  = bruto - tara;
+  if (neto <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+
+  const original = { ...r };
+  const actualizado = {
+    ...r,
+    fecha2, hora2, ciclo,
+    tara_kg: tara, neto_kg: neto,
+    ton: neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    status: 'completo'
+  };
+
+  try {
+    const { _fid: _f, id: _id, ...payload } = actualizado;
+    payload.ts_updated = serverTimestamp();
+    await updateDoc(doc(db_f, COL, fid), payload);
+    moverResumen(original, actualizado); // pasa de 0 toneladas a las toneladas reales, sin tocar total_viajes otra vez
+    showSyncToast('✅', 'Destare completado', 'ok');
+  } catch (e) {
+    alert('Error al completar el registro: ' + e.message);
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// PESTAÑA "EXCEL" (rol Visor + admin/master)
+// ══════════════════════════════════════════════════════
+function initExcelTab() {
+  // Refleja el estado actual de histórico/ventana (compartido con Gráficos) en la nota de esta pestaña.
+  const nota = document.getElementById('excel-historico-nota');
+  if (nota) {
+    nota.textContent = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+}
+window.initExcelTab = initExcelTab;
+
+window.usarVentanaRecienteEnExcel = function() {
+  window.usarVentanaRecienteEnDashboard();
+  initExcelTab();
+};
+
+window.cargarHistoricoCompletoExcel = async function() {
+  const btn = document.getElementById('btn-excel-historico');
+  const nota = document.getElementById('excel-historico-nota');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
+  try {
+    await window.cargarHistoricoCompleto(false);
+  } finally {
+    initExcelTab();
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
+
+function limpiarFiltrosExcel() {
+  document.getElementById('excel-fecha-desde').value = '';
+  document.getElementById('excel-fecha-hasta').value = '';
+  ['excel-banco','excel-material','excel-cuerpo'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+}
+window.limpiarFiltrosExcel = limpiarFiltrosExcel;
+
+// Genera y descarga el Excel a partir de los datos ya cargados en memoria
+// (ventana reciente o histórico completo, lo que esté activo) aplicando
+// los slicers de Fecha/Banco/Material/Cuerpo de esta pestaña — pensado
+// para el rol "visor", que no tiene acceso a Base de datos.
+window.descargarExcelDesdeTab = async function() {
+  const desde = document.getElementById('excel-fecha-desde').value;
+  const hasta = document.getElementById('excel-fecha-hasta').value;
+  const bancos     = getMsSelected('excel-banco');
+  const materiales = getMsSelected('excel-material');
+  const cuerpos    = getMsSelected('excel-cuerpo');
+
+  const fuente = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
+    ? window.dbHistoricoCompleto
+    : (window.db || []);
+
+  const registros = fuente.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (bancos.length && !bancos.includes(r.banco)) return false;
+    if (materiales.length && !materiales.includes(r.material)) return false;
+    if (cuerpos.length && !cuerpos.includes(r.destino)) return false;
+    return true;
+  });
+
+  if (!registros.length) { alert('No hay registros para esos filtros.'); return; }
+
+  const btn = document.getElementById('btn-descargar-excel');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
+
+  try {
+    const datosFormateados = registros.map((r) => ({
+      "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
+      "Hora 1er Pesaje": r.hora1 || "—",
+      "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
+      "Hora 2do Pesaje": r.hora2 || "—",
+      "Ciclo": r.ciclo || "—",
+      "Folio": r.folio || "—",
+      "Boleta": r.boleta || "S/B",
+      "Placas": r.placas || "—",
+      "# Economico": r.economico || "—",
+      "Material": r.material || "—",
+      "Banco Origen": r.banco || "—",
+      "Destino (Tiro)": r.destino || "—",
+      "Rango de Material": r.rango || "—",
+      "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+      "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
+      "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
+      "Peso Neto (ton)": r.ton || "0",
+      "Estatus": r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
+    for (let cellAddress in worksheet) {
+      if (cellAddress[0] === '!') continue;
+      let cell = worksheet[cellAddress];
+      if (cell.t === 'd') cell.z = 'dd/mm/yyyy';
+    }
+    const workbook = XLSX.utils.book_new();
+    worksheet['!cols'] = [
+      {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
+      {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
+      {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
+      {wch: 15}, {wch: 14}, {wch: 18}
+    ];
+    const fechaStr = new Date().toISOString().slice(0, 10);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
+    XLSX.writeFile(workbook, `Reporte_Acarreos_${fechaStr}.xlsx`);
+  } catch (err) {
+    alert('Error al generar el Excel: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
 
 // ── PWA ──
 let deferredPrompt = null;

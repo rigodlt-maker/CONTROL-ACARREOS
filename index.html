@@ -32,11 +32,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
 header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; }
 header p { font-size: 11px; opacity: 0.8; }
-.tab-bar { display: flex; background: var(--surface); border-bottom: 0.5px solid var(--border); position: sticky; top: 60px; z-index: 99; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+
+/* ── TAB BAR EN DOS FILAS ── */
+.tab-bar-wrap {
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--border);
+  position: sticky;
+  top: 60px;
+  z-index: 99;
+}
+.tab-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  border-bottom: 0.5px solid var(--border);
+}
+.tab-bar:last-child { border-bottom: none; }
 .tab-bar::-webkit-scrollbar { display: none; }
-.tab-btn { flex: 1 0 auto; min-width: 64px; padding: 10px 8px 9px; border: none; background: none; font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab-btn { flex: 1 0 auto; min-width: 64px; padding: 9px 8px 8px; border: none; background: none; font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; white-space: nowrap; }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-btn svg { width: 20px; height: 20px; }
+.tab-btn svg { width: 18px; height: 18px; }
+
 .tab-content { display: none; padding: 16px; }
 .tab-content.active { display: block; }
 
@@ -221,7 +239,6 @@ import { getAuth, onAuthStateChanged,
          signInWithEmailAndPassword,
          signOut }                                from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-// ─── CONFIG ───────────────────────────────────────────
 const firebaseConfig = {
   apiKey:            "AIzaSyADUbA3X07prA5yOUzFJX_zVntN88-JMwc",
   authDomain:        "acarreos-rompeolas.firebaseapp.com",
@@ -235,28 +252,25 @@ const db_f       = getFirestore(app);
 const auth       = getAuth(app);
 const COL        = "acarreos";
 const COL_USERS  = "usuarios";
-const COL_RESUMEN = "resumenes";   // 1 documento por mes (YYYY-MM) con totales acumulados
+const COL_RESUMEN = "resumenes";
 
-// ─── ESTADO LOCAL ─────────────────────────────────────
-let db             = [];   // ventana reciente (la que se mantiene sincronizada en vivo)
+let db             = [];
   window.db          = db;
-let dbHistorial    = [];   // resultados puntuales de "buscar en historial completo"
+let dbHistorial    = [];
   window.dbHistorial = dbHistorial;
 let unsubscribe    = null;
 let unsubUsers     = null;
 let isInitialized  = false;
 let currentUser    = null;
 let currentUserDoc = null;
-let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10); // días que se cargan por defecto
-let dashboardToken = 0;    // evita que respuestas async fuera de orden pisen la última
+let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10);
+let dashboardToken = 0;
 
-// Encuentra un registro ya sea en la ventana cargada o en resultados de historial
 function findRecord(fid) {
   return db.find(x => x._fid === fid) || dbHistorial.find(x => x._fid === fid);
 }
 window.findRecord = findRecord;
 
-// ─── FUNCIONES DE PANTALLA ────────────────────────────
 function appReady() {
   document.getElementById('fb-loading').style.display    = 'none';
   document.getElementById('fb-error').style.display      = 'none';
@@ -290,7 +304,6 @@ function appError(msg) {
   document.getElementById('fb-error-msg').textContent = msg;
 }
 
-// ─── AUTH: TAB SWITCHER ───────────────────────────────
 window.switchAuthTab = function(tab) {
   document.querySelectorAll('.auth-tab').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.auth-form').forEach(el => el.classList.remove('active'));
@@ -298,29 +311,24 @@ window.switchAuthTab = function(tab) {
   document.getElementById('auth-form-' + tab).classList.add('active');
 }
 
-// ─── REGISTRAR USUARIO ────────────────────────────────
-const ADMIN_EMAILS = ["rodrigo.delatorre.indi@gmail.com", "otrocapitandecontrol@ejemplo.com"];
-
 window.registrarUsuario = async function() {
   const nombre = document.getElementById('reg-nombre').value.trim();
   const email  = document.getElementById('reg-email').value.trim();
   const pass   = document.getElementById('reg-pass').value;
-  
   if (!nombre) { alert('Ingresa tu nombre.'); return; }
   if (!email || !pass) { alert('Ingresa correo y contraseña.'); return; }
   if (pass.length < 6) { alert('La contraseña debe tener al menos 6 caracteres.'); return; }
-  
   const btn = document.getElementById('btn-registrar');
   btn.disabled = true; btn.textContent = 'Registrando…';
-  
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    const esAdmin = ADMIN_EMAILS.includes(email.toLowerCase());
-    
+    // Todo registro nuevo entra como pendiente/capturista.
+    // El usuario con rol "master" es quien autoriza y asigna el rol
+    // definitivo desde el panel de Admin.
     await setDoc(doc(db_f, COL_USERS, cred.user.uid), {
       nombre, email,
-      status: esAdmin ? 'autorizado' : 'pendiente',
-      rol: esAdmin ? 'admin' : 'capturista',
+      status: 'pendiente',
+      rol: 'capturista',
       creado: serverTimestamp()
     });
   } catch (e) {
@@ -329,16 +337,12 @@ window.registrarUsuario = async function() {
   }
 }
 
-// ─── LOGIN ────────────────────────────────────────────
 window.loginUsuario = async function() {
   const email = document.getElementById('login-email').value.trim();
   const pass  = document.getElementById('login-pass').value;
-  
   if (!email || !pass) { alert('Ingresa correo y contraseña.'); return; }
-  
   const btn = document.getElementById('btn-login');
   btn.disabled = true; btn.textContent = 'Entrando…';
-  
   try {
     await signInWithEmailAndPassword(auth, email, pass);
   } catch (e) {
@@ -347,7 +351,6 @@ window.loginUsuario = async function() {
   }
 }
 
-// ─── LOGOUT ───────────────────────────────────────────
 window.logoutUsuario = async function() {
   if (!confirm('¿Cerrar sesión?')) return;
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
@@ -371,7 +374,6 @@ function traducirErrorAuth(code) {
   return map[code] || code;
 }
 
-// ─── VIGILAR SESIÓN ───────────────────────────────────
 onAuthStateChanged(auth, async (user) => {
   currentUser = user;
   if (!user) {
@@ -398,18 +400,15 @@ onAuthStateChanged(auth, async (user) => {
     const esAdmin      = rol === 'admin';
     const esVisor      = rol === 'visor';
     const esCapturista = rol === 'capturista';
-    // esAdminOMaster: tiene panel Admin con permisos (master además puede borrar a todos)
     const esAdminOMaster = esAdmin || esMaster;
 
     const tag = document.getElementById('user-tag');
     const etiquetaRol = esMaster ? ' (master)' : esAdmin ? ' (admin)' : esVisor ? ' (visor)' : ' (capturista)';
     if (tag) tag.textContent = currentUserDoc.nombre + etiquetaRol;
 
-    // Exponer rol globalmente para que openModal()/cargarPanelAdmin() controlen permisos finos
     window._currentUserRol = rol;
 
-    // ── Visibilidad de pestañas por rol ──
-    // Captura, Pendientes y Base de datos: capturista y admin (NO master, NO visor)
+    // ── FILA 1: Captura, Pendientes, Base de datos, Resumen ──
     const captBtn = document.getElementById('t-form');
     if (captBtn) captBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
 
@@ -419,35 +418,27 @@ onAuthStateChanged(auth, async (user) => {
     const dbBtn = document.getElementById('t-db');
     if (dbBtn) dbBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
 
-    // Gráficos: admin, master, visor (NO capturista)
+    // CORRECCIÓN 2: Resumen visible para admin, master Y visor
+    const resumenBtn = document.getElementById('btn-resumen-tab');
+    if (resumenBtn) resumenBtn.style.display = (esAdminOMaster || esVisor || esCapturista) ? 'flex' : 'none';
+
+    // ── FILA 2: Gráficos, Excel, Admin ──
     const graficosBtn = document.getElementById('btn-graficos-tab');
     if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
 
-    // Resumen: admin, master (pendiente de definir su contenido; visor no, capturista no)
-    const resumenBtn = document.getElementById('btn-resumen-tab');
-    if (resumenBtn) resumenBtn.style.display = esAdminOMaster ? 'flex' : 'none';
-
-    // Excel: admin, master, visor (NO capturista)
     const excelBtn = document.getElementById('btn-excel-tab');
     if (excelBtn) excelBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
 
-    // Admin: admin y master únicamente
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none';
 
-    // Botonera de exportar Excel dentro de "Base de datos": solo admin/master la usan ahí
     const exportBar = document.getElementById('export-bar-actions');
-    if (exportBar) {
-      exportBar.style.display = esAdminOMaster ? 'flex' : 'none';
-    }
+    if (exportBar) exportBar.style.display = esAdminOMaster ? 'flex' : 'none';
 
-    // Si el usuario quedó "atrapado" en una pestaña a la que ya no tiene
-    // acceso (p.ej. cambio de rol en caliente), lo mandamos a una pestaña
-    // permitida para evitar una pantalla en blanco.
     const tabsPermitidas = [];
-    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'db');
-    if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel');
-    if (esAdminOMaster) tabsPermitidas.push('resumen', 'admin');
+    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'db', 'resumen');
+    if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel', 'resumen');
+    if (esAdminOMaster) tabsPermitidas.push('admin');
     const tabActivaEl = document.querySelector('.tab-content.active');
     const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form';
     if (!tabsPermitidas.includes(tabActivaId) && tabsPermitidas.length) {
@@ -460,13 +451,11 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-// ─── PANEL ADMIN ──────────────────────────────────────
 window.cargarPanelAdmin = function() {
   if (unsubUsers) unsubUsers();
   const wrap = document.getElementById('admin-users-list');
   if (!wrap) return;
   wrap.innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Cargando…</p>';
-  
   unsubUsers = onSnapshot(collection(db_f, COL_USERS), (snap) => {
     const users = snap.docs.map(d => ({ _uid: d.id, ...d.data() }));
     const esMaster = (window._currentUserRol === 'master');
@@ -478,8 +467,6 @@ window.cargarPanelAdmin = function() {
     }
     wrap.innerHTML = users.map(u => {
       const rolUsuario = u.rol || 'capturista';
-      // Master elimina a cualquiera (incluido otro master).
-      // Admin elimina solo roles "inferiores": visor o capturista. Nunca a master, nunca a otro admin.
       const puedeEliminar = esMaster || (esAdmin && (rolUsuario === 'visor' || rolUsuario === 'capturista'));
       return `
       <div class="form-card" style="margin-bottom:10px;padding:12px">
@@ -513,8 +500,7 @@ window.cargarPanelAdmin = function() {
             }
           </div>
         </div>
-      </div>
-    `;
+      </div>`;
     }).join('');
   });
 }
@@ -536,11 +522,6 @@ window.cambiarRolUsuario = async function(uid, nuevoRol) {
   }
 }
 
-// ─── ELIMINAR USUARIO ─────────────────────────────────
-// Reglas: master puede eliminar a cualquiera. Admin solo puede eliminar
-// usuarios con rol "visor" o "capturista" — nunca a "master" ni a otro "admin".
-// Esto solo borra el documento de perfil en Firestore (no la cuenta de
-// Firebase Auth, que requeriría privilegios de servidor/Admin SDK).
 window.eliminarUsuario = async function(uid, nombre) {
   try {
     const snap = await getDocs(collection(db_f, COL_USERS));
@@ -548,70 +529,37 @@ window.eliminarUsuario = async function(uid, nombre) {
     if (!target) { alert('No se encontró ese usuario.'); return; }
     const rolTarget = target.data().rol || 'capturista';
     const miRol = window._currentUserRol;
-
     const permitido = miRol === 'master' || (miRol === 'admin' && (rolTarget === 'visor' || rolTarget === 'capturista'));
-    if (!permitido) {
-      alert('No tienes permiso para eliminar a este usuario.');
-      return;
-    }
+    if (!permitido) { alert('No tienes permiso para eliminar a este usuario.'); return; }
     if (!confirm('¿Eliminar permanentemente a "' + nombre + '" (' + rolTarget + ')? Esta acción no se puede deshacer.')) return;
-
     await deleteDoc(doc(db_f, COL_USERS, uid));
-    showSyncToast('✅', 'Usuario eliminado', 'ok');
+    window.showSyncToast('✅', 'Usuario eliminado', 'ok');
   } catch (e) {
     alert('Error al eliminar usuario: ' + e.message);
   }
 }
 
-// ─── SYNC EN TIEMPO REAL (solo ventana reciente) ──────
-// 🔴 OJO: antes esto traía TODA la colección de un jalón.
-// Ahora solo se suscribe a los últimos `ventanaDias` días (por fecha1).
-// Esto evita congelar la app cuando la colección crece a cientos de miles de registros.
 function cutoffFecha(dias) {
   const d = new Date();
   d.setDate(d.getDate() - dias);
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
 }
-
 
 function startRealtimeSync() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-
-  // Nota: esta consulta usa un índice de un solo campo (fecha1), que Firestore
-  // crea automáticamente — no requiere índice compuesto.
-  //
-  // 🔴 OJO (corregido): antes había un limit(3000) fijo aquí, sin importar
-  // qué ventana eligieras. Con 4,200+ registros/año eso recortaba en
-  // silencio el filtro de "Último año" (y se recortaría más con 300k).
-  // Ahora el tope escala con la ventana elegida, y para "Último año" se
-  // sube lo suficiente para no perder datos en tu volumen actual. Si más
-  // adelante tu BD crece mucho más, sube LIMITE_VENTANA['365'] o, mejor,
-  // usa el botón "Ver TODO el histórico" de la pestaña Base de datos
-  // (que pagina sin límite, ver cargarTodoElHistorico()).
-  // 🔴 Firestore rechaza cualquier limit() mayor a 10,000 (error
-  // "Limit value in the structured query is over the maximum value of
-  // 10000"). Los valores de 90 y 365 días superaban ese tope y por eso
-  // tronaba la conexión. Se bajan a un máximo seguro de 9,500.
   const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 9500, 365: 9500 };
   const tope = Math.min(LIMITE_VENTANA[ventanaDias] || 6000, 9500);
-
   const q = query(
     collection(db_f, COL),
     where('fecha1', '>=', cutoffFecha(ventanaDias)),
     orderBy('fecha1', 'desc'),
     limit(tope)
   );
-
   unsubscribe = onSnapshot(q,
     (snapshot) => {
       db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
       window.db = db;
-
-      // Si llegamos exactamente al tope, probablemente hay más registros en
-      // esta ventana de los que se cargaron. Avisamos en vez de fallar en
-      // silencio (que era el problema original).
       const recortado = db.length >= tope;
-
       if (!isInitialized) {
         isInitialized = true;
         appReady();
@@ -631,12 +579,11 @@ function startRealtimeSync() {
     (err) => {
       console.error("Firestore error:", err);
       if (!isInitialized) appError('No se pudo conectar a la base de datos.\n' + err.message);
-      else showSyncToast('⚠️', 'Error de conexión.', 'err');
+      else window.showSyncToast('⚠️', 'Error de conexión.', 'err');
     }
   );
 }
 
-// ─── CAMBIAR LA VENTANA DE CARGA (7/30/90/365 días) ──
 window.cambiarVentana = function() {
   const sel = document.getElementById('db-ventana');
   if (!sel) return;
@@ -647,21 +594,10 @@ window.cambiarVentana = function() {
   startRealtimeSync();
 }
 
-// ══════════════════════════════════════════════════════
-// PASO 2 — RESUMEN AGREGADO (1 documento por mes)
-// ══════════════════════════════════════════════════════
-// En vez de leer 300,000 registros para graficar "toneladas por mes",
-// mantenemos un documento por mes (acarreos -> resumenes/YYYY-MM) que se
-// actualiza con `increment()` cada vez que se guarda, edita o borra un viaje.
-// Leer esta colección completa cuesta unas pocas decenas de lecturas
-// (1 por mes de operación), nunca una por viaje.
-
 function mesKeyFromFecha(fecha1) {
   return (fecha1 && /^\d{4}-\d{2}/.test(fecha1)) ? fecha1.slice(0, 7) : null;
 }
 
-// Aplica (signo=+1) o revierte (signo=-1) la contribución de un registro
-// al documento de resumen de su mes.
 async function aplicarResumen(rec, signo) {
   if (!rec || !rec.fecha1) return;
   const mes = mesKeyFromFecha(rec.fecha1);
@@ -682,78 +618,15 @@ async function aplicarResumen(rec, signo) {
   }
 }
 
-// Mueve la contribución de un registro de su estado "antes" a su estado "después"
-// (usado al editar, ya que pudo cambiar de mes, material, banco o destino).
 async function moverResumen(antes, despues) {
   if (antes) await aplicarResumen(antes, -1);
   if (despues) await aplicarResumen(despues, +1);
 }
+window.moverResumen = moverResumen;
+window.aplicarResumen = aplicarResumen;
 
-
-
-// ══════════════════════════════════════════════════════
-// BUSCAR EN TODO EL HISTORIAL (coincidencia exacta)
-// ══════════════════════════════════════════════════════
-// 🔴 Esta es la función que el botón "Buscar también en todo el historial"
-// llamaba (onclick="buscarHistorial()") pero que nunca se llegó a escribir
-// — por eso "se trababa" al usarla. Hace consultas puntuales a Firestore
-// (where ==) por boleta, folio, # económico y placas, SIN traer la
-// colección completa. Cada campo es como máximo 1 lectura indexada de
-// un solo campo (Firestore las crea automático), así que es barato
-// incluso con 300k registros.
-window.buscarHistorial = async function() {
-  const qtexto = (document.getElementById('filter-input').value || '').trim();
-  if (!qtexto) { alert('Escribe algo en el buscador (boleta, folio, placas o # económico) y vuelve a intentar.'); return; }
-
-  const btn = document.getElementById('btn-buscar-historial');
-  const btnHtmlOriginal = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Buscando en todo el historial…'; }
-
-  try {
-    const campos = ['boleta', 'folio', 'economico', 'placas'];
-    const vistos = new Set();
-    let encontrados = [];
-
-    for (const campo of campos) {
-      try {
-        const snap = await getDocs(
-          query(collection(db_f, COL), where(campo, '==', qtexto), limit(500))
-        );
-        snap.forEach(d => {
-          if (!vistos.has(d.id)) {
-            vistos.add(d.id);
-            encontrados.push({ _fid: d.id, _historial: true, ...d.data() });
-          }
-        });
-      } catch (e) {
-        // Si falta un índice de un campo específico (poco común, Firestore
-        // los crea solo), avisamos pero seguimos con los demás campos.
-        if (!handleFirestoreIndexError(e)) console.warn('Error buscando por ' + campo + ':', e);
-      }
-    }
-
-    dbHistorial = encontrados;
-    window.dbHistorial = dbHistorial;
-
-    if (!encontrados.length) {
-      updateSyncNote('🔍 Sin resultados en el historial completo para "' + qtexto + '" (coincidencia exacta).');
-    } else {
-      updateSyncNote('🔍 ' + encontrados.length + ' registro(s) encontrado(s) en todo el historial para "' + qtexto + '".');
-    }
-    renderDB();
-  } catch (e) {
-    alert('Error al buscar en el historial: ' + e.message);
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
-  }
-};
-
-// ── Herramienta admin: reconstruir el resumen leyendo TODA la colección ──
-// Solo debe usarse una vez (o si se detecta que el resumen quedó desincronizado).
-// A diferencia de la carga normal de la app, esta es una acción explícita,
-// disparada a propósito por un administrador, no algo que ocurre al abrir la app.
 window.recalcularResumen = async function() {
-  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir el resumen mensual. En una base muy grande puede tardar bastante y generar muchas lecturas. ¿Continuar?')) return;
+  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir el resumen mensual. ¿Continuar?')) return;
   const btn = document.getElementById('btn-recalcular-resumen');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo toda la colección…'; }
   try {
@@ -772,13 +645,11 @@ window.recalcularResumen = async function() {
       if (r.banco)    m.por_banco[r.banco]       = (m.por_banco[r.banco]       || 0) + ton;
       if (r.destino)  m.por_destino[r.destino]   = (m.por_destino[r.destino]   || 0) + ton;
     });
-
     const meses = Object.keys(porMes);
-    // Firestore permite máximo 500 escrituras por batch.
     for (let i = 0; i < meses.length; i += 450) {
       const batch = writeBatch(db_f);
       meses.slice(i, i + 450).forEach(mes => {
-        batch.set(doc(db_f, COL_RESUMEN, mes), porMes[mes]); // overwrite total, no merge
+        batch.set(doc(db_f, COL_RESUMEN, mes), porMes[mes]);
       });
       await batch.commit();
     }
@@ -799,9 +670,9 @@ window.saveRecord = async function() {
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
   if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
   if (!esPendiente) {
-    if (!data.fecha2)       { alert('Ingresa la fecha del 2do pesaje (o marca "Dejar como pendiente").'); return; }
-    if (!data.hora2)        { alert('Ingresa la hora del 2do pesaje (o marca "Dejar como pendiente").'); return; }
-    if (!data.ciclo)        { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
+    if (!data.fecha2)     { alert('Ingresa la fecha del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.hora2)      { alert('Ingresa la hora del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.ciclo)      { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
   }
   if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
@@ -812,17 +683,11 @@ window.saveRecord = async function() {
     if (data.tara_kg  <= 0) { alert('Ingresa la tara (o marca "Dejar como pendiente").'); return; }
     if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
   }
-  
   const saveBtn = document.getElementById('btn-guardar');
   saveBtn.disabled = true;
   saveBtn.innerHTML = '<span class="spin"></span> Guardando…';
-  
   try {
     if (!window._editFid) {
-      // Boleta duplicada: primero se revisa lo que ya está cargado en memoria;
-      // si no aparece ahí (porque está fuera de la ventana reciente), se hace
-      // UNA consulta puntual a Firestore por esa boleta exacta — no se trae
-      // toda la colección solo para validar un duplicado.
       let dup = db.find(r => r.boleta === data.boleta) || dbHistorial.find(r => r.boleta === data.boleta);
       if (!dup) {
         const dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', data.boleta), limit(1)));
@@ -836,17 +701,17 @@ window.saveRecord = async function() {
       const { id: _localId, ...payload } = data;
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
-      aplicarResumen(data, +1); // Paso 2: actualizar el resumen mensual (no bloquea el guardado)
-      showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
+      aplicarResumen(data, +1);
+      window.showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
     } else {
       const original = window._editOriginal || null;
       const { id: _localId, _fid: _fid2, ...payload } = data;
       payload.ts_updated = serverTimestamp();
       await updateDoc(doc(db_f, COL, window._editFid), payload);
-      moverResumen(original, data); // Paso 2: revierte el aporte anterior y aplica el nuevo
+      moverResumen(original, data);
       window._editFid = null;
       window._editOriginal = null;
-      showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
+      window.showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
     }
     clearForm();
     showTab(esPendiente ? 'pendientes' : 'db');
@@ -858,13 +723,12 @@ window.saveRecord = async function() {
   }
 }
 
-// ─── EDITAR REGISTRO ──────────────────────────────────
 window.editRecord = function() {
   const r = findRecord(window._currentFid);
   if (!r) return;
   closeModalForce();
   window._editFid = r._fid;
-  window._editOriginal = { ...r }; // copia "antes" para poder ajustar el resumen al guardar
+  window._editOriginal = { ...r };
   const flds = {
     'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
     'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
@@ -891,19 +755,57 @@ window.editRecord = function() {
   showTab('form');
 }
 
-// ─── ELIMINAR REGISTRO ────────────────────────────────
 window.deleteRecord = async function() {
   if (!confirm('¿Eliminar este registro permanentemente?')) return;
   try {
     const r = findRecord(window._currentFid);
     await deleteDoc(doc(db_f, COL, window._currentFid));
-    aplicarResumen(r, -1); // Paso 2: descontar del resumen mensual
+    aplicarResumen(r, -1);
     closeModalForce();
-    showSyncToast('✅', 'Registro eliminado', 'ok');
+    window.showSyncToast('✅', 'Registro eliminado', 'ok');
   } catch(err) { alert('Error al eliminar: ' + err.message); }
 }
 
-// ─── BORRAR TODA LA BD ────────────────────────────────
+window.completarPendiente = async function(fid) {
+  const r = findRecord(fid);
+  if (!r) { alert('No se encontró el registro.'); return; }
+  const fecha2 = (document.getElementById('pend-fecha2-' + fid) || {}).value || '';
+  const hora2  = (document.getElementById('pend-hora2-'  + fid) || {}).value || '';
+  const tara   = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
+  if (!fecha2) { alert('Ingresa la fecha del 2do pesaje.'); return; }
+  if (!hora2)  { alert('Ingresa la hora del 2do pesaje.'); return; }
+  if (tara <= 0) { alert('Ingresa la tara.'); return; }
+  const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00') + ':00');
+  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+  const diffMs = dt2 - dt1;
+  if (diffMs < 0) { alert('La fecha/hora del 2do pesaje no puede ser anterior a la del 1er pesaje.'); return; }
+  const totalMin = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  const ciclo = hrs > 0 ? hrs + 'h ' + String(min).padStart(2, '0') + 'min' : min + ' min';
+  const bruto = r.bruto_kg || 0;
+  const neto  = bruto - tara;
+  if (neto <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  const original = { ...r };
+  const actualizado = {
+    ...r,
+    fecha2, hora2, ciclo,
+    tara_kg: tara, neto_kg: neto,
+    ton: neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    status: 'completo'
+  };
+  try {
+    const { _fid: _f, id: _id, ...payload } = actualizado;
+    payload.ts_updated = serverTimestamp();
+    await updateDoc(doc(db_f, COL, fid), payload);
+    moverResumen(original, actualizado);
+    window.showSyncToast('✅', 'Destare completado', 'ok');
+    if (typeof window.renderPendientes === 'function') window.renderPendientes();
+  } catch (e) {
+    alert('Error al completar el registro: ' + e.message);
+  }
+};
+
 window.clearDB = async function() {
   if (!confirm('¿Borrar TODA la base de datos (acarreos y resumen)? Esta acción no se puede deshacer.')) return;
   if (!confirm('⚠️ SEGUNDA CONFIRMACIÓN: se eliminarán TODOS los registros de Firestore para TODOS los usuarios. ¿Continuar?')) return;
@@ -912,17 +814,15 @@ window.clearDB = async function() {
     await Promise.all(snap.docs.map(d => deleteDoc(doc(db_f, COL, d.id))));
     const snapResumen = await getDocs(collection(db_f, COL_RESUMEN));
     await Promise.all(snapResumen.docs.map(d => deleteDoc(doc(db_f, COL_RESUMEN, d.id))));
-    showSyncToast('✅', 'Base de datos borrada', 'ok');
+    window.showSyncToast('✅', 'Base de datos borrada', 'ok');
   } catch(err) { alert('Error: ' + err.message); }
 }
 
-// ─── SYNC MANUAL (botón refresh) ──────────────────────
 window.manualSync = function() {
-  showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
+  window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
   updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
 }
 
-// ─── ABRIR MODAL DETALLE ──────────────────────────────
 window.openModal = function(fid) {
   window._currentFid = fid;
   const r = findRecord(fid);
@@ -930,7 +830,6 @@ window.openModal = function(fid) {
   document.getElementById('modal-title').textContent = 'Boleta #' + r.boleta;
   const fmt    = (v, s='') => (v !== undefined && v !== null && v !== '') ? v + s : '—';
   const fmtNum = (v, s='') => v ? Number(v).toLocaleString('es-MX') + s : '—';
-  
   document.getElementById('modal-body').innerHTML = `
     ${r.status === 'pendiente' ? '<div class="banner banner-warning" style="margin-bottom:10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Pendiente de 2do pesaje y tara. Complétalo en la pestaña "Pendientes".</span></div>' : ''}
     <div class="detail-section">Pesajes</div>
@@ -954,30 +853,17 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : (r.ton ? r.ton + ' ton' : '—')}</span></div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
-
-  // Botón eliminar solo visible para master
   const btnDel = document.getElementById('btn-delete-record');
   if (btnDel) btnDel.style.display = (window._currentUserRol === 'master') ? '' : 'none';
 }
 
-// ─── FUNCION AUXILIAR PARA FECHAS EXCEL SIN ZONAS HORARIAS ───────────────
 function parseDateForExcel(isoString) {
   if (!isoString || !isoString.includes('-')) return '';
   const [y, m, d] = isoString.split('-');
   return new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
 }
+window.parseDateForExcel = parseDateForExcel;
 
-// ══════════════════════════════════════════════════════
-// TRAER TODO FIRESTORE, PAGINADO (sin tope de 3000)
-// ══════════════════════════════════════════════════════
-// Función genérica que pagina por fecha1 en bloques de PAGE documentos,
-// usada tanto por el exportador de Excel como por la carga histórica
-// completa de los gráficos. Nunca trae todo de un solo jalón a memoria
-// del lado de Firestore (cada getDocs trae como máximo PAGE), aunque al
-// final sí junta todo en un array de JS — por diseño, porque para hacer
-// las gráficas necesitamos los registros agregables en el cliente.
-// Con cientos de miles de registros, esto puede tardar y usar bastante
-// memoria; ver advertencia en cargarHistoricoCompleto().
 async function traerTodoFirestore(desde, hasta, onProgreso) {
   const PAGE = 1500;
   let registros = [];
@@ -994,38 +880,17 @@ async function traerTodoFirestore(desde, hasta, onProgreso) {
     if (onProgreso) onProgreso(registros.length);
     if (snap.docs.length < PAGE) break;
     cursor = snap.docs[snap.docs.length - 1];
-    if (registros.length > 500000) { // tope de seguridad extremo
-      console.warn('Se alcanzaron 500,000 registros leídos; se corta por seguridad.');
-      break;
-    }
+    if (registros.length > 500000) break;
   }
   return registros;
 }
 
-// ── Estado del histórico completo para el dashboard ──
-let dbHistoricoCompleto       = null;  // null = aún no se ha cargado
+let dbHistoricoCompleto       = null;
   window.dbHistoricoCompleto  = dbHistoricoCompleto;
-let usandoHistoricoCompleto   = false; // toggle: ventana reciente vs. histórico completo
+let usandoHistoricoCompleto   = false;
   window.usandoHistoricoCompleto = usandoHistoricoCompleto;
 let cargandoHistoricoCompleto = false;
 
-// 🔴 BUG CORREGIDO: getDashboardFiltered() vive en el bloque "script" plano
-// (sin atributo "type=module"), mientras que estas variables viven en el
-// bloque de módulo ES de Firebase (el que sí lleva ese atributo). Un módulo
-// ES tiene su propio scope — sus variables NO son visibles desde fuera
-// aunque ambos bloques estén en el mismo HTML. Antes solo se exponía
-// window.dbHistoricoCompleto, pero NO window.usandoHistoricoCompleto, así
-// que el script plano siempre leía "usandoHistoricoCompleto" como undefined
-// (variable global vacía) y por eso el dashboard ignoraba el botón "Ver
-// TODO el histórico" — se quedaba pegado en la ventana reciente sin
-// importar qué eligieras. Ahora se sincroniza window.usandoHistoricoCompleto
-// en cada cambio.
-
-// Trae TODOS los registros de la colección (paginado) para usarlos en el
-// dashboard. Pediste explícitamente que los gráficos tomen absolutamente
-// todo el histórico, no solo la ventana reciente — esto es lo que lo logra.
-// Se cachea en memoria mientras la pestaña esté abierta; el botón
-// "🔄 Actualizar histórico" lo vuelve a traer si agregaste registros nuevos.
 window.cargarHistoricoCompleto = async function(forzar) {
   if (cargandoHistoricoCompleto) return;
   if (dbHistoricoCompleto && !forzar) {
@@ -1054,7 +919,6 @@ window.cargarHistoricoCompleto = async function(forzar) {
   }
 };
 
-// Volver a usar solo la ventana reciente (más rápido) en el dashboard.
 window.usarVentanaRecienteEnDashboard = function() {
   usandoHistoricoCompleto = false;
   window.usandoHistoricoCompleto = false;
@@ -1063,11 +927,44 @@ window.usarVentanaRecienteEnDashboard = function() {
   renderDashboard();
 };
 
-// ── Histórico completo para la pestaña BASE DE DATOS (lista de registros) ──
-// Pediste explícitamente una opción que muestre más de 3,000 registros en
-// la hoja de Base de datos sin perder los presets de 7/30/90/365 días.
-// Reutiliza traerTodoFirestore() (paginado, sin tope real) y los pone en
-// dbHistorial, que renderDB() ya combina con la ventana reciente.
+window.buscarHistorial = async function() {
+  const qtexto = (document.getElementById('filter-input').value || '').trim();
+  if (!qtexto) { alert('Escribe algo en el buscador (boleta, folio, placas o # económico) y vuelve a intentar.'); return; }
+  const btn = document.getElementById('btn-buscar-historial');
+  const btnHtmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Buscando en todo el historial…'; }
+  try {
+    const campos = ['boleta', 'folio', 'economico', 'placas'];
+    const vistos = new Set();
+    let encontrados = [];
+    for (const campo of campos) {
+      try {
+        const snap = await getDocs(query(collection(db_f, COL), where(campo, '==', qtexto), limit(500)));
+        snap.forEach(d => {
+          if (!vistos.has(d.id)) {
+            vistos.add(d.id);
+            encontrados.push({ _fid: d.id, _historial: true, ...d.data() });
+          }
+        });
+      } catch (e) {
+        if (!handleFirestoreIndexError(e)) console.warn('Error buscando por ' + campo + ':', e);
+      }
+    }
+    dbHistorial = encontrados;
+    window.dbHistorial = dbHistorial;
+    if (!encontrados.length) {
+      updateSyncNote('🔍 Sin resultados en el historial completo para "' + qtexto + '".');
+    } else {
+      updateSyncNote('🔍 ' + encontrados.length + ' registro(s) encontrado(s) en todo el historial para "' + qtexto + '".');
+    }
+    renderDB();
+  } catch (e) {
+    alert('Error al buscar en el historial: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
+  }
+};
+
 let cargandoHistorialDBCompleto = false;
 window.verTodoElHistorialDB = async function() {
   if (cargandoHistorialDBCompleto) return;
@@ -1081,7 +978,7 @@ window.verTodoElHistorialDB = async function() {
       updateSyncNote('⏳ Cargando todo el histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora');
     });
     window.dbHistorial = dbHistorial;
-    updateSyncNote('📊 Mostrando TODO el histórico: ' + dbHistorial.length.toLocaleString('es-MX') + ' registro(s) en total (puede tardar más en filtrar/desplazar).');
+    updateSyncNote('📊 Mostrando TODO el histórico: ' + dbHistorial.length.toLocaleString('es-MX') + ' registro(s) en total.');
     renderDB();
   } catch (e) {
     handleFirestoreIndexError(e) || alert('Error al cargar todo el histórico: ' + e.message);
@@ -1091,84 +988,64 @@ window.verTodoElHistorialDB = async function() {
   }
 };
 
-// Volver a la ventana reciente (7/30/90/365) en la lista de la base de datos,
-// descartando el histórico completo que se haya cargado con el botón de arriba.
 window.salirDeHistorialCompletoDB = function() {
   dbHistorial = []; window.dbHistorial = dbHistorial;
   updateSyncNote('✅ Mostrando solo la ventana cargada (' + ventanaDias + ' días) · ' + db.length.toLocaleString('es-MX') + ' registro(s)');
   renderDB();
 };
 
-// ─── REPORTE EXCEL ───────────
-// 🔴 Antes este reporte exportaba solo lo que estuviera cargado en memoria
-// (window.db). Después de limitar la carga a una ventana reciente, eso
-// dejaba fuera todo el historial. Ahora el reporte consulta Firestore
-// directamente por el rango de fechas que elijas (vacío = todo el historial,
-// con advertencia), paginando para no intentar traer todo de un jalón.
+// ─── CORRECCIÓN 1: exportarExcelAcarreos ahora funciona correctamente ─────────
+// El XLSX ya se carga globalmente desde CDN antes que cualquier script,
+// así que window.XLSX está disponible tanto aquí (módulo ES) como en el
+// bloque plain. Se llama XLSX directamente (sin window.) dentro del módulo.
 window.exportarExcelAcarreos = async function() {
   const desde = (document.getElementById('export-fecha-desde') || {}).value || '';
   const hasta = (document.getElementById('export-fecha-hasta') || {}).value || '';
-
   if (!desde && !hasta) {
-    if (!confirm('No elegiste un rango de fechas: se exportará TODO el historial. En una base de datos grande esto puede tardar varios minutos. ¿Continuar?')) return;
+    if (!confirm('No elegiste un rango de fechas: se exportará TODO el historial. ¿Continuar?')) return;
   }
-
   const btn = document.getElementById('btn-exportar-excel');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; }
-
   try {
     const registros = await traerTodoFirestore(desde, hasta, (n) => {
       if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + n.toLocaleString('es-MX') + ')';
     });
-
-    if (!registros.length) {
-      alert('No hay registros en ese rango para exportar.');
-      return;
-    }
-
+    if (!registros.length) { alert('No hay registros en ese rango para exportar.'); return; }
     const datosFormateados = registros.map((r) => ({
-      "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
-      "Hora 1er Pesaje": r.hora1 || "—",
-      "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
-      "Hora 2do Pesaje": r.hora2 || "—",
-      "Ciclo": r.ciclo || "—",
-      "Folio": r.folio || "—",
-      "Boleta": r.boleta || "S/B",
-      "Placas": r.placas || "—",
-      "# Economico": r.economico || "—",
-      "Material": r.material || "—",
-      "Banco Origen": r.banco || "—",
-      "Destino (Tiro)": r.destino || "—",
+      "Fecha":              r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
+      "Hora 1er Pesaje":   r.hora1 || "—",
+      "Fecha 2do Pesaje":  r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
+      "Hora 2do Pesaje":   r.hora2 || "—",
+      "Ciclo":             r.ciclo || "—",
+      "Folio":             r.folio || "—",
+      "Boleta":            r.boleta || "S/B",
+      "Placas":            r.placas || "—",
+      "# Economico":       r.economico || "—",
+      "Material":          r.material || "—",
+      "Banco Origen":      r.banco || "—",
+      "Destino (Tiro)":    r.destino || "—",
       "Rango de Material": r.rango || "—",
-      "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-      "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
-      "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
-      "Peso Neto (ton)": r.ton || "0"
+      "Peso Bruto (kg)":   r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+      "Peso Tara (kg)":    r.tara_kg  ? Number(r.tara_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (kg)":    r.neto_kg  ? Number(r.neto_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (ton)":   r.ton || "0",
+      "Estatus":           r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
     }));
-
     const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
-
     for (let cellAddress in worksheet) {
       if (cellAddress[0] === '!') continue;
-      let cell = worksheet[cellAddress];
-      if (cell.t === 'd') cell.z = 'dd/mm/yyyy';
+      if (worksheet[cellAddress].t === 'd') worksheet[cellAddress].z = 'dd/mm/yyyy';
     }
-
     const workbook = XLSX.utils.book_new();
-
     worksheet['!cols'] = [
-      {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
-      {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
-      {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
-      {wch: 15}, {wch: 14}
+      {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
+      {wch:12},{wch:12},{wch:15},{wch:14},{wch:18},
+      {wch:16},{wch:16},{wch:20},{wch:15},{wch:14},
+      {wch:15},{wch:14},{wch:18}
     ];
-
-    const fechaStr = new Date().toISOString().slice(0, 10);
-    const nombreArchivo = `Reporte_Acarreos_Ejecutivo_${fechaStr}.xlsx`;
-
     XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
-    XLSX.writeFile(workbook, nombreArchivo);
+    XLSX.writeFile(workbook, 'Reporte_Acarreos_Ejecutivo_' + new Date().toISOString().slice(0,10) + '.xlsx');
   } catch (err) {
     handleFirestoreIndexError(err) || alert('Error al generar el reporte: ' + err.message);
   } finally {
@@ -1176,19 +1053,17 @@ window.exportarExcelAcarreos = async function() {
   }
 };
 
-// ─── MIGRAR LOCALSTORAGE → FIRESTORE ─────────────────
 window.migrarLocalStorage = async function() {
   const viejos = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
   if (!viejos.length) { alert('No hay datos en localStorage.'); return; }
   if (!confirm(`¿Migrar ${viejos.length} registros a Firestore?`)) return;
-  
   let ok = 0, fail = 0;
   for (const r of viejos) {
     try {
       const { id: _id, _fid: _f, ...payload } = r;
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
-      aplicarResumen(r, +1); // mantener el resumen mensual consistente con la migración
+      aplicarResumen(r, +1);
       ok++;
     } catch(e) { fail++; }
   }
@@ -1196,44 +1071,14 @@ window.migrarLocalStorage = async function() {
   if (ok > 0) localStorage.removeItem('acarreos_db_v3');
 }
 
-// ─── UTILS ────────────────────────────────────────────
 function updateSyncNote(msg) {
   const el = document.getElementById('sync-db-note');
   if (el) el.textContent = msg;
 }
 
-// ══════════════════════════════════════════════════════
-// PASO 3 — ÍNDICES DE FIRESTORE (estado real, leer esto)
-// ══════════════════════════════════════════════════════
-// Con el diseño ACTUAL de esta app, todas las consultas que se mandan a
-// Firestore son de un solo campo (fecha1, boleta, folio, economico,
-// placas). Esos índices Firestore los crea AUTOMÁTICAMENTE — no se
-// necesita configurar nada a mano para que la app funcione hoy:
-//   - startRealtimeSync(): where(fecha1>=) + orderBy(fecha1)  → índice simple, automático
-//   - buscarHistorial():    where(boleta/folio/economico/placas ==) → índice simple, automático
-//   - exportarExcelAcarreos()/cargarHistoricoCompleto(): where(fecha1>=, <=) + orderBy(fecha1) → índice simple, automático
-// Los filtros de banco/material/destino del dashboard NO se mandan a
-// Firestore: se aplican en JavaScript sobre el array ya cargado
-// (getDashboardFiltered), así que tampoco requieren índice.
-//
-// ¿Cuándo SÍ necesitarías un índice compuesto? Si en el futuro decides
-// que el dashboard filtre directamente en Firestore por banco+fecha o
-// material+fecha (en vez de traer todo y filtrar en el cliente), esas
-// consultas combinadas SÍ necesitan un índice compuesto. Para ese
-// escenario te dejo listo el archivo firestore.indexes.json (banco+fecha1,
-// material+fecha1, destino+fecha1). Para desplegarlo:
-//   1) Instala Firebase CLI: npm install -g firebase-tools
-//   2) firebase login
-//   3) firebase deploy --only firestore:indexes
-// (necesitas el firestore.indexes.json en la raíz de tu proyecto, junto
-// a tu firebase.json). Mientras no mandes esas consultas combinadas a
-// Firestore, no es urgente — pero si algún día Firestore te tira un
-// error "failed-precondition... requires an index", la función de abajo
-// te muestra el link directo para crearlo con un clic, sin esperar al
-// deploy del archivo.
 function handleFirestoreIndexError(err) {
   if (err && err.code === 'failed-precondition' && /index/i.test(err.message || '')) {
-    alert('⚠️ Esta combinación de filtros necesita un índice de Firestore que aún no existe.\n\nPide al administrador del proyecto que abra este enlace y presione "Crear índice" (puede tardar unos minutos en activarse):\n\n' + err.message);
+    alert('⚠️ Esta combinación de filtros necesita un índice de Firestore.\n\n' + err.message);
     return true;
   }
   return false;
@@ -1269,7 +1114,6 @@ function handleFirestoreIndexError(err) {
       <button class="auth-tab active" data-tab="login" onclick="switchAuthTab('login')">Iniciar sesión</button>
       <button class="auth-tab" data-tab="registro" onclick="switchAuthTab('registro')">Registro</button>
     </div>
-
     <div id="auth-form-login" class="auth-form active">
       <div class="field-row">
         <label>Correo electrónico</label>
@@ -1281,7 +1125,6 @@ function handleFirestoreIndexError(err) {
       </div>
       <button id="btn-login" class="btn btn-primary" style="width:100%;margin-top:4px" onclick="loginUsuario()">Entrar</button>
     </div>
-
     <div id="auth-form-registro" class="auth-form">
       <div class="field-row">
         <label>Tu nombre completo</label>
@@ -1332,35 +1175,42 @@ function handleFirestoreIndexError(err) {
   </div>
 </header>
 
-<div class="tab-bar" style="overflow-x:auto;">
-  <button class="tab-btn active" onclick="showTab('form')" id="t-form">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
-    Captura
-  </button>
-  <button class="tab-btn" onclick="showTab('pendientes'); renderPendientes();" id="btn-pendientes-tab" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-    Pendientes
-  </button>
-  <button class="tab-btn" onclick="showTab('db')" id="t-db">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
-    Base de datos
-  </button>
-  <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-    Gráficos
-  </button>
-  <button class="tab-btn" onclick="showTab('resumen')" id="btn-resumen-tab" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-    Resumen
-  </button>
-  <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    Excel
-  </button>
-  <button class="tab-btn" onclick="showTab('admin'); cargarPanelAdmin();" id="btn-admin-tab" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-    Admin
-  </button>
+<!-- CORRECCIÓN 3: Tab bar en DOS FILAS -->
+<div class="tab-bar-wrap">
+  <!-- Fila 1: Captura, Pendientes, Base de datos, Resumen -->
+  <div class="tab-bar" id="tab-bar-row1">
+    <button class="tab-btn active" onclick="showTab('form')" id="t-form">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+      Captura
+    </button>
+    <button class="tab-btn" onclick="showTab('pendientes'); renderPendientes();" id="btn-pendientes-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Pendientes
+    </button>
+    <button class="tab-btn" onclick="showTab('db')" id="t-db">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
+      Base de datos
+    </button>
+    <button class="tab-btn" onclick="showTab('resumen')" id="btn-resumen-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      Resumen
+    </button>
+  </div>
+  <!-- Fila 2: Gráficos, Excel, Admin -->
+  <div class="tab-bar" id="tab-bar-row2">
+    <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Gráficos
+    </button>
+    <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Excel
+    </button>
+    <button class="tab-btn" onclick="showTab('admin'); cargarPanelAdmin();" id="btn-admin-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      Admin
+    </button>
+  </div>
 </div>
 
 <div class="tab-content active" id="tab-form">
@@ -1549,7 +1399,7 @@ function handleFirestoreIndexError(err) {
     <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
   </div>
 
-  <div class="export-bar" id="export-bar-actions" style="display: none; flex-direction:column; align-items:stretch; border-top:none; margin-top:0; padding-top:0;">
+  <div class="export-bar" id="export-bar-actions" style="display:none;flex-direction:column;align-items:stretch;border-top:none;margin-top:0;padding-top:0;">
     <div class="field-row two-col" style="margin-bottom:8px;">
       <div>
         <label>Exportar desde</label>
@@ -1560,9 +1410,9 @@ function handleFirestoreIndexError(err) {
         <input type="date" id="export-fecha-hasta">
       </div>
     </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial (puede tardar en bases muy grandes).</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial.</div>
     <div style="display:flex;gap:8px;margin-bottom:14px;">
-      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;">
+      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1;background-color:#107c41;color:white;border-radius:var(--radius);border:0.5px solid #107c41;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Generar Reporte Excel
       </button>
@@ -1580,13 +1430,13 @@ function handleFirestoreIndexError(err) {
   </div>
   <div id="sync-db-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
 
-  <div style="padding: 0 0 10px;">
+  <div style="padding:0 0 10px;">
     <button class="btn btn-secondary" id="btn-buscar-historial" onclick="buscarHistorial()" style="width:100%;font-size:12px;">
       🔍 Buscar también en todo el historial (boleta / placas / folio / # económico, coincidencia exacta)
     </button>
   </div>
 
-  <div style="display:flex; gap:8px; padding: 0 0 10px;">
+  <div style="display:flex;gap:8px;padding:0 0 10px;">
     <button class="btn btn-primary" id="btn-ver-todo-db" onclick="verTodoElHistorialDB()" style="flex:1;font-size:12px;">
       📊 Ver TODO el histórico (sin tope)
     </button>
@@ -1595,12 +1445,12 @@ function handleFirestoreIndexError(err) {
     </button>
   </div>
   <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 10px;">
-    Usa esto si necesitas ver/buscar entre el total de viajes ejecutados. Trae todos los registros guardados, puede tardar y usar más memoria del teléfono.
+    Usa esto si necesitas ver/buscar entre el total de viajes ejecutados.
   </div>
 
   <div id="records-list"></div>
 
-  <div style="padding: 8px 0 4px;">
+  <div style="padding:8px 0 4px;">
     <button class="btn btn-secondary" onclick="migrarLocalStorage()" style="width:100%">
       ⬆️ Migrar datos locales a Firestore (solo una vez)
     </button>
@@ -1608,141 +1458,131 @@ function handleFirestoreIndexError(err) {
 </div>
 
 <div class="tab-content" id="tab-graficos">
-
-  <div>
-
-    <div class="slicers-card" style="margin-bottom:10px;">
-      <h3>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Fuente de datos del dashboard
-      </h3>
-      <div style="display:flex; gap:8px; margin-bottom:6px;">
-        <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
-          Ventana reciente cargada
-        </button>
-        <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompleto()" style="font-size:12px;">
-          📊 Ver TODO el histórico
-        </button>
-      </div>
-      <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos del dashboard
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
+        Ventana reciente cargada
+      </button>
+      <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompleto()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
     </div>
-
-    <div class="slicers-card">
-      <h3>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-        Filtros del dashboard
-      </h3>
-      <div class="slicers-grid">
-        <div>
-          <label>Desde</label>
-          <input type="date" id="dash-fecha-desde" onchange="renderDashboard()"/>
-        </div>
-        <div>
-          <label>Hasta</label>
-          <input type="date" id="dash-fecha-hasta" onchange="renderDashboard()"/>
-        </div>
-        
-        <div>
-          <label>Banco (Origen)</label>
-          <div class="ms-wrap" id="ms-banco-wrap">
-            <button type="button" class="ms-btn" id="ms-banco-btn" onclick="toggleMS('banco')">
-              <span id="ms-banco-label">— Todos —</span>
-              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="ms-dropdown" id="ms-banco-dd">
-              <div class="ms-option"><input type="checkbox" id="cb-banco-TAJO" value="EL TAJO" onchange="onMsChange('banco')"><label for="cb-banco-TAJO">El Tajo</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-banco-TRITURA" value="TRITURA" onchange="onMsChange('banco')"><label for="cb-banco-TRITURA">Tritura</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('banco')"><label for="cb-banco-MOZ1">Mozomboa GAMI</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('banco')"><label for="cb-banco-MOZ2">Mozomboa LERMA</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('banco')"><label for="cb-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <label>Material</label>
-          <div class="ms-wrap" id="ms-material-wrap">
-            <button type="button" class="ms-btn" id="ms-material-btn" onclick="toggleMS('material')">
-              <span id="ms-material-label">— Todos —</span>
-              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="ms-dropdown" id="ms-material-dd">
-              <div class="ms-option"><input type="checkbox" id="cb-mat-NUC" value="NUCLEO" onchange="onMsChange('material')"><label for="cb-mat-NUC">Núcleo</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-mat-BER" value="BERMA" onchange="onMsChange('material')"><label for="cb-mat-BER">Berma</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('material')"><label for="cb-mat-BAP">Berma de apoyo</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('material')"><label for="cb-mat-SEC1">Secundaria 1</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('material')"><label for="cb-mat-SEC2">Secundaria 2</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-mat-COR" value="CORAZA" onchange="onMsChange('material')"><label for="cb-mat-COR">Coraza</label></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="full">
-          <label>Cuerpo (Destino)</label>
-          <div class="ms-wrap" id="ms-cuerpo-wrap">
-            <button type="button" class="ms-btn" id="ms-cuerpo-btn" onclick="toggleMS('cuerpo')">
-              <span id="ms-cuerpo-label">— Todos —</span>
-              <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="ms-dropdown" id="ms-cuerpo-dd">
-              <div class="ms-option"><input type="checkbox" id="cb-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('cuerpo')"><label for="cb-dest-AM">Acopio Marino</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('cuerpo')"><label for="cb-dest-AT">Acopio Terrestre</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-MU" value="MURO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MU">Muro</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-MO" value="MORRO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MO">Morro</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-C1" value="CUERPO 1" onchange="onMsChange('cuerpo')"><label for="cb-dest-C1">Cuerpo 1</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-C2" value="CUERPO 2" onchange="onMsChange('cuerpo')"><label for="cb-dest-C2">Cuerpo 2</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-C3" value="CUERPO 3" onchange="onMsChange('cuerpo')"><label for="cb-dest-C3">Cuerpo 3</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-C4" value="CUERPO 4" onchange="onMsChange('cuerpo')"><label for="cb-dest-C4">Cuerpo 4</label></div>
-              <div class="ms-option"><input type="checkbox" id="cb-dest-C5" value="CUERPO 5" onchange="onMsChange('cuerpo')"><label for="cb-dest-C5">Cuerpo 5</label></div>
-            </div>
-          </div>
-        </div>
-
-      </div>
-      <div class="slicer-actions">
-        <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()" style="margin-top: 10px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-          Limpiar filtros
-        </button>
-      </div>
-    </div>
-
-    <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:8px;"></div>
-
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <div class="val" id="dash-kpi-viajes">0</div>
-        <div class="lbl">Viajes (filtrados)</div>
-      </div>
-      <div class="kpi-card">
-        <div class="val" id="dash-kpi-toneladas">0 t</div>
-        <div class="lbl">Toneladas (filtradas)</div>
-      </div>
-    </div>
-
-    <div class="chart-card">
-      <h3>Toneladas totales por Material</h3>
-      <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
-    </div>
-
-    <div class="chart-card">
-      <h3>Toneladas totales por Banco (Origen)</h3>
-      <div class="chart-wrap"><canvas id="chart-banco"></canvas></div>
-    </div>
-
-    <div class="chart-card" style="padding:0; overflow:hidden; border-color: var(--accent);">
-      <h3 style="background: var(--accent); color: white; margin: 0; padding: 14px; text-align: center; font-size: 14px; font-weight: bold; justify-content: center;">
-        TONELADAS POR MES
-      </h3>
-      <div class="chart-wrap" id="wrap-chart-meses" style="padding: 20px 20px 20px 0px; background: #f4f7f9;">
-        <canvas id="chart-meses"></canvas>
-      </div>
-    </div>
-
-    <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
-
+    <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
   </div>
 
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros del dashboard
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Desde</label>
+        <input type="date" id="dash-fecha-desde" onchange="renderDashboard()"/>
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" id="dash-fecha-hasta" onchange="renderDashboard()"/>
+      </div>
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-banco-btn" onclick="toggleMS('banco')">
+            <span id="ms-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-banco-TAJO" value="EL TAJO" onchange="onMsChange('banco')"><label for="cb-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-TRITURA" value="TRITURA" onchange="onMsChange('banco')"><label for="cb-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('banco')"><label for="cb-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('banco')"><label for="cb-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('banco')"><label for="cb-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-material-wrap">
+          <button type="button" class="ms-btn" id="ms-material-btn" onclick="toggleMS('material')">
+            <span id="ms-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-mat-NUC" value="NUCLEO" onchange="onMsChange('material')"><label for="cb-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-BER" value="BERMA" onchange="onMsChange('material')"><label for="cb-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('material')"><label for="cb-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('material')"><label for="cb-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('material')"><label for="cb-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-COR" value="CORAZA" onchange="onMsChange('material')"><label for="cb-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div class="full">
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-cuerpo-btn" onclick="toggleMS('cuerpo')">
+            <span id="ms-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('cuerpo')"><label for="cb-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('cuerpo')"><label for="cb-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-MU" value="MURO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-MO" value="MORRO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C1" value="CUERPO 1" onchange="onMsChange('cuerpo')"><label for="cb-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C2" value="CUERPO 2" onchange="onMsChange('cuerpo')"><label for="cb-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C3" value="CUERPO 3" onchange="onMsChange('cuerpo')"><label for="cb-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C4" value="CUERPO 4" onchange="onMsChange('cuerpo')"><label for="cb-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C5" value="CUERPO 5" onchange="onMsChange('cuerpo')"><label for="cb-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:8px;"></div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-viajes">0</div>
+      <div class="lbl">Viajes (filtrados)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-toneladas">0 t</div>
+      <div class="lbl">Toneladas (filtradas)</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Toneladas totales por Material</h3>
+    <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Toneladas totales por Banco (Origen)</h3>
+    <div class="chart-wrap"><canvas id="chart-banco"></canvas></div>
+  </div>
+
+  <div class="chart-card" style="padding:0;overflow:hidden;border-color:var(--accent);">
+    <h3 style="background:var(--accent);color:white;margin:0;padding:14px;text-align:center;font-size:14px;font-weight:bold;justify-content:center;">
+      TONELADAS POR MES
+    </h3>
+    <div class="chart-wrap" id="wrap-chart-meses" style="padding:20px 20px 20px 0;background:#f4f7f9;">
+      <canvas id="chart-meses"></canvas>
+    </div>
+  </div>
+
+  <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
 </div>
 
 <div class="tab-content" id="tab-resumen">
@@ -1758,7 +1598,7 @@ function handleFirestoreIndexError(err) {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Fuente de datos
     </h3>
-    <div style="display:flex; gap:8px; margin-bottom:6px;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
       <button class="btn btn-secondary" id="btn-excel-ventana" onclick="usarVentanaRecienteEnExcel()" style="font-size:12px;">
         Ventana reciente cargada
       </button>
@@ -1783,7 +1623,6 @@ function handleFirestoreIndexError(err) {
         <label>Hasta</label>
         <input type="date" id="excel-fecha-hasta"/>
       </div>
-
       <div>
         <label>Banco (Origen)</label>
         <div class="ms-wrap" id="ms-excel-banco-wrap">
@@ -1800,7 +1639,6 @@ function handleFirestoreIndexError(err) {
           </div>
         </div>
       </div>
-
       <div>
         <label>Material</label>
         <div class="ms-wrap" id="ms-excel-material-wrap">
@@ -1818,7 +1656,6 @@ function handleFirestoreIndexError(err) {
           </div>
         </div>
       </div>
-
       <div class="full">
         <label>Cuerpo (Destino)</label>
         <div class="ms-wrap" id="ms-excel-cuerpo-wrap">
@@ -1841,19 +1678,19 @@ function handleFirestoreIndexError(err) {
       </div>
     </div>
     <div class="slicer-actions">
-      <button class="btn btn-secondary" onclick="limpiarFiltrosExcel()" style="margin-top: 10px;">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosExcel()" style="margin-top:10px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
         Limpiar filtros
       </button>
     </div>
   </div>
 
-  <button id="btn-descargar-excel" onclick="descargarExcelDesdeTab()" style="width:100%; background-color: #107c41; color: white; border-radius: var(--radius); border: 0.5px solid #107c41; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 13px; margin-top:4px;">
+  <button id="btn-descargar-excel" onclick="descargarExcelDesdeTab()" style="width:100%;background-color:#107c41;color:white;border-radius:var(--radius);border:0.5px solid #107c41;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;margin-top:4px;">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     Descargar excel
   </button>
 
-  <button class="btn btn-secondary" disabled title="Pendiente de definir" style="width:100%; margin-top:10px; opacity:0.55; cursor:not-allowed;">
+  <button class="btn btn-secondary" disabled title="Pendiente de definir" style="width:100%;margin-top:10px;opacity:0.55;cursor:not-allowed;">
     Resumen
   </button>
 </div>
@@ -1868,9 +1705,17 @@ function handleFirestoreIndexError(err) {
       <p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Cargando usuarios…</p>
     </div>
   </div>
+  <div class="form-card" style="margin-top:10px;">
+    <h3>Herramientas de base de datos</h3>
+    <button id="btn-recalcular-resumen" class="btn btn-secondary" onclick="recalcularResumen()" style="width:100%;">
+      Recalcular resumen (lee toda la base)
+    </button>
+  </div>
 </div>
 
-</div><div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+</div>
+
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
   <div class="modal">
     <div class="modal-header">
       <h2 id="modal-title">Boleta #</h2>
@@ -1911,9 +1756,6 @@ function handleFirestoreIndexError(err) {
 </div>
 
 <script>
-// ══════════════════════════════════════════════════════
-// TABLA DE RANGOS
-// ══════════════════════════════════════════════════════
 const RANGOS = {
   'CUERPO 1': { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'0.20 a 0.30 ton','SECUNDARIA 1':'0.30 a 0.50 ton','CORAZA':'5.8 ton','BERMA':'0.30 a 0.50 ton','BERMA DE APOYO':'0.20 a 0.30 ton' },
   'CUERPO 2': { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'0.30 a 0.50 ton','SECUNDARIA 1':'0.50 a 1.00 ton','CORAZA':'10 ton','BERMA':'0.50 a 1.00 ton','BERMA DE APOYO':'0.30 a 0.50 ton' },
@@ -1932,7 +1774,6 @@ const RANGOS_ACOPIO = {
   'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
 };
 
-// ── Tabs ──
 function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -1951,7 +1792,6 @@ function showTab(t) {
   if (t === 'pendientes') renderPendientes();
 }
 
-// ── Cálculos automáticos ──
 function calcCiclo() {
   const fecha1 = document.getElementById('f-fecha1').value;
   const hora1  = document.getElementById('f-hora1').value;
@@ -1993,7 +1833,6 @@ function updateRangos() {
   rangoSelEl.innerHTML = '<option value="">— Seleccionar rango —</option>';
   hintEl.style.display = 'none';
   if (!destino || !material) { rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none'; return; }
-  
   if (destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE') {
     rangoEl.style.display = 'none';
     rangoSelEl.style.display = 'block';
@@ -2008,7 +1847,6 @@ function updateRangos() {
     }
     return;
   }
-  
   rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none';
   const destinoRangos = RANGOS[destino];
   if (!destinoRangos) { rangoEl.value = 'Sin rango definido'; return; }
@@ -2022,7 +1860,6 @@ function updateRangos() {
   }
 }
 
-// ── Form: leer y limpiar ──
 function getFormData() {
   const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
   const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
@@ -2073,7 +1910,6 @@ function clearForm() {
   window._editFid = null;
 }
 
-// ── Marcar/desmarcar 2do pesaje y tara como pendientes en Captura ──
 function togglePendienteForm() {
   const pendiente = document.getElementById('f-pendiente').checked;
   const fecha2El = document.getElementById('f-fecha2');
@@ -2082,15 +1918,12 @@ function togglePendienteForm() {
   const rowFecha2 = document.getElementById('row-fecha2-hora2');
   const rowCiclo  = document.getElementById('row-ciclo');
   const rowTara   = document.getElementById('row-tara');
-
   fecha2El.disabled = pendiente;
   hora2El.disabled   = pendiente;
   taraEl.disabled    = pendiente;
-
   rowFecha2.style.opacity = pendiente ? '0.4' : '1';
   rowCiclo.style.opacity  = pendiente ? '0.4' : '1';
   rowTara.style.opacity   = pendiente ? '0.4' : '1';
-
   if (pendiente) {
     fecha2El.value = ''; hora2El.value = ''; taraEl.value = '';
     document.getElementById('f-ciclo').value = '';
@@ -2100,7 +1933,6 @@ function togglePendienteForm() {
 }
 window.togglePendienteForm = togglePendienteForm;
 
-// ── Formato de fecha ──
 function fmtFecha(val) {
   if (!val) return '—';
   const m = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -2108,31 +1940,23 @@ function fmtFecha(val) {
   return val;
 }
 
-// ── Render base de datos ──
 function renderDB() {
   const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
-
-  // Combina la ventana reciente cargada con los resultados puntuales de
-  // "buscar en historial" (si los hay), sin duplicar por _fid.
-  const combinados = db.concat((window.dbHistorial||[]).filter(h => !db.some(d => d._fid === h._fid)));
-
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
   const filtered = combinados.filter(r =>
     ['boleta','folio','economico','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
-
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
   document.getElementById('stat-total').textContent     = filtered.length;
   document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
-  
   const list = document.getElementById('records-list');
   if (!filtered.length) {
     list.innerHTML = `<div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
-      <p>${combinados.length ? 'Sin resultados para tu búsqueda. Prueba "Buscar en todo el historial" abajo.' : 'Sin registros. Ve a Captura para agregar el primero.'}</p>
+      <p>${combinados.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros. Ve a Captura para agregar el primero.'}</p>
     </div>`;
     return;
   }
-  
   list.innerHTML = filtered.map(r => `
     <div class="record" onclick="openModal('${r._fid}')">
       <div class="rec-main">
@@ -2152,8 +1976,6 @@ function renderDB() {
     </div>`).join('');
 }
 
-// Al cambiar el texto de búsqueda se descartan resultados de historial
-// previos (correspondían a una búsqueda distinta).
 function onFilterInput() {
   if ((window.dbHistorial||[]).length) { window.dbHistorial = []; }
   renderDB();
@@ -2167,7 +1989,6 @@ function closeModalForce() {
   window._currentFid = null;
 }
 
-// ── Toast ──
 let syncToastTimer = null;
 function showSyncToast(icon, msg, type, duration = 3000) {
   const toast = document.getElementById('sync-toast');
@@ -2177,12 +1998,11 @@ function showSyncToast(icon, msg, type, duration = 3000) {
   if (syncToastTimer) clearTimeout(syncToastTimer);
   syncToastTimer = setTimeout(() => { toast.className = ''; }, duration);
 }
+window.showSyncToast = showSyncToast;
 
 // ══════════════════════════════════════════════════════
-// DASHBOARD DE GRÁFICOS (solo admin)
+// DASHBOARD
 // ══════════════════════════════════════════════════════
-
-// Declaración Global del Plugin de Burbuja para evitar fallos de re-renderizado
 const customBubblePlugin = {
   id: 'customBubble',
   afterDatasetsDraw(chart) {
@@ -2191,31 +2011,23 @@ const customBubblePlugin = {
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-
     chart.getDatasetMeta(0).data.forEach((bar, index) => {
       const val = data.datasets[0].data[index];
       if (val > 0) {
-        const text = val.toLocaleString('es-MX', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' t';
+        const text = val.toLocaleString('es-MX', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' t';
         const textWidth = ctx.measureText(text).width;
-        
-        // Coordenadas calculadas de la barra
         const px = bar.x;
         const py = bar.y;
-
-        // Propiedades de la burbuja
         const paddingX = 14;
         const h = 26;
         const w = textWidth + paddingX * 2;
-        const r = 13; // Radio del borde curvo
-        const startX = px - 8; // Mover burbuja un poco a la izquierda para sobreponer la línea
-
-        // Dibujar la burbuja (A prueba de fallos para navegadores viejos)
-        ctx.fillStyle = '#0f6e56'; // Colorimetría de tu app
+        const r = 13;
+        const startX = px - 8;
+        ctx.fillStyle = '#0f6e56';
         ctx.beginPath();
         if (ctx.roundRect) {
           ctx.roundRect(startX, py - h/2, w, h, r);
         } else {
-          // Fallback manual de dibujo
           const x = startX, y = py - h/2;
           ctx.moveTo(x + r, y);
           ctx.lineTo(x + w - r, y);
@@ -2228,10 +2040,8 @@ const customBubblePlugin = {
           ctx.quadraticCurveTo(x, y, x + r, y);
         }
         ctx.fill();
-
-        // Dibujar el texto blanco encima de la burbuja
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(text, startX + w/2, py + 1); // +1 píxel de compensación visual para el centrado vertical
+        ctx.fillText(text, startX + w/2, py + 1);
       }
     });
     ctx.restore();
@@ -2242,7 +2052,6 @@ let chartMaterial = null;
 let chartBanco    = null;
 let chartMeses    = null;
 
-// ── Multiselect helpers ──
 function getMsSelected(key) {
   const dd = document.getElementById('ms-' + key + '-dd');
   if (!dd) return [];
@@ -2250,7 +2059,6 @@ function getMsSelected(key) {
 }
 
 function getMsLabel(key) {
-  const labels = { banco: 'Banco', material: 'Material', cuerpo: 'Cuerpo', 'excel-banco': 'Banco', 'excel-material': 'Material', 'excel-cuerpo': 'Cuerpo' };
   const sel = getMsSelected(key);
   const dd = document.getElementById('ms-' + key + '-dd');
   const total = dd ? dd.querySelectorAll('input[type="checkbox"]').length : 0;
@@ -2288,7 +2096,7 @@ function toggleMS(key) {
 
 function onMsChange(key) {
   updateMsBtn(key);
-  if (key.startsWith('excel-')) return; // los slicers de Excel se leen al momento de descargar, no repintan nada en vivo
+  if (key.startsWith('excel-')) return;
   renderDashboard();
 }
 
@@ -2311,23 +2119,14 @@ function limpiarFiltrosDashboard() {
 }
 
 function getDashboardFiltered() {
-  const desde    = document.getElementById('dash-fecha-desde').value;
-  const hasta    = document.getElementById('dash-fecha-hasta').value;
-  const bancos   = getMsSelected('banco');
+  const desde      = document.getElementById('dash-fecha-desde').value;
+  const hasta      = document.getElementById('dash-fecha-hasta').value;
+  const bancos     = getMsSelected('banco');
   const materiales = getMsSelected('material');
-  const cuerpos  = getMsSelected('cuerpo');
-
-  // Pediste que los gráficos puedan tomar TODO el histórico, no solo la
-  // ventana reciente sincronizada en vivo. Cuando el toggle "Histórico
-  // completo" está activo y ya se cargó, se usa ese array completo;
-  // si no, se usa la ventana reciente (window.db) como antes.
-  // (Se lee con el prefijo window. a propósito: estas variables viven en
-  // el bloque de módulo ES de Firebase, y solo lo que se expone
-  // explícitamente en window queda visible para este bloque de script plano.)
+  const cuerpos    = getMsSelected('cuerpo');
   const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
     ? window.dbHistoricoCompleto
     : (window.db || []);
-
   return datos.filter(r => {
     if (!r.fecha1) return false;
     if (desde && r.fecha1 < desde) return false;
@@ -2344,57 +2143,47 @@ function renderDashboard() {
   const filtered = getDashboardFiltered();
   const emptyState = document.getElementById('dash-empty-state');
 
-  // Indicador de qué fuente de datos están usando los gráficos en este momento.
   const fuenteEl = document.getElementById('dash-fuente-actual');
   const btnVentana = document.getElementById('btn-dash-ventana');
   const btnHistorico = document.getElementById('btn-dash-historico');
   if (fuenteEl) {
     if (window.usandoHistoricoCompleto && window.dbHistoricoCompleto) {
       fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
-      if (btnVentana)   { btnVentana.className   = 'btn btn-secondary'; }
-      if (btnHistorico) { btnHistorico.className = 'btn btn-primary'; }
+      if (btnVentana)   btnVentana.className   = 'btn btn-secondary';
+      if (btnHistorico) btnHistorico.className = 'btn btn-primary';
     } else {
-      fuenteEl.textContent = '🕐 Mostrando solo la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s)) · usa "Ver TODO el histórico" arriba para incluir todo';
-      if (btnVentana)   { btnVentana.className   = 'btn btn-primary'; }
-      if (btnHistorico) { btnHistorico.className = 'btn btn-secondary'; }
+      fuenteEl.textContent = '🕐 Mostrando solo la ventana reciente (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+      if (btnVentana)   btnVentana.className   = 'btn btn-primary';
+      if (btnHistorico) btnHistorico.className = 'btn btn-secondary';
     }
   }
 
-  // KPIs
   const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
-  document.getElementById('dash-kpi-viajes').textContent     = filtered.length;
-  document.getElementById('dash-kpi-toneladas').textContent  = totalTon.toFixed(2) + ' t';
-
+  document.getElementById('dash-kpi-viajes').textContent    = filtered.length;
+  document.getElementById('dash-kpi-toneladas').textContent = totalTon.toFixed(2) + ' t';
   emptyState.style.display = filtered.length ? 'none' : 'block';
 
-  // Agrupar por material
   const porMaterial = {};
   filtered.forEach(r => {
     const key = r.material || 'Sin material';
-    const ton = r.ton || (r.neto_kg || 0) / 1000;
-    porMaterial[key] = (porMaterial[key] || 0) + ton;
+    porMaterial[key] = (porMaterial[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
   });
 
-  // Agrupar por banco
   const porBanco = {};
   filtered.forEach(r => {
     const key = r.banco || 'Sin banco';
-    const ton = r.ton || (r.neto_kg || 0) / 1000;
-    porBanco[key] = (porBanco[key] || 0) + ton;
+    porBanco[key] = (porBanco[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
   });
 
   const colores = ['#0f6e56','#1d9e75','#1a4f8a','#854f0b','#a32d2d','#5f5e5a','#2c8fb3','#8a5fb0'];
 
-  // ── Chart Material (Dona) ──
   const ctxMat = document.getElementById('chart-material').getContext('2d');
-  const matLabels = Object.keys(porMaterial);
-  const matValues = Object.values(porMaterial).map(v => +v.toFixed(2));
   if (chartMaterial) chartMaterial.destroy();
   chartMaterial = new Chart(ctxMat, {
     type: 'doughnut',
     data: {
-      labels: matLabels,
-      datasets: [{ data: matValues, backgroundColor: colores, borderWidth: 1, borderColor: '#ffffff' }]
+      labels: Object.keys(porMaterial),
+      datasets: [{ data: Object.values(porMaterial).map(v=>+v.toFixed(2)), backgroundColor: colores, borderWidth: 1, borderColor: '#ffffff' }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -2405,41 +2194,29 @@ function renderDashboard() {
     }
   });
 
-  // ── Chart Banco (Barras) ──
   const ctxBanco = document.getElementById('chart-banco').getContext('2d');
-  const bancoLabels = Object.keys(porBanco);
-  const bancoValues = Object.values(porBanco).map(v => +v.toFixed(2));
   if (chartBanco) chartBanco.destroy();
   chartBanco = new Chart(ctxBanco, {
     type: 'bar',
     data: {
-      labels: bancoLabels,
-      datasets: [{ label: 'Toneladas', data: bancoValues, backgroundColor: '#0f6e56', borderRadius: 6 }]
+      labels: Object.keys(porBanco),
+      datasets: [{ label: 'Toneladas', data: Object.values(porBanco).map(v=>+v.toFixed(2)), backgroundColor: '#0f6e56', borderRadius: 6 }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' t' } }
-      },
-      scales: {
-        y: { beginAtZero: true, ticks: { font: { size: 11 } } },
-        x: { ticks: { font: { size: 10 } } }
-      }
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' t' } } },
+      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } }, x: { ticks: { font: { size: 10 } } } }
     }
   });
 
-  // ── Agrupar por Mes (Para el Chart Estilo Imagen) ──
   const porMes = {};
   filtered.forEach(r => {
     if (!r.fecha1) return;
     const [y, m, d] = r.fecha1.split('-');
-    const key = `${y}-${m}`; 
-    // Fecha local sin hora para evitar brincos
+    const key = `${y}-${m}`;
     const dObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
     const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
-    const label = `${mesStr}\n${y}`; // Etiqueta separada en dos líneas
-
+    const label = `${mesStr}\n${y}`;
     const ton = r.ton || (r.neto_kg || 0) / 1000;
     if (!porMes[key]) porMes[key] = { label, val: 0 };
     porMes[key].val += ton;
@@ -2449,77 +2226,45 @@ function renderDashboard() {
   const mesesLabels = mesesKeys.map(k => porMes[k].label.split('\n'));
   const mesesValues = mesesKeys.map(k => +porMes[k].val.toFixed(2));
 
-  // Ajustar la altura dinámicamente según la cantidad de meses filtrados
   const wrapMeses = document.getElementById('wrap-chart-meses');
   if (wrapMeses) {
-    // Da 60px por cada mes, con un mínimo de 150px
-    const dynamicHeight = Math.max(150, mesesLabels.length * 60);
-    wrapMeses.style.height = dynamicHeight + 'px';
+    wrapMeses.style.height = Math.max(150, mesesLabels.length * 60) + 'px';
   }
 
-  // ── Chart Historial Meses (Barras finas horizontales) ──
   const ctxMeses = document.getElementById('chart-meses').getContext('2d');
   if (chartMeses) chartMeses.destroy();
-  
   chartMeses = new Chart(ctxMeses, {
     type: 'bar',
     data: {
       labels: mesesLabels,
-      datasets: [{
-        data: mesesValues,
-        backgroundColor: '#0f6e56', // Color de la línea principal
-        barThickness: 4, // Línea super delgada
-        borderRadius: 0
-      }]
+      datasets: [{ data: mesesValues, backgroundColor: '#0f6e56', barThickness: 4, borderRadius: 0 }]
     },
     options: {
-      indexAxis: 'y', // Lo voltea a horizontal
-      responsive: true, 
+      indexAxis: 'y',
+      responsive: true,
       maintainAspectRatio: false,
-      layout: {
-        padding: { right: 80, top: 10, bottom: 10 } // Espacio en la derecha para que quepa la burbuja
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: { enabled: false } // Se apaga el tooltip para dejar puramente el aspecto visual
-      },
+      layout: { padding: { right: 80, top: 10, bottom: 10 } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
       scales: {
-        x: { 
-          beginAtZero: true, 
-          grid: { display: true, drawBorder: false, color: 'rgba(0,0,0,0.05)' },
-          ticks: { font: { size: 10 }, maxTicksLimit: 6 }
-        },
-        y: { 
-          grid: { display: false, drawBorder: true, borderColor: '#0f6e56', borderWidth: 2 }, // Línea vertical fuerte
-          ticks: { font: { weight: 'bold', size: 11 }, color: '#0f6e56' }
-        }
+        x: { beginAtZero: true, grid: { display: true, drawBorder: false, color: 'rgba(0,0,0,0.05)' }, ticks: { font: { size: 10 }, maxTicksLimit: 6 } },
+        y: { grid: { display: false, drawBorder: true, borderColor: '#0f6e56', borderWidth: 2 }, ticks: { font: { weight: 'bold', size: 11 }, color: '#0f6e56' } }
       }
     },
-    plugins: [customBubblePlugin] // El plugin global que dibuja la burbuja final
+    plugins: [customBubblePlugin]
   });
-} 
-
-window.renderDashboard          = renderDashboard;
-window.limpiarFiltrosDashboard  = limpiarFiltrosDashboard;
-
-// ══════════════════════════════════════════════════════
-// PESTAÑA "PENDIENTES"
-// ══════════════════════════════════════════════════════
-// Muestra los registros con status === 'pendiente' (capturados con 1er
-// pesaje pero sin 2do pesaje/tara) que estén dentro de la ventana reciente
-// cargada (window.db) o en resultados de búsqueda de historial. Permite
-// llenar SOLO lo que falta (fecha2, hora2, tara) sin reabrir el formulario
-// completo, para no saturar de campos esta pantalla.
-function getPendientesFiltered() {
-  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
-  return combinados.filter(r => r.status === 'pendiente');
 }
 
+window.renderDashboard         = renderDashboard;
+window.limpiarFiltrosDashboard = limpiarFiltrosDashboard;
+
+// ══════════════════════════════════════════════════════
+// PENDIENTES
+// ══════════════════════════════════════════════════════
 function renderPendientes() {
   const list = document.getElementById('pendientes-list');
   if (!list) return;
-  const pendientes = getPendientesFiltered().sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
-
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
+  const pendientes = combinados.filter(r => r.status === 'pendiente').sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
   if (!pendientes.length) {
     list.innerHTML = `<div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -2527,7 +2272,6 @@ function renderPendientes() {
     </div>`;
     return;
   }
-
   list.innerHTML = pendientes.map(r => `
     <div class="form-card" style="margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
@@ -2561,59 +2305,10 @@ function renderPendientes() {
 }
 window.renderPendientes = renderPendientes;
 
-// Completa un registro pendiente con fecha2/hora2/tara, recalcula el ciclo
-// y el peso neto/toneladas, y ajusta el resumen mensual (que ya tenía el
-// viaje contado pero con 0 toneladas) sumando ahora el peso real.
-window.completarPendiente = async function(fid) {
-  const r = findRecord(fid);
-  if (!r) { alert('No se encontró el registro.'); return; }
-
-  const fecha2 = (document.getElementById('pend-fecha2-' + fid) || {}).value || '';
-  const hora2  = (document.getElementById('pend-hora2-'  + fid) || {}).value || '';
-  const tara   = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
-
-  if (!fecha2) { alert('Ingresa la fecha del 2do pesaje.'); return; }
-  if (!hora2)  { alert('Ingresa la hora del 2do pesaje.'); return; }
-  if (tara <= 0) { alert('Ingresa la tara.'); return; }
-
-  const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00') + ':00');
-  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
-  const diffMs = dt2 - dt1;
-  if (diffMs < 0) { alert('La fecha/hora del 2do pesaje no puede ser anterior a la del 1er pesaje.'); return; }
-  const totalMin = Math.floor(diffMs / 60000);
-  const hrs = Math.floor(totalMin / 60);
-  const min = totalMin % 60;
-  const ciclo = hrs > 0 ? hrs + 'h ' + String(min).padStart(2, '0') + 'min' : min + ' min';
-
-  const bruto = r.bruto_kg || 0;
-  const neto  = bruto - tara;
-  if (neto <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
-
-  const original = { ...r };
-  const actualizado = {
-    ...r,
-    fecha2, hora2, ciclo,
-    tara_kg: tara, neto_kg: neto,
-    ton: neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
-    status: 'completo'
-  };
-
-  try {
-    const { _fid: _f, id: _id, ...payload } = actualizado;
-    payload.ts_updated = serverTimestamp();
-    await updateDoc(doc(db_f, COL, fid), payload);
-    moverResumen(original, actualizado); // pasa de 0 toneladas a las toneladas reales, sin tocar total_viajes otra vez
-    showSyncToast('✅', 'Destare completado', 'ok');
-  } catch (e) {
-    alert('Error al completar el registro: ' + e.message);
-  }
-};
-
 // ══════════════════════════════════════════════════════
-// PESTAÑA "EXCEL" (rol Visor + admin/master)
+// PESTAÑA EXCEL
 // ══════════════════════════════════════════════════════
 function initExcelTab() {
-  // Refleja el estado actual de histórico/ventana (compartido con Gráficos) en la nota de esta pestaña.
   const nota = document.getElementById('excel-historico-nota');
   if (nota) {
     nota.textContent = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
@@ -2630,7 +2325,6 @@ window.usarVentanaRecienteEnExcel = function() {
 
 window.cargarHistoricoCompletoExcel = async function() {
   const btn = document.getElementById('btn-excel-historico');
-  const nota = document.getElementById('excel-historico-nota');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
   try {
@@ -2652,13 +2346,15 @@ function limpiarFiltrosExcel() {
 }
 window.limpiarFiltrosExcel = limpiarFiltrosExcel;
 
-// Genera y descarga el Excel a partir de los datos ya cargados en memoria
-// (ventana reciente o histórico completo, lo que esté activo) aplicando
-// los slicers de Fecha/Banco/Material/Cuerpo de esta pestaña — pensado
-// para el rol "visor", que no tiene acceso a Base de datos.
-window.descargarExcelDesdeTab = async function() {
-  const desde = document.getElementById('excel-fecha-desde').value;
-  const hasta = document.getElementById('excel-fecha-hasta').value;
+// CORRECCIÓN 1: descargarExcelDesdeTab ahora usa XLSX directamente
+// (disponible globalmente desde el CDN cargado al inicio del HTML)
+window.descargarExcelDesdeTab = function() {
+  if (typeof XLSX === 'undefined') {
+    alert('La librería de Excel aún no terminó de cargar. Espera un momento y vuelve a intentar.');
+    return;
+  }
+  const desde      = document.getElementById('excel-fecha-desde').value;
+  const hasta      = document.getElementById('excel-fecha-hasta').value;
   const bancos     = getMsSelected('excel-banco');
   const materiales = getMsSelected('excel-material');
   const cuerpos    = getMsSelected('excel-cuerpo');
@@ -2671,9 +2367,9 @@ window.descargarExcelDesdeTab = async function() {
     if (!r.fecha1) return false;
     if (desde && r.fecha1 < desde) return false;
     if (hasta && r.fecha1 > hasta) return false;
-    if (bancos.length && !bancos.includes(r.banco)) return false;
+    if (bancos.length    && !bancos.includes(r.banco))    return false;
     if (materiales.length && !materiales.includes(r.material)) return false;
-    if (cuerpos.length && !cuerpos.includes(r.destino)) return false;
+    if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
     return true;
   });
 
@@ -2684,43 +2380,42 @@ window.descargarExcelDesdeTab = async function() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
 
   try {
+    const parseFecha = window.parseDateForExcel || function(s) { if (!s) return ''; const [y,m,d] = s.split('-'); return new Date(+y,+m-1,+d,0,0,0); };
     const datosFormateados = registros.map((r) => ({
-      "Fecha": r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
-      "Hora 1er Pesaje": r.hora1 || "—",
-      "Fecha 2do Pesaje": r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
-      "Hora 2do Pesaje": r.hora2 || "—",
-      "Ciclo": r.ciclo || "—",
-      "Folio": r.folio || "—",
-      "Boleta": r.boleta || "S/B",
-      "Placas": r.placas || "—",
-      "# Economico": r.economico || "—",
-      "Material": r.material || "—",
-      "Banco Origen": r.banco || "—",
-      "Destino (Tiro)": r.destino || "—",
+      "Fecha":              r.fecha1 ? parseFecha(r.fecha1) : "—",
+      "Hora 1er Pesaje":   r.hora1 || "—",
+      "Fecha 2do Pesaje":  r.fecha2 ? parseFecha(r.fecha2) : "—",
+      "Hora 2do Pesaje":   r.hora2 || "—",
+      "Ciclo":             r.ciclo || "—",
+      "Folio":             r.folio || "—",
+      "Boleta":            r.boleta || "S/B",
+      "Placas":            r.placas || "—",
+      "# Economico":       r.economico || "—",
+      "Material":          r.material || "—",
+      "Banco Origen":      r.banco || "—",
+      "Destino (Tiro)":    r.destino || "—",
       "Rango de Material": r.rango || "—",
-      "Peso Bruto (kg)": r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-      "Peso Tara (kg)": r.tara_kg ? Number(r.tara_kg).toLocaleString('es-MX') : "0",
-      "Peso Neto (kg)": r.neto_kg ? Number(r.neto_kg).toLocaleString('es-MX') : "0",
-      "Peso Neto (ton)": r.ton || "0",
-      "Estatus": r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
+      "Peso Bruto (kg)":   r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+      "Peso Tara (kg)":    r.tara_kg  ? Number(r.tara_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (kg)":    r.neto_kg  ? Number(r.neto_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (ton)":   r.ton || "0",
+      "Estatus":           r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
     for (let cellAddress in worksheet) {
       if (cellAddress[0] === '!') continue;
-      let cell = worksheet[cellAddress];
-      if (cell.t === 'd') cell.z = 'dd/mm/yyyy';
+      if (worksheet[cellAddress].t === 'd') worksheet[cellAddress].z = 'dd/mm/yyyy';
     }
-    const workbook = XLSX.utils.book_new();
     worksheet['!cols'] = [
-      {wch: 12}, {wch: 14}, {wch: 14}, {wch: 14}, {wch: 12},
-      {wch: 12}, {wch: 12}, {wch: 15}, {wch: 14}, {wch: 18},
-      {wch: 16}, {wch: 16}, {wch: 20}, {wch: 15}, {wch: 14},
-      {wch: 15}, {wch: 14}, {wch: 18}
+      {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
+      {wch:12},{wch:12},{wch:15},{wch:14},{wch:18},
+      {wch:16},{wch:16},{wch:20},{wch:15},{wch:14},
+      {wch:15},{wch:14},{wch:18}
     ];
-    const fechaStr = new Date().toISOString().slice(0, 10);
+    const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
-    XLSX.writeFile(workbook, `Reporte_Acarreos_${fechaStr}.xlsx`);
+    XLSX.writeFile(workbook, 'Reporte_Acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
   } catch (err) {
     alert('Error al generar el Excel: ' + err.message);
   } finally {
@@ -2735,12 +2430,11 @@ window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault(); deferredPrompt = e;
   if (!localStorage.getItem('pwa_dismissed')) pwaBanner.style.display = 'flex';
 });
-
 function installPWA() {
   if (!deferredPrompt) return;
   pwaBanner.style.display = 'none';
   deferredPrompt.prompt();
-  deferredPrompt.userChoice.then(choice => { deferredPrompt = null; });
+  deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
 }
 function dismissPWA() {
   pwaBanner.style.display = 'none';
@@ -2748,7 +2442,6 @@ function dismissPWA() {
 }
 window.addEventListener('appinstalled', () => { pwaBanner.style.display = 'none'; deferredPrompt = null; });
 
-// ── Service Worker ──
 if ('serviceWorker' in navigator) {
   const swCode = `
     const CACHE = 'acarreos-v2';
@@ -2764,18 +2457,6 @@ if ('serviceWorker' in navigator) {
     .then(() => console.log('SW registered'))
     .catch(err => console.warn('SW error:', err));
 }
-</script>
-
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-const firebaseConfig = {
-  apiKey:"AIzaSyADUbA3X07prA5yOUzFJX_zVntN88-JMwc",
-  authDomain:"acarreos-rompeolas.firebaseapp.com",
-  projectId:"acarreos-rompeolas",
-  storageBucket:"acarreos-rompeolas.firebasestorage.app",
-  messagingSenderId:"217225530978",
-  appId:"1:217225530978:web:f742aa093a972401ce4b3b"
-};
 </script>
 
 </body>

@@ -1,7 +1,0 @@
-# Ocultar credenciales web
-config.js
-
-# Ignorar carpetas y archivos de entorno Node (si en un futuro agregas backend)
-node_modules/
-.env
-serviceAccountKey.json

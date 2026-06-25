@@ -80,6 +80,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 .peso-item .unit { font-size: 11px; color: var(--accent); opacity: 0.7; }
 .range-hint { background: var(--info-light); border: 0.5px solid #b3d4f5; border-radius: var(--radius); padding: 8px 12px; font-size: 12px; color: var(--info); margin-top: 6px; display: none; }
 .range-hint strong { font-weight: 600; }
+.date-hint { font-size: 11px; color: var(--info); margin-top: 4px; font-weight: 500; min-height: 14px; }
 .btn { flex: 1; padding: 10px 12px; border-radius: var(--radius); border: 0.5px solid var(--border-strong); font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; }
 .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
 .btn-primary:active { background: #0c5c46; }
@@ -1882,6 +1883,44 @@ const RANGOS_ACOPIO = {
   'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
 };
 
+// ── Indicador de fecha legible bajo cada <input type="date"> ──
+// El control nativo del navegador muestra el valor en el formato del
+// idioma del dispositivo (en muchos casos MM/DD/AAAA aunque el usuario
+// esté en México). Esto puede leerse por error como DD/MM/AAAA.
+// Para evitar esa confusión, mostramos siempre debajo un texto sin
+// ambigüedad ("dom 1 jun 2026"), tomado directamente del valor ISO
+// real del input (que nunca cambia con el idioma del navegador).
+function formatearFechaHint(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(y, m - 1, d);
+  const dias  = ['dom','lun','mar','mié','jue','vie','sáb'];
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return dias[dt.getDay()] + ' ' + d + ' ' + meses[m - 1] + ' ' + y;
+}
+window.formatearFechaHint = formatearFechaHint;
+
+function initDateHints() {
+  document.querySelectorAll('input[type="date"]').forEach(inp => {
+    if (inp.dataset.hintInit) {
+      const hintExistente = inp.parentNode.querySelector(':scope > .date-hint');
+      if (hintExistente) hintExistente.textContent = inp.value ? '📅 ' + formatearFechaHint(inp.value) : '';
+      return;
+    }
+    inp.dataset.hintInit = '1';
+    const hint = document.createElement('div');
+    hint.className = 'date-hint';
+    inp.insertAdjacentElement('afterend', hint);
+    const actualizar = () => { hint.textContent = inp.value ? '📅 ' + formatearFechaHint(inp.value) : ''; };
+    inp.addEventListener('input', actualizar);
+    inp.addEventListener('change', actualizar);
+    actualizar();
+  });
+}
+window.initDateHints = initDateHints;
+document.addEventListener('DOMContentLoaded', initDateHints);
+
 function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -1899,6 +1938,7 @@ function showTab(t) {
   if (t === 'graficos') renderDashboard();
   if (t === 'pendientes') renderPendientes();
   if (t === 'resumen') initResumenTab();
+  initDateHints();
 }
 
 function calcCiclo() {
@@ -2414,6 +2454,7 @@ function renderPendientes() {
       </button>
     </div>
   `).join('');
+  initDateHints();
 }
 window.renderPendientes = renderPendientes;
 
@@ -2436,6 +2477,7 @@ function limpiarFiltrosExcel() {
     if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updateMsBtn(key);
   });
+  initDateHints();
 }
 window.limpiarFiltrosExcel = limpiarFiltrosExcel;
 
@@ -2445,17 +2487,26 @@ window.limpiarFiltrosExcel = limpiarFiltrosExcel;
 // ══════════════════════════════════════════════════════
 function initResumenTab() {
   const nota = document.getElementById('resumen-historico-nota');
+  const btnHist = document.getElementById('btn-resumen-historico');
+  const btnVent = document.getElementById('btn-resumen-ventana');
   if (nota) {
-    nota.textContent = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-      ? '📊 Usando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+    nota.textContent = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
       : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+  if (window.usandoHistoricoResumen && window.resumenHistoricoCompleto) {
+    if (btnVent) btnVent.className = 'btn btn-primary';
+    if (btnHist) btnHist.className = 'btn btn-secondary';
+  } else {
+    if (btnVent) btnVent.className = 'btn btn-secondary';
+    if (btnHist) btnHist.className = 'btn btn-primary';
   }
   cambiarPeriodoResumen();
 }
 window.initResumenTab = initResumenTab;
 
 window.usarVentanaRecienteEnResumen = function() {
-  window.usarVentanaRecienteEnDashboard();
+  window.usarVentanaRecienteEnResumenFn();
   initResumenTab();
   renderResumen();
 };
@@ -2465,7 +2516,9 @@ window.cargarHistoricoCompletoResumen = async function() {
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
   try {
-    await window.cargarHistoricoCompleto(false);
+    await window.cargarHistoricoCompletoResumenFn(false);
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
   } finally {
     initResumenTab();
     renderResumen();
@@ -2542,8 +2595,8 @@ function getResumenFiltradoBase() {
   const materiales  = getMsSelected('resumen-material');
   const cuerpos     = getMsSelected('resumen-cuerpo');
   const tiposCamion = getMsSelected('resumen-tipocamion');
-  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-    ? window.dbHistoricoCompleto
+  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
     : (window.db || []);
   return datos.filter(r => {
     if (!r.fecha1) return false;
@@ -2584,8 +2637,8 @@ function renderResumenDia() {
   // Solo se muestra cuando el periodo seleccionado es "día" y coincide con la fecha de hoy.
   if (tipo !== 'dia' || desde !== hoy) { card.style.display = 'none'; return; }
 
-  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-    ? window.dbHistoricoCompleto
+  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
     : (window.db || []);
   const delDia = datos.filter(r => r.fecha1 === hoy);
 

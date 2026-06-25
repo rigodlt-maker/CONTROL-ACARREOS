@@ -938,6 +938,7 @@ window.cargarHistoricoCompletoResumenFn = async function(forzar) {
   if (resumenHistoricoCompleto && !forzar) {
     usandoHistoricoResumen = true;
     window.usandoHistoricoResumen = true;
+    // Ya teníamos el histórico en caché: avisamos al wrapper que puede renderizar.
     return;
   }
   cargandoHistoricoResumen = true;
@@ -953,7 +954,9 @@ window.cargarHistoricoCompletoResumenFn = async function(forzar) {
     if (nota) nota.textContent = '✅ Histórico completo cargado: ' + resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
   } catch (e) {
     if (nota) nota.textContent = '';
+    console.error('[Resumen] Error al cargar histórico completo:', e);
     handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+    throw e; // re-lanzar para que el wrapper lo capture
   } finally {
     cargandoHistoricoResumen = false;
   }
@@ -2555,6 +2558,7 @@ function cambiarPeriodoResumen() {
   if (tipo === 'semana' && !fSemana.value) fSemana.value = isoHoy();
   const fMes = document.getElementById('resumen-fecha-mes');
   if (tipo === 'mes' && !fMes.value) fMes.value = isoHoy().slice(0,7);
+  initDateHints(); // refresca los hints de fecha al cambiar el modo visible
   renderResumen();
 }
 window.cambiarPeriodoResumen = cambiarPeriodoResumen;

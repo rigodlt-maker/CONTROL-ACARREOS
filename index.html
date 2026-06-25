@@ -12,11 +12,12 @@
 <title>CONTROL ACARREOS - Rompeolas Oriente · Veracruz</title>
 
 <link rel="manifest" href="./manifest.json">
+
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
 <style>
-{ box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg: #f5f4f0; --surface: #ffffff;
   --border: rgba(0,0,0,0.12); --border-strong: rgba(0,0,0,0.28);
@@ -228,223 +229,845 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 </style>
 
 <script type="module">
-// 1. Nuevas importaciones de Firebase con soporte Offline-First y App Check
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { 
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, addDoc, getDocs, doc, updateDoc, deleteDoc,
-  query, orderBy, onSnapshot, where, limit, startAfter,
-  serverTimestamp, setDoc, increment, writeBatch 
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { 
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut 
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js";
+import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, addDoc,
+         getDocs, doc, updateDoc, deleteDoc,
+         query, orderBy, onSnapshot, where, limit, startAfter,
+         serverTimestamp, setDoc, increment, writeBatch,
+         getAggregateFromServer, sum }            from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged,
+         createUserWithEmailAndPassword,
+         signInWithEmailAndPassword,
+         signOut }                                from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-// 2. Importamos la configuración del archivo externo protegido
-import { firebaseConfig } from './config.js';
+const firebaseConfig = {
+  apiKey:            "AIzaSyADUbA3X07prA5yOUzFJX_zVntN88-JMwc",
+  authDomain:        "acarreos-rompeolas.firebaseapp.com",
+  projectId:         "acarreos-rompeolas",
+  storageBucket:     "acarreos-rompeolas.firebasestorage.app",
+  messagingSenderId: "217225530978",
+  appId:             "1:217225530978:web:f742aa093a972401ce4b3b"
+};
+const app        = initializeApp(firebaseConfig);
+const db_f       = getFirestore(app);
+const auth       = getAuth(app);
+const COL        = "acarreos";
+const COL_USERS  = "usuarios";
+const COL_RESUMEN = "resumenes";
 
-const app = initializeApp(firebaseConfig);
-
-// ── PREPARACIÓN PARA APP CHECK (PASO D) ──
-// Descomenta este bloque cuando actives reCAPTCHA en la consola de Firebase
-/*
-const appCheck = initializeAppCheck(app, {
-  provider: new ReCaptchaEnterpriseProvider('TU_CLAVE_PUBLICA_DE_RECAPTCHA_AQUI'),
-  isTokenAutoRefreshEnabled: true
-});
-*/
-
-// 3. Inicialización de Firestore con Persistencia Offline Activada
-const db_f = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
-const auth = getAuth(app);
-
-const COL = "acarreos"; 
-const COL_USERS = "usuarios";
-const COL_RESUMEN = "resumenes"; 
-
-let db = []; window.db = db; 
-let dbHistorial = []; window.dbHistorial = dbHistorial;
-let unsubscribe = null; let unsubUsers = null; 
-let isInitialized = false; 
-let currentUser = null; 
+let db             = [];
+  window.db          = db;
+let dbHistorial    = [];
+  window.dbHistorial = dbHistorial;
+let unsubscribe    = null;
+let unsubUsers     = null;
+let isInitialized  = false;
+let currentUser    = null;
 let currentUserDoc = null;
-let ventanaDias = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10); 
+let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10);
+let dashboardToken = 0;
 
-function findRecord(fid) { return db.find(x => x._fid === fid) || dbHistorial.find(x => x._fid === fid); } 
+function findRecord(fid) {
+  return db.find(x => x._fid === fid) || dbHistorial.find(x => x._fid === fid);
+}
 window.findRecord = findRecord;
 
-function appReady() { 
-  document.getElementById('fb-loading').style.display = 'none'; 
-  document.getElementById('fb-error').style.display = 'none'; 
-  document.getElementById('login-screen').style.display = 'none'; 
-  document.getElementById('pending-screen').style.display= 'none'; 
-  document.getElementById('app-shell').style.display = 'block';
-  const selVentana = document.getElementById('db-ventana'); 
-  if (selVentana) selVentana.value = String(ventanaDias); 
-} 
-
-function showLogin() { 
-  document.getElementById('fb-loading').style.display = 'none'; 
-  document.getElementById('fb-error').style.display = 'none';
-  document.getElementById('app-shell').style.display = 'none'; 
-  document.getElementById('pending-screen').style.display= 'none'; 
-  document.getElementById('login-screen').style.display = 'flex'; 
-  const bl = document.getElementById('btn-login'); 
-  if (bl) { bl.disabled = false; bl.textContent = 'Entrar'; } 
-} 
-
-function showPending() { 
-  document.getElementById('fb-loading').style.display = 'none'; 
-  document.getElementById('fb-error').style.display = 'none'; 
-  document.getElementById('app-shell').style.display = 'none'; 
-  document.getElementById('login-screen').style.display = 'none'; 
+function appReady() {
+  document.getElementById('fb-loading').style.display    = 'none';
+  document.getElementById('fb-error').style.display      = 'none';
+  document.getElementById('login-screen').style.display  = 'none';
+  document.getElementById('pending-screen').style.display= 'none';
+  document.getElementById('app-shell').style.display     = 'block';
+  const selVentana = document.getElementById('db-ventana');
+  if (selVentana) selVentana.value = String(ventanaDias);
+}
+function showLogin() {
+  document.getElementById('fb-loading').style.display    = 'none';
+  document.getElementById('fb-error').style.display      = 'none';
+  document.getElementById('app-shell').style.display     = 'none';
+  document.getElementById('pending-screen').style.display= 'none';
+  document.getElementById('login-screen').style.display  = 'flex';
+  const bl = document.getElementById('btn-login');
+  const br = document.getElementById('btn-registrar');
+  if (bl) { bl.disabled = false; bl.textContent = 'Entrar'; }
+  if (br) { br.disabled = false; br.textContent = 'Crear cuenta'; }
+}
+function showPending() {
+  document.getElementById('fb-loading').style.display    = 'none';
+  document.getElementById('fb-error').style.display      = 'none';
+  document.getElementById('app-shell').style.display     = 'none';
+  document.getElementById('login-screen').style.display  = 'none';
   document.getElementById('pending-screen').style.display= 'flex';
-} 
-
-function appError(msg) { 
-  document.getElementById('fb-loading').style.display = 'none'; 
-  document.getElementById('fb-error').style.display = 'flex'; 
+}
+function appError(msg) {
+  document.getElementById('fb-loading').style.display = 'none';
+  document.getElementById('fb-error').style.display   = 'flex';
   document.getElementById('fb-error-msg').textContent = msg;
-} 
+}
 
-window.switchAuthTab = function(tab) { 
-  document.querySelectorAll('.auth-tab').forEach(el => el.classList.remove('active')); 
-  document.querySelectorAll('.auth-form').forEach(el => el.classList.remove('active')); 
-  document.querySelector('[data-tab="' + tab + '"]').classList.add('active'); 
+window.switchAuthTab = function(tab) {
+  document.querySelectorAll('.auth-tab').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.auth-form').forEach(el => el.classList.remove('active'));
+  document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
   document.getElementById('auth-form-' + tab).classList.add('active');
-} 
+}
 
-// SE ELIMINÓ window.registrarUsuario para blindar la app (solo admin crea cuentas)
-
-window.loginUsuario = async function() { 
-  const email = document.getElementById('login-email').value.trim(); 
-  const pass = document.getElementById('login-pass').value;
-  if (!email || !pass) { alert('Ingresa correo y contraseña.'); return; } 
-  const btn = document.getElementById('btn-login'); 
-  btn.disabled = true;
-  btn.textContent = 'Entrando…'; 
-  try { 
-    await signInWithEmailAndPassword(auth, email, pass); 
-  } catch (e) { 
-    alert('Error al entrar: Correo o contraseña incorrectos.');
-    btn.disabled = false; btn.textContent = 'Entrar'; 
-  } 
-} 
-
-window.logoutUsuario = async function() { 
-  if (!confirm('¿Cerrar sesión?')) return;
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; } 
-  if (unsubUsers) { unsubUsers(); unsubUsers = null; } 
-  isInitialized = false;
-  db = []; window.db = db; 
-  await signOut(auth); 
-} 
-
-onAuthStateChanged(auth, async (user) => { 
-  currentUser = user; 
-  if (!user) { isInitialized = false; showLogin(); return; } 
-  try { 
-    const snap = await getDocs(collection(db_f, COL_USERS)); 
-    const myDoc = snap.docs.find(d => d.id === user.uid); 
-    currentUserDoc = myDoc ? myDoc.data() : null; 
-    
-    if (!currentUserDoc) { appError('No se encontró tu perfil. Contacta al administrador.'); return; } 
-    if (currentUserDoc.status !== 'autorizado') { showPending(); return; } 
-    
-    const rol = currentUserDoc.rol || 'capturista'; 
-    const esMaster = rol === 'master'; const esAdmin = rol === 'admin'; const esVisor = rol === 'visor'; const esCapturista = rol === 'capturista'; 
-    const esAdminOMaster = esAdmin || esMaster; 
-    const tag = document.getElementById('user-tag'); 
-    const etiquetaRol = esMaster ? ' (master)' : esAdmin ? ' (admin)' : esVisor ? ' (visor)' : ' (capturista)'; 
-    if (tag) tag.textContent = currentUserDoc.nombre + etiquetaRol; 
-    
-    window._currentUserRol = rol; 
-    
-    const captBtn = document.getElementById('t-form');
-    if (captBtn) captBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none'; 
-    const pendientesBtn = document.getElementById('btn-pendientes-tab');
-    if (pendientesBtn) pendientesBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
-    const dbBtn = document.getElementById('t-db'); 
-    if (dbBtn) dbBtn.style.display = esAdminOMaster ? 'flex' : 'none'; 
-    const resumenBtn = document.getElementById('btn-resumen-tab');
-    if (resumenBtn) resumenBtn.style.display = (esAdminOMaster || esVisor || esCapturista) ? 'flex' : 'none';
-    const graficosBtn = document.getElementById('btn-graficos-tab'); 
-    if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none'; 
-    const excelBtn = document.getElementById('btn-excel-tab'); 
-    if (excelBtn) excelBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
-    const adminBtn = document.getElementById('btn-admin-tab'); 
-    if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none'; 
-    
-    const tabsPermitidas = [];
-    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'resumen'); 
-    if (esAdminOMaster) tabsPermitidas.push('db'); 
-    if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel', 'resumen'); 
-    if (esAdminOMaster) tabsPermitidas.push('admin');
-    
-    const tabActivaEl = document.querySelector('.tab-content.active'); 
-    const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form'; 
-    if (!tabsPermitidas.includes(tabActivaId) && tabsPermitidas.length) { showTab(tabsPermitidas[0]); } 
-    
-    startRealtimeSync(); 
-  } catch (e) { appError('Error al verificar tu cuenta: ' + e.message); } 
-});
-
-function cutoffFecha(dias) { 
-  const d = new Date(); d.setDate(d.getDate() - dias); return d.toISOString().slice(0, 10);
-} 
-
-function startRealtimeSync() { 
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; } 
-  const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 9500, 365: 9500 };
-  const tope = Math.min(LIMITE_VENTANA[ventanaDias] || 6000, 9500); 
-  const q = query( collection(db_f, COL), where('fecha1', '>=', cutoffFecha(ventanaDias)), orderBy('fecha1', 'desc'), limit(tope) );
-  
-  unsubscribe = onSnapshot(q, (snapshot) => { 
-    db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() })); 
-    window.db = db; 
-    const recortado = db.length >= tope; 
-    if (!isInitialized) { 
-      isInitialized = true; appReady(); 
-      if (typeof renderDB === 'function') renderDB(); 
-    } else { 
-      if (typeof renderDB === 'function') renderDB(); 
-      if (document.getElementById('tab-db') && document.getElementById('tab-db').classList.contains('active')) { 
-        if(typeof updateSyncNote === 'function') updateSyncNote((recortado ? '⚠️ Tope alcanzado · ' : '✅ Sincronizado · ') + db.length + ' registros'); 
-      } 
-    } 
-  }, (err) => { 
-    console.error("Firestore error:", err); 
-    if (!isInitialized) appError('No se pudo conectar a la base de datos.\n' + err.message); 
-    else window.showSyncToast('⚠️', 'Sincronizando localmente...', 'err'); 
-  });
-} 
-
-// 4. LÓGICA DE ESTADO DE RED PARA EL INDICADOR VISUAL
-const statusEl = document.getElementById('status-conexion');
-function updateNetworkStatus() {
-  if (navigator.onLine) {
-    if (statusEl) {
-      statusEl.textContent = 'Sincronizado';
-      statusEl.style.background = 'var(--accent-mid)';
-    }
-  } else {
-    if (statusEl) {
-      statusEl.textContent = 'Sin red (Local)';
-      statusEl.style.background = 'var(--warning)';
-    }
+window.registrarUsuario = async function() {
+  const nombre = document.getElementById('reg-nombre').value.trim();
+  const email  = document.getElementById('reg-email').value.trim();
+  const pass   = document.getElementById('reg-pass').value;
+  if (!nombre) { alert('Ingresa tu nombre.'); return; }
+  if (!email || !pass) { alert('Ingresa correo y contraseña.'); return; }
+  if (pass.length < 6) { alert('La contraseña debe tener al menos 6 caracteres.'); return; }
+  const btn = document.getElementById('btn-registrar');
+  btn.disabled = true; btn.textContent = 'Registrando…';
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    // Todo registro nuevo entra como pendiente/capturista.
+    // El usuario con rol "master" es quien autoriza y asigna el rol
+    // definitivo desde el panel de Admin.
+    await setDoc(doc(db_f, COL_USERS, cred.user.uid), {
+      nombre, email,
+      status: 'pendiente',
+      rol: 'capturista',
+      creado: serverTimestamp()
+    });
+  } catch (e) {
+    alert('Error al registrar: ' + traducirErrorAuth(e.code));
+    btn.disabled = false; btn.textContent = 'Crear cuenta';
   }
 }
-window.addEventListener('online', updateNetworkStatus);
-window.addEventListener('offline', updateNetworkStatus);
-// Inicializar estado de red
-setTimeout(updateNetworkStatus, 1000);
 
-/* NOTA: Tu lógica restante (saveRecord, renderDashboard, aplicarResumen, etc.) se mantiene 
-idéntica a tu código original. Asegúrate de incluirla aquí debajo si tenías más funciones. */
+window.loginUsuario = async function() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  if (!email || !pass) { alert('Ingresa correo y contraseña.'); return; }
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true; btn.textContent = 'Entrando…';
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    alert('Error al entrar: ' + traducirErrorAuth(e.code));
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+}
 
+window.logoutUsuario = async function() {
+  if (!confirm('¿Cerrar sesión?')) return;
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  if (unsubUsers)  { unsubUsers();  unsubUsers  = null; }
+  isInitialized = false;
+  db = [];
+  window.db = db;
+  await signOut(auth);
+}
+
+function traducirErrorAuth(code) {
+  const map = {
+    'auth/email-already-in-use': 'Ese correo ya está registrado.',
+    'auth/invalid-email':        'Correo inválido.',
+    'auth/weak-password':        'Contraseña muy débil (mínimo 6 caracteres).',
+    'auth/wrong-password':       'Contraseña incorrecta.',
+    'auth/invalid-credential':   'Correo o contraseña incorrectos.',
+    'auth/user-not-found':       'No existe una cuenta con ese correo.',
+    'auth/too-many-requests':    'Demasiados intentos. Espera un momento.'
+  };
+  return map[code] || code;
+}
+
+onAuthStateChanged(auth, async (user) => {
+  currentUser = user;
+  if (!user) {
+    isInitialized = false;
+    showLogin();
+    return;
+  }
+  try {
+    const snap  = await getDocs(collection(db_f, COL_USERS));
+    const myDoc = snap.docs.find(d => d.id === user.uid);
+    currentUserDoc = myDoc ? myDoc.data() : null;
+
+    if (!currentUserDoc) {
+      appError('No se encontró tu perfil. Contacta al administrador.');
+      return;
+    }
+    if (currentUserDoc.status !== 'autorizado') {
+      showPending();
+      return;
+    }
+
+    const rol = currentUserDoc.rol || 'capturista';
+    const esMaster     = rol === 'master';
+    const esAdmin      = rol === 'admin';
+    const esVisor      = rol === 'visor';
+    const esCapturista = rol === 'capturista';
+    const esAdminOMaster = esAdmin || esMaster;
+
+    const tag = document.getElementById('user-tag');
+    const etiquetaRol = esMaster ? ' (master)' : esAdmin ? ' (admin)' : esVisor ? ' (visor)' : ' (capturista)';
+    if (tag) tag.textContent = currentUserDoc.nombre + etiquetaRol;
+
+    window._currentUserRol = rol;
+
+    // ── FILA 1: Captura, Pendientes, Base de datos, Resumen ──
+    const captBtn = document.getElementById('t-form');
+    if (captBtn) captBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
+
+    const pendientesBtn = document.getElementById('btn-pendientes-tab');
+    if (pendientesBtn) pendientesBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
+
+    // Base de datos: visible SOLO para master y admin.
+    const dbBtn = document.getElementById('t-db');
+    if (dbBtn) dbBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+
+    // CORRECCIÓN 2: Resumen visible para admin, master Y visor
+    const resumenBtn = document.getElementById('btn-resumen-tab');
+    if (resumenBtn) resumenBtn.style.display = (esAdminOMaster || esVisor || esCapturista) ? 'flex' : 'none';
+
+    // ── FILA 2: Gráficos, Excel, Admin ──
+    const graficosBtn = document.getElementById('btn-graficos-tab');
+    if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
+
+    const excelBtn = document.getElementById('btn-excel-tab');
+    if (excelBtn) excelBtn.style.display = (esAdminOMaster || esVisor) ? 'flex' : 'none';
+
+    const adminBtn = document.getElementById('btn-admin-tab');
+    if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+
+    const tabsPermitidas = [];
+    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'resumen');
+    if (esAdminOMaster) tabsPermitidas.push('db');
+    if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel', 'resumen');
+    if (esAdminOMaster) tabsPermitidas.push('admin');
+    const tabActivaEl = document.querySelector('.tab-content.active');
+    const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form';
+    if (!tabsPermitidas.includes(tabActivaId) && tabsPermitidas.length) {
+      showTab(tabsPermitidas[0]);
+    }
+
+    startRealtimeSync();
+  } catch (e) {
+    appError('Error al verificar tu cuenta: ' + e.message);
+  }
+});
+
+window.cargarPanelAdmin = function() {
+  if (unsubUsers) unsubUsers();
+  const wrap = document.getElementById('admin-users-list');
+  if (!wrap) return;
+  wrap.innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Cargando…</p>';
+  unsubUsers = onSnapshot(collection(db_f, COL_USERS), (snap) => {
+    const users = snap.docs.map(d => ({ _uid: d.id, ...d.data() }));
+    const esMaster = (window._currentUserRol === 'master');
+    const esAdmin  = (window._currentUserRol === 'admin');
+    users.sort((a, b) => (a.status === 'pendiente' ? -1 : 1) - (b.status === 'pendiente' ? -1 : 1));
+    if (!users.length) {
+      wrap.innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Sin usuarios.</p>';
+      return;
+    }
+    wrap.innerHTML = users.map(u => {
+      const rolUsuario = u.rol || 'capturista';
+      const puedeEliminar = esMaster || (esAdmin && rolUsuario === 'capturista');
+      return `
+      <div class="form-card" style="margin-bottom:10px;padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">${u.nombre || '(sin nombre)'}</div>
+            <div style="font-size:12px;color:var(--text-muted)">${u.email}</div>
+            <div style="font-size:11px;color:${u.status === 'autorizado' ? 'var(--accent)' : 'var(--danger)'}">
+              ${u.status === 'autorizado' ? '✅ Autorizado' : '⏳ Pendiente'} · ${rolUsuario}
+            </div>
+            ${esMaster ? `
+            <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">Rol:</span>
+              <select onchange="cambiarRolUsuario('${u._uid}', this.value)"
+                style="height:30px;border:0.5px solid var(--border-strong);border-radius:8px;padding:0 8px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;">
+                <option value="capturista" ${rolUsuario==='capturista'?'selected':''}>capturista</option>
+                <option value="visor"      ${rolUsuario==='visor'?'selected':''}>visor</option>
+                <option value="admin"      ${rolUsuario==='admin'?'selected':''}>admin</option>
+                <option value="master"     ${rolUsuario==='master'?'selected':''}>master</option>
+              </select>
+            </div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
+            ${u.status !== 'autorizado'
+              ? `<button onclick="cambiarStatusUsuario('${u._uid}','autorizado')" style="background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Autorizar</button>`
+              : (() => {
+                  const puedeRevocar = esMaster || (esAdmin && rolUsuario === 'capturista');
+                  return puedeRevocar
+                    ? `<button onclick="cambiarStatusUsuario('${u._uid}','pendiente')" style="background:var(--danger);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Revocar</button>`
+                    : '';
+                })()
+            }
+            ${puedeEliminar
+              ? `<button onclick="eliminarUsuario('${u._uid}','${(u.nombre||u.email||'').replace(/'/g,"\\'")}')" style="background:var(--danger-light);color:var(--danger);border:0.5px solid rgba(163,45,45,0.3);padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">🗑️ Eliminar</button>`
+              : ''
+            }
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  });
+}
+
+window.cambiarStatusUsuario = async function(uid, nuevoStatus) {
+  try {
+    await updateDoc(doc(db_f, COL_USERS, uid), { status: nuevoStatus });
+  } catch (e) {
+    alert('Error al actualizar: ' + e.message);
+  }
+}
+
+window.cambiarRolUsuario = async function(uid, nuevoRol) {
+  if (!['capturista','visor','admin','master'].includes(nuevoRol)) return;
+  try {
+    await updateDoc(doc(db_f, COL_USERS, uid), { rol: nuevoRol });
+  } catch (e) {
+    alert('Error al cambiar rol: ' + e.message);
+  }
+}
+
+window.eliminarUsuario = async function(uid, nombre) {
+  try {
+    const snap = await getDocs(collection(db_f, COL_USERS));
+    const target = snap.docs.find(d => d.id === uid);
+    if (!target) { alert('No se encontró ese usuario.'); return; }
+    const rolTarget = target.data().rol || 'capturista';
+    const miRol = window._currentUserRol;
+    const permitido = miRol === 'master' || (miRol === 'admin' && rolTarget === 'capturista');
+    if (!permitido) { alert('No tienes permiso para eliminar a este usuario.'); return; }
+    if (!confirm('¿Eliminar permanentemente a "' + nombre + '" (' + rolTarget + ')? Esta acción no se puede deshacer.')) return;
+    await deleteDoc(doc(db_f, COL_USERS, uid));
+    window.showSyncToast('✅', 'Usuario eliminado', 'ok');
+  } catch (e) {
+    alert('Error al eliminar usuario: ' + e.message);
+  }
+}
+
+function cutoffFecha(dias) {
+  const d = new Date();
+  d.setDate(d.getDate() - dias);
+  return d.toISOString().slice(0, 10);
+}
+
+function startRealtimeSync() {
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  const LIMITE_VENTANA = { 7: 3000, 30: 6000, 90: 9500, 365: 9500 };
+  const tope = Math.min(LIMITE_VENTANA[ventanaDias] || 6000, 9500);
+  const q = query(
+    collection(db_f, COL),
+    where('fecha1', '>=', cutoffFecha(ventanaDias)),
+    orderBy('fecha1', 'desc'),
+    limit(tope)
+  );
+  unsubscribe = onSnapshot(q,
+    (snapshot) => {
+      db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
+      window.db = db;
+      const recortado = db.length >= tope;
+      if (!isInitialized) {
+        isInitialized = true;
+        appReady();
+        renderDB();
+      } else {
+        renderDB();
+        if (document.getElementById('tab-db').classList.contains('active')) {
+          updateSyncNote(
+            (recortado
+              ? '⚠️ Se alcanzó el tope de carga (' + tope.toLocaleString('es-MX') + '). Pueden faltar registros más antiguos de esta ventana — usa "Ver TODO el histórico" para buscarlos. · '
+              : '✅ Sincronizado en tiempo real · ')
+            + db.length.toLocaleString('es-MX') + ' registro(s) en la ventana cargada'
+          );
+        }
+      }
+    },
+    (err) => {
+      console.error("Firestore error:", err);
+      if (!isInitialized) appError('No se pudo conectar a la base de datos.\n' + err.message);
+      else window.showSyncToast('⚠️', 'Error de conexión.', 'err');
+    }
+  );
+}
+
+window.cambiarVentana = function() {
+  const sel = document.getElementById('db-ventana');
+  if (!sel) return;
+  ventanaDias = parseInt(sel.value, 10) || 30;
+  localStorage.setItem('db_ventana_dias', String(ventanaDias));
+  dbHistorial = []; window.dbHistorial = dbHistorial;
+  updateSyncNote('⏳ Cargando últimos ' + ventanaDias + ' días…');
+  startRealtimeSync();
+}
+
+function mesKeyFromFecha(fecha1) {
+  return (fecha1 && /^\d{4}-\d{2}/.test(fecha1)) ? fecha1.slice(0, 7) : null;
+}
+
+async function aplicarResumen(rec, signo) {
+  if (!rec || !rec.fecha1) return;
+  const mes = mesKeyFromFecha(rec.fecha1);
+  if (!mes) return;
+  const ton = rec.ton || ((rec.neto_kg || 0) / 1000);
+  const ref = doc(db_f, COL_RESUMEN, mes);
+  const payload = {
+    total_viajes: increment(signo),
+    total_ton:    increment(signo * ton)
+  };
+  if (rec.material) payload['por_material.' + rec.material] = increment(signo * ton);
+  if (rec.banco)    payload['por_banco.'    + rec.banco]    = increment(signo * ton);
+  if (rec.destino)  payload['por_destino.'  + rec.destino]  = increment(signo * ton);
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (e) {
+    console.error('No se pudo actualizar el resumen de ' + mes + ':', e);
+  }
+}
+
+async function moverResumen(antes, despues) {
+  if (antes) await aplicarResumen(antes, -1);
+  if (despues) await aplicarResumen(despues, +1);
+}
+window.moverResumen = moverResumen;
+window.aplicarResumen = aplicarResumen;
+
+window.recalcularResumen = async function() {
+  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir el resumen mensual. ¿Continuar?')) return;
+  const btn = document.getElementById('btn-recalcular-resumen');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo toda la colección…'; }
+  try {
+    const snap = await getDocs(collection(db_f, COL));
+    const porMes = {};
+    snap.forEach(docSnap => {
+      const r = docSnap.data();
+      const mes = mesKeyFromFecha(r.fecha1);
+      if (!mes) return;
+      const ton = r.ton || ((r.neto_kg || 0) / 1000);
+      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {} };
+      const m = porMes[mes];
+      m.total_viajes += 1;
+      m.total_ton    += ton;
+      if (r.material) m.por_material[r.material] = (m.por_material[r.material] || 0) + ton;
+      if (r.banco)    m.por_banco[r.banco]       = (m.por_banco[r.banco]       || 0) + ton;
+      if (r.destino)  m.por_destino[r.destino]   = (m.por_destino[r.destino]   || 0) + ton;
+    });
+    const meses = Object.keys(porMes);
+    for (let i = 0; i < meses.length; i += 450) {
+      const batch = writeBatch(db_f);
+      meses.slice(i, i + 450).forEach(mes => {
+        batch.set(doc(db_f, COL_RESUMEN, mes), porMes[mes]);
+      });
+      await batch.commit();
+    }
+    alert('✅ Resumen reconstruido: ' + meses.length + ' mes(es) a partir de ' + snap.size + ' registro(s).');
+  } catch (e) {
+    alert('Error al recalcular el resumen: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Recalcular resumen (lee toda la base)'; }
+  }
+}
+
+window.saveRecord = async function() {
+  const data = getFormData();
+  const esPendiente = data.status === 'pendiente';
+  if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
+  if (!data.folio)        { alert('Ingresa el folio.'); return; }
+  if (!data.economico)    { alert('Ingresa el # económico.'); return; }
+  if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
+  if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
+  if (!esPendiente) {
+    if (!data.fecha2)     { alert('Ingresa la fecha del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.hora2)      { alert('Ingresa la hora del 2do pesaje (o marca "Dejar como pendiente").'); return; }
+    if (!data.ciclo)      { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
+  }
+  if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
+  if (!data.material)     { alert('Selecciona el material.'); return; }
+  if (!data.banco)        { alert('Selecciona el banco de origen.'); return; }
+  if (!data.destino)      { alert('Selecciona el destino.'); return; }
+  if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
+  if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
+  if (!esPendiente) {
+    if (data.tara_kg  <= 0) { alert('Ingresa la tara (o marca "Dejar como pendiente").'); return; }
+    if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  }
+  const saveBtn = document.getElementById('btn-guardar');
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = '<span class="spin"></span> Guardando…';
+  try {
+    if (!window._editFid) {
+      let dup = db.find(r => r.boleta === data.boleta) || dbHistorial.find(r => r.boleta === data.boleta);
+      if (!dup) {
+        const dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', data.boleta), limit(1)));
+        if (!dupSnap.empty) dup = { _fid: dupSnap.docs[0].id, ...dupSnap.docs[0].data() };
+      }
+      if (dup && !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar registro';
+        return;
+      }
+      const { id: _localId, ...payload } = data;
+      payload.ts = serverTimestamp();
+      await addDoc(collection(db_f, COL), payload);
+      aplicarResumen(data, +1);
+      window.showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
+    } else {
+      const original = window._editOriginal || null;
+      const { id: _localId, _fid: _fid2, ...payload } = data;
+      payload.ts_updated = serverTimestamp();
+      await updateDoc(doc(db_f, COL, window._editFid), payload);
+      moverResumen(original, data);
+      window._editFid = null;
+      window._editOriginal = null;
+      window.showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
+    }
+    clearForm();
+    showTab(esPendiente ? 'pendientes' : 'db');
+  } catch(err) {
+    alert('Error al guardar: ' + err.message);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar registro';
+  }
+}
+
+window.editRecord = function() {
+  const r = findRecord(window._currentFid);
+  if (!r) return;
+  closeModalForce();
+  window._editFid = r._fid;
+  window._editOriginal = { ...r };
+  const flds = {
+    'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
+    'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
+    'f-boleta': r.boleta, 'f-folio': r.folio, 'f-economico': r.economico,
+    'f-placas': r.placas,
+    'f-bruto':  r.bruto_kg, 'f-tara': r.tara_kg
+  };
+  Object.entries(flds).forEach(([id, v]) => {
+    const el = document.getElementById(id); if (el) el.value = v || '';
+  });
+  document.getElementById('f-material').value = r.material || '';
+  document.getElementById('f-banco').value    = r.banco    || '';
+  document.getElementById('f-destino').value  = r.destino  || '';
+  document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
+  document.getElementById('f-pendiente').checked = (r.status === 'pendiente');
+  togglePendienteForm();
+  calcCiclo(); calcPesos(); updateRangos();
+  setTimeout(() => {
+    if (r.rango) {
+      if (r.destino === 'ACOPIO MARINO' || r.destino === 'ACOPIO TERRESTRE') {
+        document.getElementById('f-rango-select').value = r.rango;
+      } else { document.getElementById('f-rango').value = r.rango; }
+    }
+  }, 30);
+  showTab('form');
+}
+
+window.deleteRecord = async function() {
+  if (!confirm('¿Eliminar este registro permanentemente?')) return;
+  try {
+    const r = findRecord(window._currentFid);
+    await deleteDoc(doc(db_f, COL, window._currentFid));
+    aplicarResumen(r, -1);
+    closeModalForce();
+    window.showSyncToast('✅', 'Registro eliminado', 'ok');
+  } catch(err) { alert('Error al eliminar: ' + err.message); }
+}
+
+window.completarPendiente = async function(fid) {
+  const r = findRecord(fid);
+  if (!r) { alert('No se encontró el registro.'); return; }
+  const fecha2 = (document.getElementById('pend-fecha2-' + fid) || {}).value || '';
+  const hora2  = (document.getElementById('pend-hora2-'  + fid) || {}).value || '';
+  const tara   = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
+  if (!fecha2) { alert('Ingresa la fecha del 2do pesaje.'); return; }
+  if (!hora2)  { alert('Ingresa la hora del 2do pesaje.'); return; }
+  if (tara <= 0) { alert('Ingresa la tara.'); return; }
+  const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00') + ':00');
+  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+  const diffMs = dt2 - dt1;
+  if (diffMs < 0) { alert('La fecha/hora del 2do pesaje no puede ser anterior a la del 1er pesaje.'); return; }
+  const totalMin = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  const ciclo = hrs > 0 ? hrs + 'h ' + String(min).padStart(2, '0') + 'min' : min + ' min';
+  const bruto = r.bruto_kg || 0;
+  const neto  = bruto - tara;
+  if (neto <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  const original = { ...r };
+  const actualizado = {
+    ...r,
+    fecha2, hora2, ciclo,
+    tara_kg: tara, neto_kg: neto,
+    ton: neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    status: 'completo'
+  };
+  try {
+    const { _fid: _f, id: _id, ...payload } = actualizado;
+    payload.ts_updated = serverTimestamp();
+    await updateDoc(doc(db_f, COL, fid), payload);
+    moverResumen(original, actualizado);
+    window.showSyncToast('✅', 'Destare completado', 'ok');
+    if (typeof window.renderPendientes === 'function') window.renderPendientes();
+  } catch (e) {
+    alert('Error al completar el registro: ' + e.message);
+  }
+};
+
+window.manualSync = function() {
+  window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
+  updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
+}
+
+window.openModal = function(fid) {
+  window._currentFid = fid;
+  const r = findRecord(fid);
+  if (!r) return;
+  document.getElementById('modal-title').textContent = 'Boleta #' + r.boleta;
+  const fmt    = (v, s='') => (v !== undefined && v !== null && v !== '') ? v + s : '—';
+  const fmtNum = (v, s='') => v ? Number(v).toLocaleString('es-MX') + s : '—';
+  document.getElementById('modal-body').innerHTML = `
+    ${r.status === 'pendiente' ? '<div class="banner banner-warning" style="margin-bottom:10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Pendiente de 2do pesaje y tara. Complétalo en la pestaña "Pendientes".</span></div>' : ''}
+    <div class="detail-section">Pesajes</div>
+    <div class="detail-row"><span class="dk">1er pesaje</span><span class="dv">${fmtFecha(r.fecha1)} ${fmt(r.hora1)}</span></div>
+    <div class="detail-row"><span class="dk">2do pesaje</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtFecha(r.fecha2) + ' ' + fmt(r.hora2)}</span></div>
+    <div class="detail-row"><span class="dk">Ciclo</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmt(r.ciclo)}</span></div>
+    <div class="detail-section" style="margin-top:8px">Identificación</div>
+    <div class="detail-row"><span class="dk">Boleta</span><span class="dv">${fmt(r.boleta)}</span></div>
+    <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
+    <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
+    <div class="detail-row"><span class="dk"># Económico</span><span class="dv">${fmt(r.economico)}</span></div>
+    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${fmt(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : r.tipo_camion))}</span></div>
+    <div class="detail-section" style="margin-top:8px">Material y Destino</div>
+    <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
+    <div class="detail-row"><span class="dk">Rango</span><span class="dv">${fmt(r.rango)}</span></div>
+    <div class="detail-row"><span class="dk">Banco (Origen)</span><span class="dv">${fmt(r.banco)}</span></div>
+    <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
+    <div class="detail-section" style="margin-top:8px">Pesos</div>
+    <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Tara</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtNum(r.tara_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Peso Neto</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtNum(r.neto_kg,' kg')}</span></div>
+    <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : (r.ton ? r.ton + ' ton' : '—')}</span></div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+  const btnDel = document.getElementById('btn-delete-record');
+  if (btnDel) btnDel.style.display = (window._currentUserRol === 'master') ? '' : 'none';
+}
+
+function parseDateForExcel(isoString) {
+  if (!isoString || !isoString.includes('-')) return '';
+  const [y, m, d] = isoString.split('-');
+  return new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
+}
+window.parseDateForExcel = parseDateForExcel;
+
+async function traerTodoFirestore(desde, hasta, onProgreso) {
+  const PAGE = 1500;
+  let registros = [];
+  let cursor = null;
+  while (true) {
+    const constraints = [orderBy('fecha1', 'asc')];
+    if (desde) constraints.push(where('fecha1', '>=', desde));
+    if (hasta) constraints.push(where('fecha1', '<=', hasta));
+    if (cursor) constraints.push(startAfter(cursor));
+    constraints.push(limit(PAGE));
+    const snap = await getDocs(query(collection(db_f, COL), ...constraints));
+    if (snap.empty) break;
+    registros = registros.concat(snap.docs.map(d => ({ _fid: d.id, ...d.data() })));
+    if (onProgreso) onProgreso(registros.length);
+    if (snap.docs.length < PAGE) break;
+    cursor = snap.docs[snap.docs.length - 1];
+    if (registros.length > 500000) break;
+  }
+  return registros;
+}
+window.traerTodoFirestore = traerTodoFirestore;
+
+// ── Estado de "histórico completo" SEPARADO por pestaña ──
+// Cada pestaña (Gráficos, Resumen) maneja su propio estado de forma
+// independiente: cambiar la fuente en una no afecta a las demás.
+let dashHistoricoCompleto        = null;
+  window.dashHistoricoCompleto   = dashHistoricoCompleto;
+let usandoHistoricoDash          = false;
+  window.usandoHistoricoDash     = usandoHistoricoDash;
+let cargandoHistoricoDash        = false;
+
+let resumenHistoricoCompleto     = null;
+  window.resumenHistoricoCompleto = resumenHistoricoCompleto;
+let usandoHistoricoResumen       = false;
+  window.usandoHistoricoResumen  = usandoHistoricoResumen;
+let cargandoHistoricoResumen     = false;
+
+window.cargarHistoricoCompletoDash = async function(forzar) {
+  if (cargandoHistoricoDash) return;
+  if (dashHistoricoCompleto && !forzar) {
+    usandoHistoricoDash = true;
+    window.usandoHistoricoDash = true;
+    renderDashboard();
+    return;
+  }
+  cargandoHistoricoDash = true;
+  const nota = document.getElementById('dash-historico-nota');
+  if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
+  try {
+    dashHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+      if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+    });
+    window.dashHistoricoCompleto = dashHistoricoCompleto;
+    usandoHistoricoDash = true;
+    window.usandoHistoricoDash = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + dashHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+    renderDashboard();
+  } catch (e) {
+    if (nota) nota.textContent = '';
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    cargandoHistoricoDash = false;
+  }
+};
+
+window.usarVentanaRecienteEnDashboard = function() {
+  usandoHistoricoDash = false;
+  window.usandoHistoricoDash = false;
+  const nota = document.getElementById('dash-historico-nota');
+  if (nota) nota.textContent = '';
+  renderDashboard();
+};
+
+window.cargarHistoricoCompletoResumenFn = async function(forzar) {
+  if (cargandoHistoricoResumen) return;
+  if (resumenHistoricoCompleto && !forzar) {
+    usandoHistoricoResumen = true;
+    window.usandoHistoricoResumen = true;
+    // Ya teníamos el histórico en caché: avisamos al wrapper que puede renderizar.
+    return;
+  }
+  cargandoHistoricoResumen = true;
+  const nota = document.getElementById('resumen-historico-nota');
+  if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
+  try {
+    resumenHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+      if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+    });
+    window.resumenHistoricoCompleto = resumenHistoricoCompleto;
+    usandoHistoricoResumen = true;
+    window.usandoHistoricoResumen = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+  } catch (e) {
+    if (nota) nota.textContent = '';
+    console.error('[Resumen] Error al cargar histórico completo:', e);
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+    throw e; // re-lanzar para que el wrapper lo capture
+  } finally {
+    cargandoHistoricoResumen = false;
+  }
+};
+
+window.usarVentanaRecienteEnResumenFn = function() {
+  usandoHistoricoResumen = false;
+  window.usandoHistoricoResumen = false;
+  const nota = document.getElementById('resumen-historico-nota');
+  if (nota) nota.textContent = '';
+};
+
+
+window.buscarHistorial = async function() {
+  const qtexto = (document.getElementById('filter-input').value || '').trim();
+  if (!qtexto) { alert('Escribe algo en el buscador (boleta, folio, placas o # económico) y vuelve a intentar.'); return; }
+  const btn = document.getElementById('btn-buscar-historial');
+  const btnHtmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Buscando en todo el historial…'; }
+  try {
+    const campos = ['boleta', 'folio', 'economico', 'placas'];
+    const vistos = new Set();
+    let encontrados = [];
+    for (const campo of campos) {
+      try {
+        const snap = await getDocs(query(collection(db_f, COL), where(campo, '==', qtexto), limit(500)));
+        snap.forEach(d => {
+          if (!vistos.has(d.id)) {
+            vistos.add(d.id);
+            encontrados.push({ _fid: d.id, _historial: true, ...d.data() });
+          }
+        });
+      } catch (e) {
+        if (!handleFirestoreIndexError(e)) console.warn('Error buscando por ' + campo + ':', e);
+      }
+    }
+    dbHistorial = encontrados;
+    window.dbHistorial = dbHistorial;
+    if (!encontrados.length) {
+      updateSyncNote('🔍 Sin resultados en el historial completo para "' + qtexto + '".');
+    } else {
+      updateSyncNote('🔍 ' + encontrados.length + ' registro(s) encontrado(s) en todo el historial para "' + qtexto + '".');
+    }
+    renderDB();
+  } catch (e) {
+    alert('Error al buscar en el historial: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
+  }
+};
+
+let cargandoHistorialDBCompleto = false;
+window.verTodoElHistorialDB = async function() {
+  if (cargandoHistorialDBCompleto) return;
+  cargandoHistorialDBCompleto = true;
+  const btn = document.getElementById('btn-ver-todo-db');
+  const btnHtmlOriginal = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; }
+  try {
+    dbHistorial = await traerTodoFirestore(null, null, (n) => {
+      if (btn) btn.innerHTML = '<span class="spin"></span> Cargando todo… (' + n.toLocaleString('es-MX') + ')';
+      updateSyncNote('⏳ Cargando todo el histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora');
+    });
+    window.dbHistorial = dbHistorial;
+    updateSyncNote('📊 Mostrando TODO el histórico: ' + dbHistorial.length.toLocaleString('es-MX') + ' registro(s) en total.');
+    renderDB();
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar todo el histórico: ' + e.message);
+  } finally {
+    cargandoHistorialDBCompleto = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtmlOriginal; }
+  }
+};
+
+window.salirDeHistorialCompletoDB = function() {
+  dbHistorial = []; window.dbHistorial = dbHistorial;
+  updateSyncNote('✅ Mostrando solo la ventana cargada (' + ventanaDias + ' días) · ' + db.length.toLocaleString('es-MX') + ' registro(s)');
+  renderDB();
+};
+
+window.migrarLocalStorage = async function() {
+  const viejos = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
+  if (!viejos.length) { alert('No hay datos en localStorage.'); return; }
+  if (!confirm(`¿Migrar ${viejos.length} registros a Firestore?`)) return;
+  let ok = 0, fail = 0;
+  for (const r of viejos) {
+    try {
+      const { id: _id, _fid: _f, ...payload } = r;
+      payload.ts = serverTimestamp();
+      await addDoc(collection(db_f, COL), payload);
+      aplicarResumen(r, +1);
+      ok++;
+    } catch(e) { fail++; }
+  }
+  alert(`✅ Migrados: ${ok} | ❌ Fallidos: ${fail}`);
+  if (ok > 0) localStorage.removeItem('acarreos_db_v3');
+}
+
+function updateSyncNote(msg) {
+  const el = document.getElementById('sync-db-note');
+  if (el) el.textContent = msg;
+}
+
+function handleFirestoreIndexError(err) {
+  if (err && err.code === 'failed-precondition' && /index/i.test(err.message || '')) {
+    alert('⚠️ Esta combinación de filtros necesita un índice de Firestore.\n\n' + err.message);
+    return true;
+  }
+  return false;
+}
+window.handleFirestoreIndexError = handleFirestoreIndexError;
 </script>
 </head>
 <body>
@@ -473,7 +1096,8 @@ idéntica a tu código original. Asegúrate de incluirla aquí debajo si tenías
       <span>CONTROL ACARREOS</span>
     </div>
     <div class="auth-tabs">
-      <button class="auth-tab active" data-tab="login" onclick="switchAuthTab('login')">Acceso exclusivo</button>
+      <button class="auth-tab active" data-tab="login" onclick="switchAuthTab('login')">Iniciar sesión</button>
+      <button class="auth-tab" data-tab="registro" onclick="switchAuthTab('registro')">Registro</button>
     </div>
     <div id="auth-form-login" class="auth-form active">
       <div class="field-row">
@@ -486,6 +1110,24 @@ idéntica a tu código original. Asegúrate de incluirla aquí debajo si tenías
       </div>
       <button id="btn-login" class="btn btn-primary" style="width:100%;margin-top:4px" onclick="loginUsuario()">Entrar</button>
     </div>
+    <div id="auth-form-registro" class="auth-form">
+      <div class="field-row">
+        <label>Tu nombre completo</label>
+        <input type="text" id="reg-nombre" placeholder="Ej: Juan Pérez"/>
+      </div>
+      <div class="field-row">
+        <label>Correo electrónico</label>
+        <input type="email" id="reg-email" placeholder="tucorreo@ejemplo.com" autocomplete="email"/>
+      </div>
+      <div class="field-row">
+        <label>Contraseña (mín. 6 caracteres)</label>
+        <input type="password" id="reg-pass" placeholder="••••••" autocomplete="new-password"/>
+      </div>
+      <button id="btn-registrar" class="btn btn-primary" style="width:100%;margin-top:4px" onclick="registrarUsuario()">Crear cuenta</button>
+      <p style="font-size:12px;color:var(--text-muted);margin-top:10px;text-align:center;line-height:1.5">
+        Tu cuenta quedará <strong>pendiente de autorización</strong>.<br>El administrador te dará acceso pronto.
+      </p>
+    </div>
   </div>
 </div>
 
@@ -493,31 +1135,1775 @@ idéntica a tu código original. Asegúrate de incluirla aquí debajo si tenías
   <div class="pending-card">
     <div class="icon">⏳</div>
     <h2>Cuenta pendiente</h2>
-    <p>Tu cuenta no tiene autorización o fue revocada. Contacta al administrador del sistema.</p>
+    <p>Tu registro fue recibido. El administrador revisará tu solicitud y te dará acceso en breve.</p>
     <button class="btn btn-secondary" style="width:100%" onclick="logoutUsuario()">Cerrar sesión</button>
   </div>
 </div>
 
 <div id="app-shell" style="display:none">
-  <header>
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-      <rect x="2" y="6" width="4" height="16" rx="1" fill="white"/>
-      <rect x="8" y="2" width="2" height="24" rx="1" fill="white"/>
-      <rect x="12" y="6" width="4" height="16" rx="1" fill="white"/>
-      <rect x="18" y="2" width="2" height="24" rx="1" fill="white"/>
-      <rect x="22" y="6" width="4" height="16" rx="1" fill="white"/>
-    </svg>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <rect x="2" y="6" width="4" height="16" rx="1" fill="white"/>
+    <rect x="8" y="2" width="2" height="24" rx="1" fill="white"/>
+    <rect x="12" y="6" width="4" height="16" rx="1" fill="white"/>
+    <rect x="18" y="2" width="2" height="24" rx="1" fill="white"/>
+    <rect x="22" y="6" width="4" height="16" rx="1" fill="white"/>
+  </svg>
+  <div style="flex:1">
+    <h1>CONTROL ACARREOS</h1>
+    <p>Rompeolas Oriente · Veracruz</p>
+  </div>
+  <div style="text-align:right">
+    <div id="user-tag" style="font-size:11px;opacity:0.85;margin-bottom:2px"></div>
+    <button onclick="logoutUsuario()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;">Salir</button>
+  </div>
+</header>
+
+<div class="tab-bar-wrap">
+  <div class="tab-bar" id="tab-bar-row1">
+    <button class="tab-btn active" onclick="showTab('form')" id="t-form">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+      Captura
+    </button>
+    <button class="tab-btn" onclick="showTab('pendientes'); renderPendientes();" id="btn-pendientes-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Pendientes
+    </button>
+    <button class="tab-btn" onclick="showTab('db')" id="t-db">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
+      Base de datos
+    </button>
+    <button class="tab-btn" onclick="showTab('resumen')" id="btn-resumen-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      Resumen
+    </button>
+  </div>
+  <div class="tab-bar" id="tab-bar-row2">
+    <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Gráficos
+    </button>
+    <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Excel
+    </button>
+    <button class="tab-btn" onclick="showTab('admin'); cargarPanelAdmin();" id="btn-admin-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      Admin
+    </button>
+  </div>
+</div>
+
+<div class="tab-content active" id="tab-form">
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Pesajes
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Fecha 1er pesaje *</label>
+        <input type="date" id="f-fecha1" oninput="calcCiclo()"/>
+      </div>
+      <div>
+        <label>Hora 1er pesaje *</label>
+        <input type="time" id="f-hora1" oninput="calcCiclo()"/>
+      </div>
+    </div>
+    <div class="field-row" style="display:flex;align-items:center;gap:8px;background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
+      <input type="checkbox" id="f-pendiente" onchange="togglePendienteForm()" style="width:18px;height:18px;accent-color:var(--warning);flex-shrink:0;cursor:pointer;">
+      <label for="f-pendiente" style="margin:0;font-size:13px;color:var(--warning);font-weight:600;cursor:pointer;">Dejar 2do pesaje y tara como pendientes</label>
+    </div>
+    <div class="field-row two-col" id="row-fecha2-hora2">
+      <div>
+        <label>Fecha 2do pesaje *</label>
+        <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
+      </div>
+      <div>
+        <label>Hora 2do pesaje *</label>
+        <input type="time" id="f-hora2" oninput="calcCiclo()"/>
+      </div>
+    </div>
+    <div class="field-row" id="row-ciclo">
+      <label>Ciclo (tiempo entre pesajes)</label>
+      <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
+      Identificación
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Boleta *</label>
+        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
+      </div>
+      <div>
+        <label>Placas *</label>
+        <input type="text" id="f-placas" placeholder="Ej: 5XDC16A"/>
+      </div>
+    </div>
+    <div class="field-row two-col">
+      <div>
+        <label>Folio *</label>
+        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
+      </div>
+      <div>
+        <label># Económico *</label>
+        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
+      </div>
+    </div>
+    <div class="field-row">
+      <label>Tipo de camión *</label>
+      <select id="f-tipo-camion">
+        <option value="">— Seleccionar —</option>
+        <option value="VOLTEO">Volteo</option>
+        <option value="GONDOLA">Góndola</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      Material y Destino
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Material *</label>
+        <select id="f-material" onchange="updateRangos()">
+          <option value="">— Seleccionar —</option>
+          <option value="NUCLEO">Núcleo</option>
+          <option value="BERMA">Berma</option>
+          <option value="BERMA DE APOYO">Berma de apoyo</option>
+          <option value="SECUNDARIA 1">Secundaria 1</option>
+          <option value="SECUNDARIA 2">SECUNDARIA 2</option>
+          <option value="CORAZA">Coraza</option>
+        </select>
+      </div>
+      <div>
+        <label>Rango de material</label>
+        <input type="text" id="f-rango" class="calc-field-neutral" readonly placeholder="Selecciona destino y material" style="display:block"/>
+        <select id="f-rango-select" style="display:none;width:100%;height:38px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);color:var(--text);">
+          <option value="">— Seleccionar rango —</option>
+        </select>
+      </div>
+    </div>
+    <div class="range-hint" id="range-hint"></div>
+    <div class="field-row two-col">
+      <div>
+        <label>Banco (Origen) *</label>
+        <select id="f-banco">
+          <option value="">— Seleccionar —</option>
+          <option value="EL TAJO">El Tajo</option>
+          <option value="TRITURA">Tritura</option>
+          <option value="MOZOMBOA1">Mozomboa GAMI</option>
+          <option value="MOZOMBOA2">Mozomboa LERMA</option>
+          <option value="MOZOMBOA3">Mozomboa PORFIRIO</option>
+        </select>
+      </div>
+      <div>
+        <label>Destino *</label>
+        <select id="f-destino" onchange="updateRangos()">
+          <option value="">— Seleccionar —</option>
+          <option value="ACOPIO MARINO">Acopio Marino</option>
+          <option value="ACOPIO TERRESTRE">Acopio Terrestre</option>
+          <option value="MURO">Muro</option>
+          <option value="MORRO">Morro</option>
+          <option value="CUERPO 1">Cuerpo 1</option>
+          <option value="CUERPO 2">Cuerpo 2</option>
+          <option value="CUERPO 3">Cuerpo 3</option>
+          <option value="CUERPO 4">Cuerpo 4</option>
+          <option value="CUERPO 5">Cuerpo 5</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Pesos
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Peso Bruto (kg) *</label>
+        <input type="number" id="f-bruto" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
+      </div>
+      <div id="row-tara">
+        <label>Tara (kg) *</label>
+        <input type="number" id="f-tara" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
+      </div>
+    </div>
+    <div class="pesos-summary">
+      <div class="peso-item">
+        <div class="lbl">Peso Neto</div>
+        <div class="val" id="neto-display">—</div>
+        <div class="unit">kg</div>
+      </div>
+      <div class="peso-item">
+        <div class="lbl">Toneladas</div>
+        <div class="val" id="ton-display">—</div>
+        <div class="unit">ton</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-bottom:24px;">
+    <button class="btn btn-secondary" onclick="clearForm()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+      Limpiar
+    </button>
+    <button id="btn-guardar" class="btn btn-primary" onclick="saveRecord()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      Guardar registro
+    </button>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-pendientes">
+  <div class="banner banner-warning" style="margin-bottom:14px;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span>Viajes con 1er pesaje registrado a los que falta el 2do pesaje y/o la tara. Complétalos aquí.</span>
+  </div>
+  <div id="pendientes-list"></div>
+</div>
+
+<div class="tab-content" id="tab-db">
+  <div class="filter-row" style="margin-bottom:10px;">
     <div style="flex:1">
-      <h1>CONTROL ACARREOS</h1>
-      <p>Rompeolas Oriente · Veracruz</p>
+      <label style="margin-bottom:3px;">Ventana de carga</label>
+      <select id="db-ventana" onchange="cambiarVentana()" style="width:100%;height:36px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 8px;font-size:13px;background:var(--surface);">
+        <option value="7">Últimos 7 días</option>
+        <option value="30" selected>Últimos 30 días</option>
+        <option value="90">Últimos 90 días</option>
+        <option value="365">Último año</option>
+      </select>
     </div>
-    <div id="status-conexion" style="font-size:11px; padding:4px 8px; border-radius:8px; background:var(--accent-mid); margin-right:10px; color:white; font-weight:600; white-space:nowrap;">Verificando...</div>
+  </div>
+  <div class="stats-row">
+    <div class="stat-card"><div class="val" id="stat-total">0</div><div class="lbl">Viajes (ventana cargada)</div></div>
+    <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
+  </div>
+
+  <div class="filter-row">
+    <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="onFilterInput()"/>
+    <button class="btn btn-secondary" id="btn-refresh-db" onclick="manualSync()" style="flex:0;padding:0 12px" title="Actualizar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
+    </button>
+  </div>
+  <div id="sync-db-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
+
+  <div style="padding:0 0 10px;">
+    <button class="btn btn-secondary" id="btn-buscar-historial" onclick="buscarHistorial()" style="width:100%;font-size:12px;">
+      🔍 Buscar también en todo el historial (boleta / placas / folio / # económico, coincidencia exacta)
+    </button>
+  </div>
+
+  <div style="display:flex;gap:8px;padding:0 0 10px;">
+    <button class="btn btn-primary" id="btn-ver-todo-db" onclick="verTodoElHistorialDB()" style="flex:1;font-size:12px;">
+      📊 Ver TODO el histórico (sin tope)
+    </button>
+    <button class="btn btn-secondary" onclick="salirDeHistorialCompletoDB()" style="flex:0 0 auto;font-size:12px;padding:0 12px;">
+      Volver a la ventana
+    </button>
+  </div>
+  <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 10px;">
+    Usa esto si necesitas ver/buscar entre el total de viajes ejecutados.
+  </div>
+
+  <div id="records-list"></div>
+
+  <div style="padding:8px 0 4px;">
+    <button class="btn btn-secondary" onclick="migrarLocalStorage()" style="width:100%">
+      ⬆️ Migrar datos locales a Firestore (solo una vez)
+    </button>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-graficos">
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos del dashboard
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompletoDash()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
+        Volver a ventana
+      </button>
+    </div>
+    <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros del dashboard
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Desde</label>
+        <input type="date" id="dash-fecha-desde" onchange="renderDashboard()"/>
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" id="dash-fecha-hasta" onchange="renderDashboard()"/>
+      </div>
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-banco-btn" onclick="toggleMS('banco')">
+            <span id="ms-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-banco-TAJO" value="EL TAJO" onchange="onMsChange('banco')"><label for="cb-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-TRITURA" value="TRITURA" onchange="onMsChange('banco')"><label for="cb-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('banco')"><label for="cb-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('banco')"><label for="cb-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('banco')"><label for="cb-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-material-wrap">
+          <button type="button" class="ms-btn" id="ms-material-btn" onclick="toggleMS('material')">
+            <span id="ms-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-mat-NUC" value="NUCLEO" onchange="onMsChange('material')"><label for="cb-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-BER" value="BERMA" onchange="onMsChange('material')"><label for="cb-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('material')"><label for="cb-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('material')"><label for="cb-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('material')"><label for="cb-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-COR" value="CORAZA" onchange="onMsChange('material')"><label for="cb-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div class="full">
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-cuerpo-btn" onclick="toggleMS('cuerpo')">
+            <span id="ms-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('cuerpo')"><label for="cb-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('cuerpo')"><label for="cb-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-MU" value="MURO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-MO" value="MORRO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C1" value="CUERPO 1" onchange="onMsChange('cuerpo')"><label for="cb-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C2" value="CUERPO 2" onchange="onMsChange('cuerpo')"><label for="cb-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C3" value="CUERPO 3" onchange="onMsChange('cuerpo')"><label for="cb-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C4" value="CUERPO 4" onchange="onMsChange('cuerpo')"><label for="cb-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-C5" value="CUERPO 5" onchange="onMsChange('cuerpo')"><label for="cb-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:8px;"></div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-viajes">0</div>
+      <div class="lbl">Viajes (filtrados)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-toneladas">0 t</div>
+      <div class="lbl">Toneladas (filtradas)</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Toneladas totales por Material</h3>
+    <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Toneladas totales por Banco (Origen)</h3>
+    <div class="chart-wrap"><canvas id="chart-banco"></canvas></div>
+  </div>
+
+  <div class="chart-card" style="padding:0;overflow:hidden;border-color:var(--accent);">
+    <h3 style="background:var(--accent);color:white;margin:0;padding:14px;text-align:center;font-size:14px;font-weight:bold;justify-content:center;">
+      TONELADAS POR MES
+    </h3>
+    <div class="chart-wrap" id="wrap-chart-meses" style="padding:20px 20px 20px 0;background:#f4f7f9;">
+      <canvas id="chart-meses"></canvas>
+    </div>
+  </div>
+
+  <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
+</div>
+
+<div class="tab-content" id="tab-resumen">
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-primary" id="btn-resumen-historico" onclick="cargarHistoricoCompletoResumen()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
+        Volver a ventana
+      </button>
+    </div>
+    <div id="resumen-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Periodo
+    </h3>
+    <div class="slicers-grid">
+      <div class="full">
+        <label>Ver por</label>
+        <select id="resumen-periodo-tipo" onchange="cambiarPeriodoResumen()">
+          <option value="dia">Día</option>
+          <option value="semana">Semana</option>
+          <option value="mes">Mes</option>
+          <option value="rango">Rango de días</option>
+        </select>
+      </div>
+      <div class="full" id="resumen-periodo-dia-wrap">
+        <label>Fecha</label>
+        <input type="date" id="resumen-fecha-dia" onchange="renderResumen()"/>
+      </div>
+      <div class="full" id="resumen-periodo-semana-wrap" style="display:none">
+        <label>Semana (cualquier día de esa semana)</label>
+        <input type="date" id="resumen-fecha-semana" onchange="renderResumen()"/>
+      </div>
+      <div class="full" id="resumen-periodo-mes-wrap" style="display:none">
+        <label>Mes</label>
+        <input type="month" id="resumen-fecha-mes" onchange="renderResumen()"/>
+      </div>
+      <div id="resumen-periodo-rango-wrap" style="display:none">
+        <label>Desde</label>
+        <input type="date" id="resumen-fecha-desde" onchange="renderResumen()"/>
+      </div>
+      <div id="resumen-periodo-rango-wrap2" style="display:none">
+        <label>Hasta</label>
+        <input type="date" id="resumen-fecha-hasta" onchange="renderResumen()"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-resumen-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-banco-btn" onclick="toggleMS('resumen-banco')">
+            <span id="ms-resumen-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-TAJO" value="EL TAJO" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-TRITURA" value="TRITURA" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-resumen-material-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-material-btn" onclick="toggleMS('resumen-material')">
+            <span id="ms-resumen-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-NUC" value="NUCLEO" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-BER" value="BERMA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-COR" value="CORAZA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-resumen-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-cuerpo-btn" onclick="toggleMS('resumen-cuerpo')">
+            <span id="ms-resumen-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MU" value="MURO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MO" value="MORRO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C1" value="CUERPO 1" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C2" value="CUERPO 2" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C3" value="CUERPO 3" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C4" value="CUERPO 4" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C5" value="CUERPO 5" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Tipo de camión</label>
+        <div class="ms-wrap" id="ms-resumen-tipocamion-wrap">
+          <button type="button" class="ms-btn" id="ms-resumen-tipocamion-btn" onclick="toggleMS('resumen-tipocamion')">
+            <span id="ms-resumen-tipocamion-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-resumen-tipocamion-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-VOLTEO">Volteo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-GONDOLA">Góndola</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosResumen()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <div id="resumen-dia-card" class="form-card" style="display:none;background:var(--accent-light);border-color:rgba(15,110,86,0.25);">
+    <h3 style="color:var(--accent);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Resumen del día (hasta el momento)
+    </h3>
+    <div id="resumen-dia-contenido" style="font-size:13px;line-height:1.7;color:var(--text);"></div>
+  </div>
+
+  <div id="resumen-titulo-card" style="text-align:center;margin-bottom:14px;">
+    <div style="font-size:15px;font-weight:700;color:var(--text);">ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ</div>
+    <div id="resumen-subtitulo-fecha" style="font-size:12px;color:var(--text-muted);margin-top:3px;"></div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="resumen-kpi-viajes">0</div>
+      <div class="lbl">Viajes totales</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="resumen-kpi-toneladas">0 t</div>
+      <div class="lbl">Toneladas totales</div>
+    </div>
+  </div>
+
+  <div id="resumen-tabla-jerarquica"></div>
+
+  <div id="resumen-empty-state" class="dash-empty" style="display:none">Sin datos para el periodo y filtros seleccionados.</div>
+</div>
+
+<div class="tab-content" id="tab-excel">
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Desde</label>
+        <input type="date" id="excel-fecha-desde"/>
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" id="excel-fecha-hasta"/>
+      </div>
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-excel-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-banco-btn" onclick="toggleMS('excel-banco')">
+            <span id="ms-excel-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-TAJO" value="EL TAJO" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-TRITURA" value="TRITURA" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-excel-material-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-material-btn" onclick="toggleMS('excel-material')">
+            <span id="ms-excel-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-NUC" value="NUCLEO" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-BER" value="BERMA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-COR" value="CORAZA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div class="full">
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-excel-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-excel-cuerpo-btn" onclick="toggleMS('excel-cuerpo')">
+            <span id="ms-excel-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-excel-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MU" value="MURO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MO" value="MORRO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C1" value="CUERPO 1" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C2" value="CUERPO 2" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C3" value="CUERPO 3" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C4" value="CUERPO 4" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C5" value="CUERPO 5" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosExcel()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <button id="btn-descargar-excel" onclick="descargarExcelDesdeTab()" style="width:100%;background-color:#107c41;color:white;border-radius:var(--radius);border:0.5px solid #107c41;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;margin-top:4px;">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Descargar excel
+  </button>
+
+  <button class="btn btn-secondary" disabled title="Pendiente de definir" style="width:100%;margin-top:10px;opacity:0.55;cursor:not-allowed;">
+    Resumen
+  </button>
+</div>
+
+<div class="tab-content" id="tab-admin">
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      Usuarios registrados
+    </h3>
+    <div id="admin-users-list">
+      <p style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px 0">Cargando usuarios…</p>
+    </div>
+  </div>
+  <div class="form-card" style="margin-top:10px;">
+    <h3>Herramientas de base de datos</h3>
+    <button id="btn-recalcular-resumen" class="btn btn-secondary" onclick="recalcularResumen()" style="width:100%;">
+      Recalcular resumen (lee toda la base)
+    </button>
+  </div>
+</div>
+
+</div>
+
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-title">Boleta #</h2>
+      <button class="modal-close" onclick="closeModalForce()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="modal-body"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="btn btn-secondary" onclick="editRecord()" style="flex:1">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Editar
+      </button>
+      <button class="btn btn-danger" id="btn-delete-record" onclick="deleteRecord()" style="flex:0;padding:0 16px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="sync-toast">
+  <span id="sync-icon">⏳</span>
+  <span id="sync-msg">Sincronizando…</span>
+</div>
+
+<div id="pwa-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;background:#0f6e56;color:white;padding:12px 16px;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 12px rgba(0,0,0,0.2);">
+  <div style="display:flex;align-items:center;gap:10px;">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    <div>
+      <div style="font-size:13px;font-weight:600">Instalar app</div>
+      <div style="font-size:11px;opacity:0.85">Agrega Control de Acarreos a tu pantalla de inicio</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;flex-shrink:0">
+    <button onclick="dismissPWA()" style="background:rgba(255,255,255,0.2);border:none;color:white;padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Ahora no</button>
+    <button onclick="installPWA()" style="background:white;border:none;color:#0f6e56;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">Instalar</button>
+  </div>
+</div>
+
+<script>
+const RANGOS = {
+  'CUERPO 1': { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'0.20 a 0.30 ton','SECUNDARIA 1':'0.30 a 0.50 ton','CORAZA':'5.8 ton','BERMA':'0.30 a 0.50 ton','BERMA DE APOYO':'0.20 a 0.30 ton' },
+  'CUERPO 2': { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'0.30 a 0.50 ton','SECUNDARIA 1':'0.50 a 1.00 ton','CORAZA':'10 ton','BERMA':'0.50 a 1.00 ton','BERMA DE APOYO':'0.30 a 0.50 ton' },
+  'CUERPO 3': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.50 a 0.80 ton','SECUNDARIA 1':'0.80 a 1.50 ton','CORAZA':'16 ton','BERMA':'0.80 a 1.50 ton','BERMA DE APOYO':'0.50 a 0.80 ton' },
+  'CUERPO 4': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.60 a 1.00 ton','SECUNDARIA 1':'1.00 a 2.00 ton','CORAZA':'19 ton','BERMA':'1.00 a 2.00 ton','BERMA DE APOYO':'0.60 a 1.00 ton' },
+  'CUERPO 5': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.80 a 1.20 ton','SECUNDARIA 1':'1.20 a 2.30 ton','BERMA':'1.20 a 2.30 ton','BERMA DE APOYO':'0.80 a 1.20 ton' },
+  'MURO':     { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'1.00 a 1.50 ton','SECUNDARIA 1':'1.50 a 3.00 ton','BERMA':'1.50 a 3.00 ton','BERMA DE APOYO':'1.00 a 1.50 ton' },
+  'MORRO':    { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'1.00 a 1.50 ton','SECUNDARIA 1':'1.50 a 3.00 ton','BERMA':'1.50 a 3.00 ton','BERMA DE APOYO':'1.00 a 1.50 ton' }
+};
+const RANGOS_ACOPIO = {
+  'NUCLEO':         ['0.02 a 0.20 ton', '0.01 a 0.50 ton'],
+  'SECUNDARIA 2':   ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton'],
+  'SECUNDARIA 1':   ['0.30 a 0.50 ton', '0.50 a 1.00 ton', '0.80 a 1.50 ton', '1.00 a 2.00 ton', '1.20 a 2.30 ton', '1.50 a 3.00 ton'],
+  'CORAZA':         ['5.8 ton', '10 ton', '16 ton', '19 ton'],
+  'BERMA':          ['0.30 a 0.50 ton', '0.50 a 1.00 ton', '0.80 a 1.50 ton', '1.00 a 2.00 ton', '1.20 a 2.30 ton', '1.50 a 3.00 ton'],
+  'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
+};
+
+// ── Indicador de fecha legible bajo cada <input type="date"> ──
+// El control nativo del navegador muestra el valor en el formato del
+// idioma del dispositivo (en muchos casos MM/DD/AAAA aunque el usuario
+// esté en México). Esto puede leerse por error como DD/MM/AAAA.
+// Para evitar esa confusión, mostramos siempre debajo un texto sin
+// ambigüedad ("dom 1 jun 2026"), tomado directamente del valor ISO
+// real del input (que nunca cambia con el idioma del navegador).
+function formatearFechaHint(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(y, m - 1, d);
+  const dias  = ['dom','lun','mar','mié','jue','vie','sáb'];
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return dias[dt.getDay()] + ' ' + d + ' ' + meses[m - 1] + ' ' + y;
+}
+window.formatearFechaHint = formatearFechaHint;
+
+function initDateHints() {
+  document.querySelectorAll('input[type="date"]').forEach(inp => {
+    if (inp.dataset.hintInit) {
+      const hintExistente = inp.parentNode.querySelector(':scope > .date-hint');
+      if (hintExistente) hintExistente.textContent = inp.value ? '📅 ' + formatearFechaHint(inp.value) : '';
+      return;
+    }
+    inp.dataset.hintInit = '1';
+    const hint = document.createElement('div');
+    hint.className = 'date-hint';
+    inp.insertAdjacentElement('afterend', hint);
+    const actualizar = () => { hint.textContent = inp.value ? '📅 ' + formatearFechaHint(inp.value) : ''; };
+    inp.addEventListener('input', actualizar);
+    inp.addEventListener('change', actualizar);
+    actualizar();
+  });
+}
+window.initDateHints = initDateHints;
+document.addEventListener('DOMContentLoaded', initDateHints);
+
+function showTab(t) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + t).classList.add('active');
+  const tabBtnMap = {
+    admin: 'btn-admin-tab',
+    graficos: 'btn-graficos-tab',
+    resumen: 'btn-resumen-tab',
+    excel: 'btn-excel-tab',
+    pendientes: 'btn-pendientes-tab'
+  };
+  const tabBtn = tabBtnMap[t] ? document.getElementById(tabBtnMap[t]) : document.getElementById('t-' + t);
+  if (tabBtn) tabBtn.classList.add('active');
+  if (t === 'db') renderDB();
+  if (t === 'graficos') renderDashboard();
+  if (t === 'pendientes') renderPendientes();
+  if (t === 'resumen') initResumenTab();
+  initDateHints();
+}
+
+function calcCiclo() {
+  const fecha1 = document.getElementById('f-fecha1').value;
+  const hora1  = document.getElementById('f-hora1').value;
+  const fecha2 = document.getElementById('f-fecha2').value;
+  const hora2  = document.getElementById('f-hora2').value;
+  const cicloEl = document.getElementById('f-ciclo');
+  if (!fecha1 || !hora1 || !fecha2 || !hora2) { cicloEl.value = ''; return; }
+  const dt1 = new Date(fecha1 + 'T' + hora1 + ':00');
+  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+  const diffMs = dt2 - dt1;
+  if (diffMs < 0) { cicloEl.value = '⚠ Fecha/hora 2 anterior a la 1'; return; }
+  const totalMin = Math.floor(diffMs / 60000);
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  cicloEl.value = hrs > 0 ? hrs + 'h ' + String(min).padStart(2, '0') + 'min' : min + ' min';
+}
+
+function calcPesos() {
+  const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
+  const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
+  const neto  = bruto - tara;
+  const netoEl = document.getElementById('neto-display');
+  const tonEl  = document.getElementById('ton-display');
+  if (bruto > 0 && tara > 0) {
+    netoEl.textContent = neto > 0 ? neto.toLocaleString('es-MX') : '—';
+    tonEl.textContent  = neto > 0 ? (neto / 1000).toFixed(3) : '—';
+  } else {
+    netoEl.textContent = '—'; tonEl.textContent = '—';
+  }
+}
+
+function updateRangos() {
+  const destino    = document.getElementById('f-destino').value;
+  const material   = document.getElementById('f-material').value;
+  const rangoEl    = document.getElementById('f-rango');
+  const rangoSelEl = document.getElementById('f-rango-select');
+  const hintEl     = document.getElementById('range-hint');
+  rangoEl.value = '';
+  rangoSelEl.innerHTML = '<option value="">— Seleccionar rango —</option>';
+  hintEl.style.display = 'none';
+  if (!destino || !material) { rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none'; return; }
+  if (destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE') {
+    rangoEl.style.display = 'none';
+    rangoSelEl.style.display = 'block';
+    const opciones = RANGOS_ACOPIO[material];
+    if (opciones && opciones.length) {
+      opciones.forEach(op => { const opt = document.createElement('option'); opt.value = op; opt.textContent = op; rangoSelEl.appendChild(opt); });
+      hintEl.style.display = 'block';
+      hintEl.innerHTML = `<strong>${destino} / ${material}:</strong> Selecciona el rango que corresponde.`;
+    } else {
+      const opt = document.createElement('option'); opt.value = 'Sin rango para este material';
+      opt.textContent = 'Sin rango para este material'; rangoSelEl.appendChild(opt); rangoSelEl.value = 'Sin rango para este material';
+    }
+    return;
+  }
+  rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none';
+  const destinoRangos = RANGOS[destino];
+  if (!destinoRangos) { rangoEl.value = 'Sin rango definido'; return; }
+  const rango = destinoRangos[material];
+  if (rango) {
+    rangoEl.value = rango;
+    hintEl.style.display = 'block';
+    hintEl.innerHTML = `<strong>Rango ${destino} / ${material}:</strong> ${rango}`;
+  } else {
+    rangoEl.value = 'Sin rango para esta combinación';
+  }
+}
+
+function getFormData() {
+  const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
+  const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
+  const neto  = bruto - tara;
+  const esPendiente = document.getElementById('f-pendiente').checked;
+  return {
+    id:       Date.now(),
+    fecha1:   document.getElementById('f-fecha1').value,
+    hora1:    document.getElementById('f-hora1').value,
+    fecha2:   esPendiente ? '' : document.getElementById('f-fecha2').value,
+    hora2:    esPendiente ? '' : document.getElementById('f-hora2').value,
+    ciclo:    esPendiente ? '' : document.getElementById('f-ciclo').value,
+    boleta:   document.getElementById('f-boleta').value.trim(),
+    folio:    document.getElementById('f-folio').value.trim(),
+    economico:document.getElementById('f-economico').value.trim().toUpperCase(),
+    placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
+    material: document.getElementById('f-material').value,
+    rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(document.getElementById('f-destino').value)
+                ? document.getElementById('f-rango-select').value
+                : document.getElementById('f-rango').value,
+    banco:    document.getElementById('f-banco').value,
+    destino:  document.getElementById('f-destino').value,
+    tipo_camion: document.getElementById('f-tipo-camion').value,
+    bruto_kg: bruto, tara_kg: esPendiente ? 0 : tara, neto_kg: esPendiente ? 0 : neto,
+    ton:      (!esPendiente && neto > 0) ? parseFloat((neto / 1000).toFixed(3)) : 0,
+    status:   esPendiente ? 'pendiente' : 'completo',
+    ts:       new Date().toISOString()
+  };
+}
+
+function clearForm() {
+  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-placas','f-bruto','f-tara'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('f-material').selectedIndex = 0;
+  document.getElementById('f-banco').selectedIndex    = 0;
+  document.getElementById('f-destino').selectedIndex  = 0;
+  document.getElementById('f-tipo-camion').selectedIndex = 0;
+  document.getElementById('f-ciclo').value = '';
+  document.getElementById('f-rango').value = '';
+  document.getElementById('f-rango').style.display = 'block';
+  const sel = document.getElementById('f-rango-select');
+  sel.innerHTML = '<option value="">— Seleccionar rango —</option>';
+  sel.style.display = 'none';
+  document.getElementById('range-hint').style.display = 'none';
+  document.getElementById('neto-display').textContent = '—';
+  document.getElementById('ton-display').textContent  = '—';
+  document.getElementById('f-pendiente').checked = false;
+  togglePendienteForm();
+  window._editFid = null;
+}
+
+function togglePendienteForm() {
+  const pendiente = document.getElementById('f-pendiente').checked;
+  const fecha2El = document.getElementById('f-fecha2');
+  const hora2El  = document.getElementById('f-hora2');
+  const taraEl   = document.getElementById('f-tara');
+  const rowFecha2 = document.getElementById('row-fecha2-hora2');
+  const rowCiclo  = document.getElementById('row-ciclo');
+  const rowTara   = document.getElementById('row-tara');
+  fecha2El.disabled = pendiente;
+  hora2El.disabled   = pendiente;
+  taraEl.disabled    = pendiente;
+  rowFecha2.style.opacity = pendiente ? '0.4' : '1';
+  rowCiclo.style.opacity  = pendiente ? '0.4' : '1';
+  rowTara.style.opacity   = pendiente ? '0.4' : '1';
+  if (pendiente) {
+    fecha2El.value = ''; hora2El.value = ''; taraEl.value = '';
+    document.getElementById('f-ciclo').value = '';
+    document.getElementById('neto-display').textContent = '—';
+    document.getElementById('ton-display').textContent  = '—';
+  }
+}
+window.togglePendienteForm = togglePendienteForm;
+
+function fmtFecha(val) {
+  if (!val) return '—';
+  const m = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return m[3] + '/' + m[2] + '/' + m[1];
+  return val;
+}
+
+function renderDB() {
+  const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
+  const filtered = combinados.filter(r =>
+    ['boleta','folio','economico','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
+  );
+  const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
+  document.getElementById('stat-total').textContent     = filtered.length;
+  document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
+  const list = document.getElementById('records-list');
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
+      <p>${combinados.length ? 'Sin resultados para tu búsqueda.' : 'Sin registros. Ve a Captura para agregar el primero.'}</p>
+    </div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(r => `
+    <div class="record" onclick="openModal('${r._fid}')">
+      <div class="rec-main">
+        <div class="rec-boleta">Boleta #${r.boleta}${r._historial ? ' <span style="font-size:10px;color:var(--info);font-weight:500;">· histórico</span>' : ''}</div>
+        <div class="rec-detail">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
+          ${r.banco   ? '<span class="badge badge-blue">'+r.banco+'</span>'   : ''}
+          ${r.destino ? '<span class="badge badge-green">'+r.destino+'</span>' : ''}
+        </div>
+      </div>
+      <div class="rec-peso">
+        <div class="kg">${r.status === 'pendiente' ? '— t' : ((r.neto_kg||0)/1000).toFixed(3) + ' t'}</div>
+        <div class="fecha">${fmtFecha(r.fecha1)}</div>
+        ${r.ciclo ? '<div class="fecha" style="margin-top:1px">⏱ '+r.ciclo+'</div>' : ''}
+      </div>
+    </div>`).join('');
+}
+
+function onFilterInput() {
+  if ((window.dbHistorial||[]).length) { window.dbHistorial = []; }
+  renderDB();
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeModalForce();
+}
+function closeModalForce() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  window._currentFid = null;
+}
+
+let syncToastTimer = null;
+function showSyncToast(icon, msg, type, duration = 3000) {
+  const toast = document.getElementById('sync-toast');
+  document.getElementById('sync-icon').textContent = icon;
+  document.getElementById('sync-msg').textContent  = msg;
+  toast.className = 'show ' + type;
+  if (syncToastTimer) clearTimeout(syncToastTimer);
+  syncToastTimer = setTimeout(() => { toast.className = ''; }, duration);
+}
+window.showSyncToast = showSyncToast;
+
+// ══════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════
+const customBubblePlugin = {
+  id: 'customBubble',
+  afterDatasetsDraw(chart) {
+    const { ctx, data } = chart;
+    ctx.save();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    chart.getDatasetMeta(0).data.forEach((bar, index) => {
+      const val = data.datasets[0].data[index];
+      if (val > 0) {
+        const text = val.toLocaleString('es-MX', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' t';
+        const textWidth = ctx.measureText(text).width;
+        const px = bar.x;
+        const py = bar.y;
+        const paddingX = 14;
+        const h = 26;
+        const w = textWidth + paddingX * 2;
+        const r = 13;
+        const startX = px - 8;
+        ctx.fillStyle = '#0f6e56';
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(startX, py - h/2, w, h, r);
+        } else {
+          const x = startX, y = py - h/2;
+          ctx.moveTo(x + r, y);
+          ctx.lineTo(x + w - r, y);
+          ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+          ctx.lineTo(x + w, y + h - r);
+          ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+          ctx.lineTo(x + r, y + h);
+          ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+          ctx.lineTo(x, y + r);
+          ctx.quadraticCurveTo(x, y, x + r, y);
+        }
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, startX + w/2, py + 1);
+      }
+    });
+    ctx.restore();
+  }
+};
+
+let chartMaterial = null;
+let chartBanco    = null;
+let chartMeses    = null;
+
+function getMsSelected(key) {
+  const dd = document.getElementById('ms-' + key + '-dd');
+  if (!dd) return [];
+  return Array.from(dd.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+function getMsLabel(key) {
+  const sel = getMsSelected(key);
+  const dd = document.getElementById('ms-' + key + '-dd');
+  const total = dd ? dd.querySelectorAll('input[type="checkbox"]').length : 0;
+  if (!sel.length || sel.length === total) return '— Todos —';
+  if (sel.length === 1) {
+    const cb = dd.querySelector('input[value="' + sel[0] + '"]');
+    return cb ? cb.nextElementSibling.textContent : sel[0];
+  }
+  return sel.length + ' seleccionados';
+}
+
+function updateMsBtn(key) {
+  const lbl = document.getElementById('ms-' + key + '-label');
+  const btn = document.getElementById('ms-' + key + '-btn');
+  const sel = getMsSelected(key);
+  if (lbl) lbl.textContent = getMsLabel(key);
+  const old = btn ? btn.querySelector('.ms-tag-count') : null;
+  if (old) old.remove();
+  if (sel.length > 1) {
+    const badge = document.createElement('span');
+    badge.className = 'ms-tag-count';
+    badge.textContent = sel.length;
+    if (btn) btn.insertBefore(badge, btn.querySelector('.ms-arrow'));
+  }
+}
+
+function toggleMS(key) {
+  const dd  = document.getElementById('ms-' + key + '-dd');
+  const btn = document.getElementById('ms-' + key + '-btn');
+  const isOpen = dd.classList.contains('open');
+  document.querySelectorAll('.ms-dropdown').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.ms-btn').forEach(b => b.classList.remove('open'));
+  if (!isOpen) { dd.classList.add('open'); btn.classList.add('open'); }
+}
+
+function onMsChange(key) {
+  updateMsBtn(key);
+  if (key.startsWith('excel-')) return;
+  if (key.startsWith('resumen-')) { renderResumen(); return; }
+  renderDashboard();
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.ms-wrap')) {
+    document.querySelectorAll('.ms-dropdown').forEach(d => d.classList.remove('open'));
+    document.querySelectorAll('.ms-btn').forEach(b => b.classList.remove('open'));
+  }
+});
+
+function limpiarFiltrosDashboard() {
+  document.getElementById('dash-fecha-desde').value = '';
+  document.getElementById('dash-fecha-hasta').value = '';
+  ['banco','material','cuerpo'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+  renderDashboard();
+}
+
+function getDashboardFiltered() {
+  const desde      = document.getElementById('dash-fecha-desde').value;
+  const hasta      = document.getElementById('dash-fecha-hasta').value;
+  const bancos     = getMsSelected('banco');
+  const materiales = getMsSelected('material');
+  const cuerpos    = getMsSelected('cuerpo');
+  const datos = (window.usandoHistoricoDash && window.dashHistoricoCompleto)
+    ? window.dashHistoricoCompleto
+    : (window.db || []);
+  return datos.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (bancos.length    && !bancos.includes(r.banco))    return false;
+    if (materiales.length && !materiales.includes(r.material)) return false;
+    if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
+    return true;
+  });
+}
+
+function renderDashboard() {
+  if (typeof Chart === 'undefined') return;
+  const filtered = getDashboardFiltered();
+  const emptyState = document.getElementById('dash-empty-state');
+
+  const fuenteEl = document.getElementById('dash-fuente-actual');
+  const btnVentana = document.getElementById('btn-dash-ventana');
+  const btnHistorico = document.getElementById('btn-dash-historico');
+  if (fuenteEl) {
+    if (window.usandoHistoricoDash && window.dashHistoricoCompleto) {
+      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dashHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
+      if (btnVentana)   btnVentana.className   = 'btn btn-secondary';
+      if (btnHistorico) btnHistorico.className = 'btn btn-primary';
+    } else {
+      fuenteEl.textContent = '🕐 Mostrando solo la ventana reciente (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+      if (btnVentana)   btnVentana.className   = 'btn btn-primary';
+      if (btnHistorico) btnHistorico.className = 'btn btn-secondary';
+    }
+  }
+
+  const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+  document.getElementById('dash-kpi-viajes').textContent    = filtered.length;
+  document.getElementById('dash-kpi-toneladas').textContent = totalTon.toFixed(2) + ' t';
+  emptyState.style.display = filtered.length ? 'none' : 'block';
+
+  const porMaterial = {};
+  filtered.forEach(r => {
+    const key = r.material || 'Sin material';
+    porMaterial[key] = (porMaterial[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
+  });
+
+  const porBanco = {};
+  filtered.forEach(r => {
+    const key = r.banco || 'Sin banco';
+    porBanco[key] = (porBanco[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
+  });
+
+  const colores = ['#0f6e56','#1d9e75','#1a4f8a','#854f0b','#a32d2d','#5f5e5a','#2c8fb3','#8a5fb0'];
+
+  const ctxMat = document.getElementById('chart-material').getContext('2d');
+  if (chartMaterial) chartMaterial.destroy();
+  chartMaterial = new Chart(ctxMat, {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(porMaterial),
+      datasets: [{ data: Object.values(porMaterial).map(v=>+v.toFixed(2)), backgroundColor: colores, borderWidth: 1, borderColor: '#ffffff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed.toFixed(2) + ' t' } }
+      }
+    }
+  });
+
+  const ctxBanco = document.getElementById('chart-banco').getContext('2d');
+  if (chartBanco) chartBanco.destroy();
+  chartBanco = new Chart(ctxBanco, {
+    type: 'bar',
+    data: {
+      labels: Object.keys(porBanco),
+      datasets: [{ label: 'Toneladas', data: Object.values(porBanco).map(v=>+v.toFixed(2)), backgroundColor: '#0f6e56', borderRadius: 6 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' t' } } },
+      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } }, x: { ticks: { font: { size: 10 } } } }
+    }
+  });
+
+  const porMes = {};
+  filtered.forEach(r => {
+    if (!r.fecha1) return;
+    const [y, m, d] = r.fecha1.split('-');
+    const key = `${y}-${m}`;
+    const dObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
+    const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
+    const label = `${mesStr}\n${y}`;
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    if (!porMes[key]) porMes[key] = { label, val: 0 };
+    porMes[key].val += ton;
+  });
+
+  const mesesKeys = Object.keys(porMes).sort();
+  const mesesLabels = mesesKeys.map(k => porMes[k].label.split('\n'));
+  const mesesValues = mesesKeys.map(k => +porMes[k].val.toFixed(2));
+
+  const wrapMeses = document.getElementById('wrap-chart-meses');
+  if (wrapMeses) {
+    wrapMeses.style.height = Math.max(150, mesesLabels.length * 60) + 'px';
+  }
+
+  const ctxMeses = document.getElementById('chart-meses').getContext('2d');
+  if (chartMeses) chartMeses.destroy();
+  chartMeses = new Chart(ctxMeses, {
+    type: 'bar',
+    data: {
+      labels: mesesLabels,
+      datasets: [{ data: mesesValues, backgroundColor: '#0f6e56', barThickness: 4, borderRadius: 0 }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { right: 80, top: 10, bottom: 10 } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { beginAtZero: true, grid: { display: true, drawBorder: false, color: 'rgba(0,0,0,0.05)' }, ticks: { font: { size: 10 }, maxTicksLimit: 6 } },
+        y: { grid: { display: false, drawBorder: true, borderColor: '#0f6e56', borderWidth: 2 }, ticks: { font: { weight: 'bold', size: 11 }, color: '#0f6e56' } }
+      }
+    },
+    plugins: [customBubblePlugin]
+  });
+}
+
+window.renderDashboard         = renderDashboard;
+window.limpiarFiltrosDashboard = limpiarFiltrosDashboard;
+
+// ══════════════════════════════════════════════════════
+// PENDIENTES
+// ══════════════════════════════════════════════════════
+function renderPendientes() {
+  const list = document.getElementById('pendientes-list');
+  if (!list) return;
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
+  const pendientes = combinados.filter(r => r.status === 'pendiente').sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
+  if (!pendientes.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <p>Sin viajes pendientes de destare por ahora.</p>
+    </div>`;
+    return;
+  }
+  list.innerHTML = pendientes.map(r => `
+    <div class="form-card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div>
+          <div style="font-weight:600;font-size:14px;">Boleta #${r.boleta || '—'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${r.placas||'—'} · ${r.material||'—'}${r.rango ? ' · '+r.rango : ''}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">1er pesaje: ${fmtFecha(r.fecha1)} ${r.hora1||''} · Bruto: ${r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX')+' kg' : '—'}</div>
+        </div>
+        <span class="badge" style="background:var(--warning-light);color:var(--warning);white-space:nowrap;">⏳ Pendiente</span>
+      </div>
+      <div class="field-row two-col">
+        <div>
+          <label>Fecha 2do pesaje</label>
+          <input type="date" id="pend-fecha2-${r._fid}">
+        </div>
+        <div>
+          <label>Hora 2do pesaje</label>
+          <input type="time" id="pend-hora2-${r._fid}">
+        </div>
+      </div>
+      <div class="field-row">
+        <label>Tara (kg)</label>
+        <input type="number" id="pend-tara-${r._fid}" placeholder="0000" inputmode="decimal">
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="completarPendiente('${r._fid}')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Completar destare
+      </button>
+    </div>
+  `).join('');
+  initDateHints();
+}
+window.renderPendientes = renderPendientes;
+
+// ══════════════════════════════════════════════════════
+// PESTAÑA EXCEL
+// La pestaña Excel es independiente: siempre consulta Firestore
+// directamente según sus propios filtros (fecha/banco/material/cuerpo),
+// sin depender del estado de "histórico" de otras pestañas.
+// ══════════════════════════════════════════════════════
+function initExcelTab() {
+  // Sin acción especial: los filtros propios de esta pestaña ya están listos para usarse.
+}
+window.initExcelTab = initExcelTab;
+
+function limpiarFiltrosExcel() {
+  document.getElementById('excel-fecha-desde').value = '';
+  document.getElementById('excel-fecha-hasta').value = '';
+  ['excel-banco','excel-material','excel-cuerpo'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+  initDateHints();
+}
+window.limpiarFiltrosExcel = limpiarFiltrosExcel;
+
+
+// ══════════════════════════════════════════════════════
+// PESTAÑA RESUMEN
+// ══════════════════════════════════════════════════════
+function initResumenTab() {
+  const nota = document.getElementById('resumen-historico-nota');
+  const btnHist = document.getElementById('btn-resumen-historico');
+  const btnVent = document.getElementById('btn-resumen-ventana');
+  if (nota) {
+    nota.textContent = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+  if (window.usandoHistoricoResumen && window.resumenHistoricoCompleto) {
+    if (btnVent) btnVent.className = 'btn btn-primary';
+    if (btnHist) btnHist.className = 'btn btn-secondary';
+  } else {
+    if (btnVent) btnVent.className = 'btn btn-secondary';
+    if (btnHist) btnHist.className = 'btn btn-primary';
+  }
+  cambiarPeriodoResumen();
+}
+window.initResumenTab = initResumenTab;
+
+window.usarVentanaRecienteEnResumen = function() {
+  window.usarVentanaRecienteEnResumenFn();
+  initResumenTab();
+  renderResumen();
+};
+
+window.cargarHistoricoCompletoResumen = async function() {
+  const btn = document.getElementById('btn-resumen-historico');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
+  try {
+    await window.cargarHistoricoCompletoResumenFn(false);
     
-    <div style="text-align:right">
-      <div id="user-tag" style="font-size:11px;opacity:0.85;margin-bottom:2px"></div>
-      <button onclick="logoutUsuario()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;">Salir</button>
-    </div>
-  </header>
+    // CAJITA DE ARREGLO CAVERNÍCOLA: Forzar "rango de días" y limpiar fechas para mostrar el histórico completo real
+    document.getElementById('resumen-periodo-tipo').value = 'rango';
+    document.getElementById('resumen-fecha-desde').value = '';
+    document.getElementById('resumen-fecha-hasta').value = '';
+    cambiarPeriodoResumen(); // Esto hace que se repinte todo bonito
+
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    initResumenTab();
+    renderResumen();
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
+
+function limpiarFiltrosResumen() {
+  ['resumen-banco','resumen-material','resumen-cuerpo','resumen-tipocamion'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+  renderResumen();
+}
+window.limpiarFiltrosResumen = limpiarFiltrosResumen;
+
+function isoHoy() {
+  const d = new Date();
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function cambiarPeriodoResumen() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  document.getElementById('resumen-periodo-dia-wrap').style.display    = (tipo === 'dia')    ? 'block' : 'none';
+  document.getElementById('resumen-periodo-semana-wrap').style.display = (tipo === 'semana') ? 'block' : 'none';
+  document.getElementById('resumen-periodo-mes-wrap').style.display    = (tipo === 'mes')    ? 'block' : 'none';
+  document.getElementById('resumen-periodo-rango-wrap').style.display  = (tipo === 'rango')  ? 'block' : 'none';
+  document.getElementById('resumen-periodo-rango-wrap2').style.display = (tipo === 'rango')  ? 'block' : 'none';
+  const fDia = document.getElementById('resumen-fecha-dia');
+  if (tipo === 'dia' && !fDia.value) fDia.value = isoHoy();
+  const fSemana = document.getElementById('resumen-fecha-semana');
+  if (tipo === 'semana' && !fSemana.value) fSemana.value = isoHoy();
+  const fMes = document.getElementById('resumen-fecha-mes');
+  if (tipo === 'mes' && !fMes.value) fMes.value = isoHoy().slice(0,7);
+  initDateHints(); // refresca los hints de fecha al cambiar el modo visible
+  renderResumen();
+}
+window.cambiarPeriodoResumen = cambiarPeriodoResumen;
+
+// Devuelve {desde, hasta} en formato YYYY-MM-DD según el periodo seleccionado
+function getRangoPeriodoResumen() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  if (tipo === 'dia') {
+    const f = document.getElementById('resumen-fecha-dia').value || isoHoy();
+    return { desde: f, hasta: f };
+  }
+  if (tipo === 'semana') {
+    const base = document.getElementById('resumen-fecha-semana').value || isoHoy();
+    const [y,m,d] = base.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const diaSemana = dt.getDay(); // 0=domingo
+    const offsetLunes = (diaSemana === 0) ? 6 : diaSemana - 1;
+    const lunes = new Date(dt); lunes.setDate(dt.getDate() - offsetLunes);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    const toIso = (x) => x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+    return { desde: toIso(lunes), hasta: toIso(domingo) };
+  }
+  if (tipo === 'mes') {
+    const base = document.getElementById('resumen-fecha-mes').value || isoHoy().slice(0,7);
+    const [y,m] = base.split('-').map(Number);
+    const ultimoDia = new Date(y, m, 0).getDate();
+    return { desde: `${base}-01`, hasta: `${base}-${String(ultimoDia).padStart(2,'0')}` };
+  }
+  // rango
+  const desde = document.getElementById('resumen-fecha-desde').value;
+  const hasta = document.getElementById('resumen-fecha-hasta').value;
+  return { desde: desde || null, hasta: hasta || null };
+}
+
+function getResumenFiltradoBase() {
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const bancos      = getMsSelected('resumen-banco');
+  const materiales  = getMsSelected('resumen-material');
+  const cuerpos     = getMsSelected('resumen-cuerpo');
+  const tiposCamion = getMsSelected('resumen-tipocamion');
+  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
+    : (window.db || []);
+  return datos.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (bancos.length      && !bancos.includes(r.banco))            return false;
+    if (materiales.length  && !materiales.includes(r.material))     return false;
+    if (cuerpos.length     && !cuerpos.includes(r.destino))         return false;
+    if (tiposCamion.length && !tiposCamion.includes(r.tipo_camion)) return false;
+    return true;
+  });
+}
+
+const NOMBRES_BANCO = {
+  'EL TAJO': 'EL TAJO', 'TRITURA': 'TRITURA',
+  'MOZOMBOA1': 'MOZOMBOA GAMI', 'MOZOMBOA2': 'MOZOMBOA LERMA', 'MOZOMBOA3': 'MOZOMBOA PORFIRIO'
+};
+const NOMBRES_MATERIAL = {
+  'NUCLEO': 'NÚCLEO', 'BERMA': 'BERMA', 'BERMA DE APOYO': 'BERMA DE APOYO',
+  'SECUNDARIA 1': 'SECUNDARIA 1', 'SECUNDARIA 2': 'SECUNDARIA 2', 'CORAZA': 'CORAZA'
+};
+function nombreBanco(b)    { return NOMBRES_BANCO[b]    || b || 'Sin banco'; }
+function nombreMaterial(m) { return NOMBRES_MATERIAL[m] || m || 'Sin material'; }
+function nombreTipoCamion(t) { return t === 'GONDOLA' ? 'Góndola' : (t === 'VOLTEO' ? 'Volteo' : 'sin tipo de camión'); }
+
+function fmtFechaCorta(iso) {
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return d + '/' + m + '/' + y;
+}
+
+function renderResumenDia() {
+  const card = document.getElementById('resumen-dia-card');
+  const cont = document.getElementById('resumen-dia-contenido');
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const hoy = isoHoy();
+  // Solo se muestra cuando el periodo seleccionado es "día" y coincide con la fecha de hoy.
+  if (tipo !== 'dia' || desde !== hoy) { card.style.display = 'none'; return; }
+
+  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
+    : (window.db || []);
+  const delDia = datos.filter(r => r.fecha1 === hoy);
+
+  if (!delDia.length) {
+    card.style.display = 'block';
+    cont.innerHTML = '<div style="color:var(--text-muted);">Sin viajes registrados hasta el momento.</div>';
+    return;
+  }
+
+  // Agrupar por banco > material > destino > tipo de camión
+  const porBanco = {};
+  delDia.forEach(r => {
+    const b = r.banco || 'SIN BANCO';
+    if (!porBanco[b]) porBanco[b] = {};
+    const m = r.material || 'SIN MATERIAL';
+    if (!porBanco[b][m]) porBanco[b][m] = {};
+    const d = r.destino || 'SIN DESTINO';
+    if (!porBanco[b][m][d]) porBanco[b][m][d] = {};
+    const tc = r.tipo_camion || 'SIN_TIPO';
+    porBanco[b][m][d][tc] = (porBanco[b][m][d][tc] || 0) + 1;
+  });
+
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  let html = `<div style="font-weight:700;margin-bottom:8px;">Hasta el momento: ${delDia.length} viaje${delDia.length === 1 ? '' : 's'}</div>`;
+  ordenBancos.forEach(b => {
+    html += `<div style="margin-top:6px;"><strong>BANCO ${nombreBanco(b)}:</strong></div>`;
+    Object.keys(porBanco[b]).forEach(m => {
+      Object.keys(porBanco[b][m]).forEach(d => {
+        Object.keys(porBanco[b][m][d]).forEach(tc => {
+          const n = porBanco[b][m][d][tc];
+          const destinoTxt = (d === 'SIN DESTINO') ? 'sin destino registrado' : 'al ' + d.toLowerCase();
+          const tcTxt = (tc === 'SIN_TIPO') ? 'sin tipo de camión' : '(' + nombreTipoCamion(tc) + ')';
+          html += `<div style="padding-left:10px;">${n} viaje${n===1?'':'s'} de ${nombreMaterial(m).toLowerCase()} ${destinoTxt} ${tcTxt}</div>`;
+        });
+      });
+    });
+  });
+
+  card.style.display = 'block';
+  cont.innerHTML = html;
+}
+
+function renderResumenTitulo() {
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const sub = document.getElementById('resumen-subtitulo-fecha');
+  if (!desde && !hasta) { sub.textContent = 'Todas las fechas'; return; }
+  if (tipo === 'dia' || desde === hasta) {
+    sub.textContent = fmtFechaCorta(desde);
+  } else if (tipo === 'semana') {
+    sub.textContent = 'Semana del ' + fmtFechaCorta(desde) + ' al ' + fmtFechaCorta(hasta);
+  } else if (tipo === 'mes') {
+    const base = document.getElementById('resumen-fecha-mes').value;
+    const [y,m] = (base || '').split('-').map(Number);
+    const nombreMes = m ? new Date(y, m-1, 1).toLocaleString('es-MX', { month: 'long' }).toUpperCase() : '';
+    sub.textContent = nombreMes + ' ' + y;
+  } else {
+    sub.textContent = (desde ? fmtFechaCorta(desde) : '…') + ' — ' + (hasta ? fmtFechaCorta(hasta) : '…');
+  }
+}
+
+function renderResumenTablaJerarquica(filtered) {
+  const wrap = document.getElementById('resumen-tabla-jerarquica');
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  // Estructura: banco -> material -> destino -> { viajes, ton }
+  const porBanco = {};
+  filtered.forEach(r => {
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    const b = r.banco || 'SIN BANCO';
+    const m = r.material || 'SIN MATERIAL';
+    const d = r.destino || 'SIN DESTINO';
+    if (!porBanco[b]) porBanco[b] = { viajes: 0, ton: 0, materiales: {} };
+    porBanco[b].viajes += 1; porBanco[b].ton += ton;
+    if (!porBanco[b].materiales[m]) porBanco[b].materiales[m] = { viajes: 0, ton: 0, destinos: {} };
+    porBanco[b].materiales[m].viajes += 1; porBanco[b].materiales[m].ton += ton;
+    if (!porBanco[b].materiales[m].destinos[d]) porBanco[b].materiales[m].destinos[d] = { viajes: 0, ton: 0 };
+    porBanco[b].materiales[m].destinos[d].viajes += 1;
+    porBanco[b].materiales[m].destinos[d].ton += ton;
+  });
+
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+
+  let html = '<div class="chart-card" style="padding:0;overflow:hidden;">';
+  html += `
+    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;background:var(--accent);color:white;font-size:11px;font-weight:700;padding:10px 12px;">
+      <div>BANCO</div><div style="text-align:right;">VIAJES</div><div style="text-align:right;">TON.</div><div style="text-align:right;">TON. PROM.</div>
+    </div>`;
+
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    html += `
+      <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:10px 12px;background:var(--accent-light);font-weight:700;font-size:13px;border-bottom:0.5px solid var(--border);">
+        <div>${nombreBanco(b)}</div><div style="text-align:right;">${bd.viajes}</div><div style="text-align:right;">${fmtTon(bd.ton)}</div><div style="text-align:right;">${fmtProm(bd.ton, bd.viajes)}</div>
+      </div>`;
+    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
+    materiales.forEach(m => {
+      const md = bd.materiales[m];
+      html += `
+        <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:8px 12px 8px 22px;background:var(--surface);font-weight:600;font-size:12.5px;border-bottom:0.5px solid var(--border);">
+          <div>${nombreMaterial(m)}</div><div style="text-align:right;">${md.viajes}</div><div style="text-align:right;">${fmtTon(md.ton)}</div><div style="text-align:right;">${fmtProm(md.ton, md.viajes)}</div>
+        </div>`;
+      const destinos = Object.keys(md.destinos).sort();
+      destinos.forEach(d => {
+        const dd = md.destinos[d];
+        html += `
+          <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:7px 12px 7px 34px;background:var(--surface);font-size:12px;color:var(--text-muted);border-bottom:0.5px solid var(--border);">
+            <div>${d === 'SIN DESTINO' ? '— sin destino —' : d}</div><div style="text-align:right;">${dd.viajes}</div><div style="text-align:right;">${fmtTon(dd.ton)}</div><div style="text-align:right;">${fmtProm(dd.ton, dd.viajes)}</div>
+          </div>`;
+      });
+    });
+  });
+
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  html += `
+    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:11px 12px;background:var(--text);color:white;font-weight:700;font-size:13px;">
+      <div>TOTAL GENERAL</div><div style="text-align:right;">${totalViajes}</div><div style="text-align:right;">${fmtTon(totalTon)}</div><div style="text-align:right;">${fmtProm(totalTon, totalViajes)}</div>
+    </div>`;
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function renderResumen() {
+  const filtered = getResumenFiltradoBase();
+  const emptyState = document.getElementById('resumen-empty-state');
+
+  renderResumenTitulo();
+  renderResumenDia();
+
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  document.getElementById('resumen-kpi-viajes').textContent     = filtered.length;
+  document.getElementById('resumen-kpi-toneladas').textContent  = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+  emptyState.style.display = filtered.length ? 'none' : 'block';
+
+  renderResumenTablaJerarquica(filtered);
+}
+window.renderResumen = renderResumen;
+
+// descargarExcelDesdeTab es independiente: trae los datos directo de Firestore
+// según los filtros propios de esta pestaña (no depende de otras pestañas).
+window.descargarExcelDesdeTab = async function() {
+  if (typeof XLSX === 'undefined') {
+    alert('La librería de Excel aún no terminó de cargar. Espera un momento y vuelve a intentar.');
+    return;
+  }
+  const desde      = document.getElementById('excel-fecha-desde').value;
+  const hasta      = document.getElementById('excel-fecha-hasta').value;
+  const bancos     = getMsSelected('excel-banco');
+  const materiales = getMsSelected('excel-material');
+  const cuerpos    = getMsSelected('excel-cuerpo');
+
+  const btn = document.getElementById('btn-descargar-excel');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo registros…'; }
+
+  try {
+    const traidos = await window.traerTodoFirestore(desde || null, hasta || null, (n) => {
+      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + n.toLocaleString('es-MX') + ')';
+    });
+
+    const registros = traidos.filter(r => {
+      if (!r.fecha1) return false; // REGLA DE FUEGO: DEBE TENER FECHA 1
+      if (desde && r.fecha1 < desde) return false;
+      if (hasta && r.fecha1 > hasta) return false;
+      if (bancos.length     && !bancos.includes(r.banco))        return false;
+      if (materiales.length && !materiales.includes(r.material)) return false;
+      if (cuerpos.length    && !cuerpos.includes(r.destino))      return false;
+      return true;
+    });
+
+    if (!registros.length) { alert('No hay registros para esos filtros.'); return; }
+
+    if (btn) { btn.innerHTML = '<span class="spin"></span> Generando…'; }
+
+    const parseFecha = window.parseDateForExcel || function(s) { if (!s) return ''; const [y,m,d] = s.split('-'); return new Date(+y,+m-1,+d,0,0,0); };
+    const datosFormateados = registros.map((r) => ({
+      "Fecha":              r.fecha1 ? parseFecha(r.fecha1) : "—",
+      "Hora 1er Pesaje":   r.hora1 || "—",
+      "Fecha 2do Pesaje":  r.fecha2 ? parseFecha(r.fecha2) : "—",
+      "Hora 2do Pesaje":   r.hora2 || "—",
+      "Ciclo":             r.ciclo || "—",
+      "Folio":             r.folio || "—",
+      "Boleta":            r.boleta || "S/B",
+      "Placas":            r.placas || "—",
+      "Tipo de Camión":    r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : '—'),
+      "# Economico":       r.economico || "—",
+      "Material":          r.material || "—",
+      "Banco Origen":      r.banco || "—",
+      "Destino (Tiro)":    r.destino || "—",
+      "Rango de Material": r.rango || "—",
+      "Peso Bruto (kg)":   r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
+      "Peso Tara (kg)":    r.tara_kg  ? Number(r.tara_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (kg)":    r.neto_kg  ? Number(r.neto_kg).toLocaleString('es-MX')  : "0",
+      "Peso Neto (ton)":   r.ton || "0",
+      "Estatus":           r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
+    for (let cellAddress in worksheet) {
+      if (cellAddress[0] === '!') continue;
+      if (worksheet[cellAddress].t === 'd') worksheet[cellAddress].z = 'dd/mm/yyyy';
+    }
+    worksheet['!cols'] = [
+      {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
+      {wch:12},{wch:12},{wch:15},{wch:13},{wch:14},
+      {wch:18},{wch:16},{wch:16},{wch:20},{wch:15},
+      {wch:14},{wch:15},{wch:14},{wch:18}
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
+    XLSX.writeFile(workbook, 'Reporte_Acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
+  } catch (err) {
+    window.handleFirestoreIndexError(err) || alert('Error al generar el Excel: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
+
+
+// ── PWA ──
+let deferredPrompt = null;
+const pwaBanner = document.getElementById('pwa-banner');
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); deferredPrompt = e;
+  if (!localStorage.getItem('pwa_dismissed')) pwaBanner.style.display = 'flex';
+});
+function installPWA() {
+  if (!deferredPrompt) return;
+  pwaBanner.style.display = 'none';
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+}
+function dismissPWA() {
+  pwaBanner.style.display = 'none';
+  localStorage.setItem('pwa_dismissed', '1');
+}
+window.addEventListener('appinstalled', () => { pwaBanner.style.display = 'none'; deferredPrompt = null; });
+
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    const CACHE = 'acarreos-v2';
+    self.addEventListener('install', e => {
+      e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './index.html'])));
+    });
+    self.addEventListener('fetch', e => {
+      e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+    });
+  `;
+  const blob = new Blob([swCode], { type: 'application/javascript' });
+  navigator.serviceWorker.register(URL.createObjectURL(blob), { scope: './' })
+    .then(() => console.log('SW registered'))
+    .catch(err => console.warn('SW error:', err));
+}
+</script>
 
 </body>
 </html>

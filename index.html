@@ -415,8 +415,9 @@ onAuthStateChanged(auth, async (user) => {
     const pendientesBtn = document.getElementById('btn-pendientes-tab');
     if (pendientesBtn) pendientesBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
 
+    // Base de datos: visible SOLO para master y admin.
     const dbBtn = document.getElementById('t-db');
-    if (dbBtn) dbBtn.style.display = (esCapturista || esAdmin) ? 'flex' : 'none';
+    if (dbBtn) dbBtn.style.display = esAdminOMaster ? 'flex' : 'none';
 
     // CORRECCIÓN 2: Resumen visible para admin, master Y visor
     const resumenBtn = document.getElementById('btn-resumen-tab');
@@ -432,11 +433,9 @@ onAuthStateChanged(auth, async (user) => {
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none';
 
-    const exportBar = document.getElementById('export-bar-actions');
-    if (exportBar) exportBar.style.display = esAdminOMaster ? 'flex' : 'none';
-
     const tabsPermitidas = [];
-    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'db', 'resumen');
+    if (esCapturista || esAdmin) tabsPermitidas.push('form', 'pendientes', 'resumen');
+    if (esAdminOMaster) tabsPermitidas.push('db');
     if (esAdminOMaster || esVisor) tabsPermitidas.push('graficos', 'excel', 'resumen');
     if (esAdminOMaster) tabsPermitidas.push('admin');
     const tabActivaEl = document.querySelector('.tab-content.active');
@@ -467,7 +466,7 @@ window.cargarPanelAdmin = function() {
     }
     wrap.innerHTML = users.map(u => {
       const rolUsuario = u.rol || 'capturista';
-      const puedeEliminar = esMaster || (esAdmin && (rolUsuario === 'visor' || rolUsuario === 'capturista'));
+      const puedeEliminar = esMaster || (esAdmin && rolUsuario === 'capturista');
       return `
       <div class="form-card" style="margin-bottom:10px;padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -492,7 +491,12 @@ window.cargarPanelAdmin = function() {
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
             ${u.status !== 'autorizado'
               ? `<button onclick="cambiarStatusUsuario('${u._uid}','autorizado')" style="background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Autorizar</button>`
-              : `<button onclick="cambiarStatusUsuario('${u._uid}','pendiente')" style="background:var(--danger);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Revocar</button>`
+              : (() => {
+                  const puedeRevocar = esMaster || (esAdmin && rolUsuario === 'capturista');
+                  return puedeRevocar
+                    ? `<button onclick="cambiarStatusUsuario('${u._uid}','pendiente')" style="background:var(--danger);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Revocar</button>`
+                    : '';
+                })()
             }
             ${puedeEliminar
               ? `<button onclick="eliminarUsuario('${u._uid}','${(u.nombre||u.email||'').replace(/'/g,"\\'")}')" style="background:var(--danger-light);color:var(--danger);border:0.5px solid rgba(163,45,45,0.3);padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">🗑️ Eliminar</button>`
@@ -529,7 +533,7 @@ window.eliminarUsuario = async function(uid, nombre) {
     if (!target) { alert('No se encontró ese usuario.'); return; }
     const rolTarget = target.data().rol || 'capturista';
     const miRol = window._currentUserRol;
-    const permitido = miRol === 'master' || (miRol === 'admin' && (rolTarget === 'visor' || rolTarget === 'capturista'));
+    const permitido = miRol === 'master' || (miRol === 'admin' && rolTarget === 'capturista');
     if (!permitido) { alert('No tienes permiso para eliminar a este usuario.'); return; }
     if (!confirm('¿Eliminar permanentemente a "' + nombre + '" (' + rolTarget + ')? Esta acción no se puede deshacer.')) return;
     await deleteDoc(doc(db_f, COL_USERS, uid));
@@ -808,18 +812,6 @@ window.completarPendiente = async function(fid) {
   }
 };
 
-window.clearDB = async function() {
-  if (!confirm('¿Borrar TODA la base de datos (acarreos y resumen)? Esta acción no se puede deshacer.')) return;
-  if (!confirm('⚠️ SEGUNDA CONFIRMACIÓN: se eliminarán TODOS los registros de Firestore para TODOS los usuarios. ¿Continuar?')) return;
-  try {
-    const snap = await getDocs(collection(db_f, COL));
-    await Promise.all(snap.docs.map(d => deleteDoc(doc(db_f, COL, d.id))));
-    const snapResumen = await getDocs(collection(db_f, COL_RESUMEN));
-    await Promise.all(snapResumen.docs.map(d => deleteDoc(doc(db_f, COL_RESUMEN, d.id))));
-    window.showSyncToast('✅', 'Base de datos borrada', 'ok');
-  } catch(err) { alert('Error: ' + err.message); }
-}
-
 window.manualSync = function() {
   window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
   updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
@@ -887,48 +879,92 @@ async function traerTodoFirestore(desde, hasta, onProgreso) {
   }
   return registros;
 }
+window.traerTodoFirestore = traerTodoFirestore;
 
-let dbHistoricoCompleto       = null;
-  window.dbHistoricoCompleto  = dbHistoricoCompleto;
-let usandoHistoricoCompleto   = false;
-  window.usandoHistoricoCompleto = usandoHistoricoCompleto;
-let cargandoHistoricoCompleto = false;
+// ── Estado de "histórico completo" SEPARADO por pestaña ──
+// Cada pestaña (Gráficos, Resumen) maneja su propio estado de forma
+// independiente: cambiar la fuente en una no afecta a las demás.
+let dashHistoricoCompleto        = null;
+  window.dashHistoricoCompleto   = dashHistoricoCompleto;
+let usandoHistoricoDash          = false;
+  window.usandoHistoricoDash     = usandoHistoricoDash;
+let cargandoHistoricoDash        = false;
 
-window.cargarHistoricoCompleto = async function(forzar) {
-  if (cargandoHistoricoCompleto) return;
-  if (dbHistoricoCompleto && !forzar) {
-    usandoHistoricoCompleto = true;
-    window.usandoHistoricoCompleto = true;
+let resumenHistoricoCompleto     = null;
+  window.resumenHistoricoCompleto = resumenHistoricoCompleto;
+let usandoHistoricoResumen       = false;
+  window.usandoHistoricoResumen  = usandoHistoricoResumen;
+let cargandoHistoricoResumen     = false;
+
+window.cargarHistoricoCompletoDash = async function(forzar) {
+  if (cargandoHistoricoDash) return;
+  if (dashHistoricoCompleto && !forzar) {
+    usandoHistoricoDash = true;
+    window.usandoHistoricoDash = true;
     renderDashboard();
     return;
   }
-  cargandoHistoricoCompleto = true;
+  cargandoHistoricoDash = true;
   const nota = document.getElementById('dash-historico-nota');
   if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
   try {
-    dbHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+    dashHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
       if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
     });
-    window.dbHistoricoCompleto = dbHistoricoCompleto;
-    usandoHistoricoCompleto = true;
-    window.usandoHistoricoCompleto = true;
-    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+    window.dashHistoricoCompleto = dashHistoricoCompleto;
+    usandoHistoricoDash = true;
+    window.usandoHistoricoDash = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + dashHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
     renderDashboard();
   } catch (e) {
     if (nota) nota.textContent = '';
     handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
   } finally {
-    cargandoHistoricoCompleto = false;
+    cargandoHistoricoDash = false;
   }
 };
 
 window.usarVentanaRecienteEnDashboard = function() {
-  usandoHistoricoCompleto = false;
-  window.usandoHistoricoCompleto = false;
+  usandoHistoricoDash = false;
+  window.usandoHistoricoDash = false;
   const nota = document.getElementById('dash-historico-nota');
   if (nota) nota.textContent = '';
   renderDashboard();
 };
+
+window.cargarHistoricoCompletoResumenFn = async function(forzar) {
+  if (cargandoHistoricoResumen) return;
+  if (resumenHistoricoCompleto && !forzar) {
+    usandoHistoricoResumen = true;
+    window.usandoHistoricoResumen = true;
+    return;
+  }
+  cargandoHistoricoResumen = true;
+  const nota = document.getElementById('resumen-historico-nota');
+  if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
+  try {
+    resumenHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+      if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+    });
+    window.resumenHistoricoCompleto = resumenHistoricoCompleto;
+    usandoHistoricoResumen = true;
+    window.usandoHistoricoResumen = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+  } catch (e) {
+    if (nota) nota.textContent = '';
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    cargandoHistoricoResumen = false;
+  }
+};
+
+window.usarVentanaRecienteEnResumenFn = function() {
+  usandoHistoricoResumen = false;
+  window.usandoHistoricoResumen = false;
+  const nota = document.getElementById('resumen-historico-nota');
+  if (nota) nota.textContent = '';
+};
+
 
 window.buscarHistorial = async function() {
   const qtexto = (document.getElementById('filter-input').value || '').trim();
@@ -997,66 +1033,6 @@ window.salirDeHistorialCompletoDB = function() {
   renderDB();
 };
 
-// ─── CORRECCIÓN 1: exportarExcelAcarreos ahora funciona correctamente ─────────
-// El XLSX ya se carga globalmente desde CDN antes que cualquier script,
-// así que window.XLSX está disponible tanto aquí (módulo ES) como en el
-// bloque plain. Se llama XLSX directamente (sin window.) dentro del módulo.
-window.exportarExcelAcarreos = async function() {
-  const desde = (document.getElementById('export-fecha-desde') || {}).value || '';
-  const hasta = (document.getElementById('export-fecha-hasta') || {}).value || '';
-  if (!desde && !hasta) {
-    if (!confirm('No elegiste un rango de fechas: se exportará TODO el historial. ¿Continuar?')) return;
-  }
-  const btn = document.getElementById('btn-exportar-excel');
-  const btnHtml = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; }
-  try {
-    const registros = await traerTodoFirestore(desde, hasta, (n) => {
-      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + n.toLocaleString('es-MX') + ')';
-    });
-    if (!registros.length) { alert('No hay registros en ese rango para exportar.'); return; }
-    const datosFormateados = registros.map((r) => ({
-      "Fecha":              r.fecha1 ? parseDateForExcel(r.fecha1) : "—",
-      "Hora 1er Pesaje":   r.hora1 || "—",
-      "Fecha 2do Pesaje":  r.fecha2 ? parseDateForExcel(r.fecha2) : "—",
-      "Hora 2do Pesaje":   r.hora2 || "—",
-      "Ciclo":             r.ciclo || "—",
-      "Folio":             r.folio || "—",
-      "Boleta":            r.boleta || "S/B",
-      "Placas":            r.placas || "—",
-      "Tipo de Camión":    r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : '—'),
-      "# Economico":       r.economico || "—",
-      "Material":          r.material || "—",
-      "Banco Origen":      r.banco || "—",
-      "Destino (Tiro)":    r.destino || "—",
-      "Rango de Material": r.rango || "—",
-      "Peso Bruto (kg)":   r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-      "Peso Tara (kg)":    r.tara_kg  ? Number(r.tara_kg).toLocaleString('es-MX')  : "0",
-      "Peso Neto (kg)":    r.neto_kg  ? Number(r.neto_kg).toLocaleString('es-MX')  : "0",
-      "Peso Neto (ton)":   r.ton || "0",
-      "Estatus":           r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
-    for (let cellAddress in worksheet) {
-      if (cellAddress[0] === '!') continue;
-      if (worksheet[cellAddress].t === 'd') worksheet[cellAddress].z = 'dd/mm/yyyy';
-    }
-    const workbook = XLSX.utils.book_new();
-    worksheet['!cols'] = [
-      {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
-      {wch:12},{wch:12},{wch:15},{wch:13},{wch:14},
-      {wch:18},{wch:16},{wch:16},{wch:20},{wch:15},
-      {wch:14},{wch:15},{wch:14},{wch:18}
-    ];
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
-    XLSX.writeFile(workbook, 'Reporte_Acarreos_Ejecutivo_' + new Date().toISOString().slice(0,10) + '.xlsx');
-  } catch (err) {
-    handleFirestoreIndexError(err) || alert('Error al generar el reporte: ' + err.message);
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
-  }
-};
-
 window.migrarLocalStorage = async function() {
   const viejos = JSON.parse(localStorage.getItem('acarreos_db_v3') || '[]');
   if (!viejos.length) { alert('No hay datos en localStorage.'); return; }
@@ -1087,6 +1063,7 @@ function handleFirestoreIndexError(err) {
   }
   return false;
 }
+window.handleFirestoreIndexError = handleFirestoreIndexError;
 </script>
 </head>
 <body>
@@ -1411,29 +1388,6 @@ function handleFirestoreIndexError(err) {
     <div class="stat-card"><div class="val" id="stat-toneladas">0 t</div><div class="lbl">Toneladas (ventana cargada)</div></div>
   </div>
 
-  <div class="export-bar" id="export-bar-actions" style="display:none;flex-direction:column;align-items:stretch;border-top:none;margin-top:0;padding-top:0;">
-    <div class="field-row two-col" style="margin-bottom:8px;">
-      <div>
-        <label>Exportar desde</label>
-        <input type="date" id="export-fecha-desde">
-      </div>
-      <div>
-        <label>Exportar hasta</label>
-        <input type="date" id="export-fecha-hasta">
-      </div>
-    </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Vacío = se exporta todo el historial.</div>
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
-      <button id="btn-exportar-excel" onclick="exportarExcelAcarreos()" style="flex:1;background-color:#107c41;color:white;border-radius:var(--radius);border:0.5px solid #107c41;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Generar Reporte Excel
-      </button>
-      <button class="btn btn-danger" onclick="clearDB()" style="flex:0;padding:0 14px" title="Borrar toda la base de datos">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-      </button>
-    </div>
-  </div>
-
   <div class="filter-row">
     <input type="text" id="filter-input" placeholder="Buscar por boleta, placas, material, destino..." oninput="onFilterInput()"/>
     <button class="btn btn-secondary" id="btn-refresh-db" onclick="manualSync()" style="flex:0;padding:0 12px" title="Actualizar">
@@ -1476,11 +1430,11 @@ function handleFirestoreIndexError(err) {
       Fuente de datos del dashboard
     </h3>
     <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
-        Ventana reciente cargada
-      </button>
-      <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompleto()" style="font-size:12px;">
+      <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompletoDash()" style="font-size:12px;">
         📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
+        Volver a ventana
       </button>
     </div>
     <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
@@ -1604,11 +1558,11 @@ function handleFirestoreIndexError(err) {
       Fuente de datos
     </h3>
     <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
-        Ventana reciente cargada
-      </button>
       <button class="btn btn-primary" id="btn-resumen-historico" onclick="cargarHistoricoCompletoResumen()" style="font-size:12px;">
         📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
+        Volver a ventana
       </button>
     </div>
     <div id="resumen-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
@@ -1763,22 +1717,6 @@ function handleFirestoreIndexError(err) {
 </div>
 
 <div class="tab-content" id="tab-excel">
-  <div class="slicers-card" style="margin-bottom:10px;">
-    <h3>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      Fuente de datos
-    </h3>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button class="btn btn-secondary" id="btn-excel-ventana" onclick="usarVentanaRecienteEnExcel()" style="font-size:12px;">
-        Ventana reciente cargada
-      </button>
-      <button class="btn btn-primary" id="btn-excel-historico" onclick="cargarHistoricoCompletoExcel()" style="font-size:12px;">
-        📊 Ver TODO el histórico
-      </button>
-    </div>
-    <div id="excel-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
-  </div>
-
   <div class="slicers-card">
     <h3>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -2298,8 +2236,8 @@ function getDashboardFiltered() {
   const bancos     = getMsSelected('banco');
   const materiales = getMsSelected('material');
   const cuerpos    = getMsSelected('cuerpo');
-  const datos = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-    ? window.dbHistoricoCompleto
+  const datos = (window.usandoHistoricoDash && window.dashHistoricoCompleto)
+    ? window.dashHistoricoCompleto
     : (window.db || []);
   return datos.filter(r => {
     if (!r.fecha1) return false;
@@ -2321,8 +2259,8 @@ function renderDashboard() {
   const btnVentana = document.getElementById('btn-dash-ventana');
   const btnHistorico = document.getElementById('btn-dash-historico');
   if (fuenteEl) {
-    if (window.usandoHistoricoCompleto && window.dbHistoricoCompleto) {
-      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
+    if (window.usandoHistoricoDash && window.dashHistoricoCompleto) {
+      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dashHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
       if (btnVentana)   btnVentana.className   = 'btn btn-secondary';
       if (btnHistorico) btnHistorico.className = 'btn btn-primary';
     } else {
@@ -2481,33 +2419,14 @@ window.renderPendientes = renderPendientes;
 
 // ══════════════════════════════════════════════════════
 // PESTAÑA EXCEL
+// La pestaña Excel es independiente: siempre consulta Firestore
+// directamente según sus propios filtros (fecha/banco/material/cuerpo),
+// sin depender del estado de "histórico" de otras pestañas.
 // ══════════════════════════════════════════════════════
 function initExcelTab() {
-  const nota = document.getElementById('excel-historico-nota');
-  if (nota) {
-    nota.textContent = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-      ? '📊 Usando TODO el histórico: ' + window.dbHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
-      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
-  }
+  // Sin acción especial: los filtros propios de esta pestaña ya están listos para usarse.
 }
 window.initExcelTab = initExcelTab;
-
-window.usarVentanaRecienteEnExcel = function() {
-  window.usarVentanaRecienteEnDashboard();
-  initExcelTab();
-};
-
-window.cargarHistoricoCompletoExcel = async function() {
-  const btn = document.getElementById('btn-excel-historico');
-  const btnHtml = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
-  try {
-    await window.cargarHistoricoCompleto(false);
-  } finally {
-    initExcelTab();
-    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
-  }
-};
 
 function limpiarFiltrosExcel() {
   document.getElementById('excel-fecha-desde').value = '';
@@ -2519,6 +2438,7 @@ function limpiarFiltrosExcel() {
   });
 }
 window.limpiarFiltrosExcel = limpiarFiltrosExcel;
+
 
 // ══════════════════════════════════════════════════════
 // PESTAÑA RESUMEN
@@ -2807,9 +2727,9 @@ function renderResumen() {
 }
 window.renderResumen = renderResumen;
 
-// CORRECCIÓN 1: descargarExcelDesdeTab ahora usa XLSX directamente
-// (disponible globalmente desde el CDN cargado al inicio del HTML)
-window.descargarExcelDesdeTab = function() {
+// descargarExcelDesdeTab es independiente: trae los datos directo de Firestore
+// según los filtros propios de esta pestaña (no depende de otras pestañas).
+window.descargarExcelDesdeTab = async function() {
   if (typeof XLSX === 'undefined') {
     alert('La librería de Excel aún no terminó de cargar. Espera un momento y vuelve a intentar.');
     return;
@@ -2820,27 +2740,26 @@ window.descargarExcelDesdeTab = function() {
   const materiales = getMsSelected('excel-material');
   const cuerpos    = getMsSelected('excel-cuerpo');
 
-  const fuente = (window.usandoHistoricoCompleto && window.dbHistoricoCompleto)
-    ? window.dbHistoricoCompleto
-    : (window.db || []);
-
-  const registros = fuente.filter(r => {
-    if (!r.fecha1) return false;
-    if (desde && r.fecha1 < desde) return false;
-    if (hasta && r.fecha1 > hasta) return false;
-    if (bancos.length    && !bancos.includes(r.banco))    return false;
-    if (materiales.length && !materiales.includes(r.material)) return false;
-    if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
-    return true;
-  });
-
-  if (!registros.length) { alert('No hay registros para esos filtros.'); return; }
-
   const btn = document.getElementById('btn-descargar-excel');
   const btnHtml = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo registros…'; }
 
   try {
+    const traidos = await window.traerTodoFirestore(desde || null, hasta || null, (n) => {
+      if (btn) btn.innerHTML = '<span class="spin"></span> Leyendo registros… (' + n.toLocaleString('es-MX') + ')';
+    });
+
+    const registros = traidos.filter(r => {
+      if (bancos.length     && !bancos.includes(r.banco))        return false;
+      if (materiales.length && !materiales.includes(r.material)) return false;
+      if (cuerpos.length    && !cuerpos.includes(r.destino))      return false;
+      return true;
+    });
+
+    if (!registros.length) { alert('No hay registros para esos filtros.'); return; }
+
+    if (btn) { btn.innerHTML = '<span class="spin"></span> Generando…'; }
+
     const parseFecha = window.parseDateForExcel || function(s) { if (!s) return ''; const [y,m,d] = s.split('-'); return new Date(+y,+m-1,+d,0,0,0); };
     const datosFormateados = registros.map((r) => ({
       "Fecha":              r.fecha1 ? parseFecha(r.fecha1) : "—",
@@ -2879,11 +2798,12 @@ window.descargarExcelDesdeTab = function() {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
     XLSX.writeFile(workbook, 'Reporte_Acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
   } catch (err) {
-    alert('Error al generar el Excel: ' + err.message);
+    window.handleFirestoreIndexError(err) || alert('Error al generar el Excel: ' + err.message);
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
   }
 };
+
 
 // ── PWA ──
 let deferredPrompt = null;

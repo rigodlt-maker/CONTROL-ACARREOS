@@ -1160,9 +1160,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
   </div>
 </header>
 
-<!-- CORRECCIÓN 3: Tab bar en DOS FILAS -->
 <div class="tab-bar-wrap">
-  <!-- Fila 1: Captura, Pendientes, Base de datos, Resumen -->
   <div class="tab-bar" id="tab-bar-row1">
     <button class="tab-btn active" onclick="showTab('form')" id="t-form">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
@@ -1181,7 +1179,6 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
       Resumen
     </button>
   </div>
-  <!-- Fila 2: Gráficos, Excel, Admin -->
   <div class="tab-bar" id="tab-bar-row2">
     <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -2520,6 +2517,13 @@ window.cargarHistoricoCompletoResumen = async function() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
   try {
     await window.cargarHistoricoCompletoResumenFn(false);
+    
+    // CAJITA DE ARREGLO CAVERNÍCOLA: Forzar "rango de días" y limpiar fechas para mostrar el histórico completo real
+    document.getElementById('resumen-periodo-tipo').value = 'rango';
+    document.getElementById('resumen-fecha-desde').value = '';
+    document.getElementById('resumen-fecha-hasta').value = '';
+    cambiarPeriodoResumen(); // Esto hace que se repinte todo bonito
+
   } catch (e) {
     handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
   } finally {
@@ -2807,6 +2811,9 @@ window.descargarExcelDesdeTab = async function() {
     });
 
     const registros = traidos.filter(r => {
+      if (!r.fecha1) return false; // REGLA DE FUEGO: DEBE TENER FECHA 1
+      if (desde && r.fecha1 < desde) return false;
+      if (hasta && r.fecha1 > hasta) return false;
       if (bancos.length     && !bancos.includes(r.banco))        return false;
       if (materiales.length && !materiales.includes(r.material)) return false;
       if (cuerpos.length    && !cuerpos.includes(r.destino))      return false;

@@ -3572,17 +3572,7 @@ function dismissPWA() {
 window.addEventListener('appinstalled', () => { pwaBanner.style.display = 'none'; deferredPrompt = null; });
 
 if ('serviceWorker' in navigator) {
-  const swCode = `
-    const CACHE = 'acarreos-v2';
-    self.addEventListener('install', e => {
-      e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './index.html'])));
-    });
-    self.addEventListener('fetch', e => {
-      e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
-    });
-  `;
-  const blob = new Blob([swCode], { type: 'application/javascript' });
-  navigator.serviceWorker.register(URL.createObjectURL(blob), { scope: './' })
+  navigator.serviceWorker.register('./sw.js', { scope: './' })
     .then(() => console.log('SW registered'))
     .catch(err => console.warn('SW error:', err));
 }

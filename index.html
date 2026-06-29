@@ -2814,11 +2814,12 @@ function renderResumenDia() {
   const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
     ? window.resumenHistoricoCompleto
     : (window.db || []);
-  const delDia = datos.filter(r => r.fecha1 === hoy);
+  // Solo viajes COMPLETADOS (ya destarados); los pendientes se excluyen de este resumen
+  const delDia = datos.filter(r => r.fecha1 === hoy && r.status !== 'pendiente');
 
   if (!delDia.length) {
     card.style.display = 'block';
-    cont.innerHTML = '<div style="color:var(--text-muted);">Sin viajes registrados hasta el momento.</div>';
+    cont.innerHTML = '<div style="color:var(--text-muted);">Sin viajes completados hasta el momento.</div>';
     return;
   }
 
@@ -2836,7 +2837,7 @@ function renderResumenDia() {
   });
 
   const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
-  let html = `<div style="font-weight:700;margin-bottom:8px;">Hasta el momento: ${delDia.length} viaje${delDia.length === 1 ? '' : 's'}</div>`;
+  let html = `<div style="font-weight:700;margin-bottom:8px;">Hasta el momento: ${delDia.length} viaje${delDia.length === 1 ? '' : 's'} completado${delDia.length === 1 ? '' : 's'}</div>`;
   ordenBancos.forEach(b => {
     html += `<div style="margin-top:6px;"><strong>BANCO ${nombreBanco(b)}:</strong></div>`;
     Object.keys(porBanco[b]).forEach(m => {
@@ -2855,93 +2856,123 @@ function renderResumenDia() {
   cont.innerHTML = html;
 }
 
-// ── ESTATUS OPERATIVO: viajes del día con pendientes por destarar ──
+// ── ESTATUS OPERATIVO: acumulado global, ignora filtros de banco/material/fecha ──
 function renderResumenEstatus() {
   const card = document.getElementById('resumen-estatus-card');
   const cont = document.getElementById('resumen-estatus-contenido');
-  const tipo = document.getElementById('resumen-periodo-tipo').value;
-  const { desde, hasta } = getRangoPeriodoResumen();
-  const hoy = isoHoy();
 
-  // Solo se muestra cuando el periodo seleccionado es "día" y coincide con hoy
-  if (tipo !== 'dia' || desde !== hoy) { card.style.display = 'none'; return; }
-
-  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+  // SIEMPRE usa TODOS los datos de window.db (o histórico si está activo)
+  // No respeta filtros de banco, material, cuerpo ni periodo
+  const todosLosDatos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
     ? window.resumenHistoricoCompleto
     : (window.db || []);
-  const delDia = datos.filter(r => r.fecha1 === hoy);
 
-  if (!delDia.length) { card.style.display = 'none'; return; }
+  if (!todosLosDatos.length) { card.style.display = 'none'; return; }
 
-  // Hora del corte = ahora
+  // Hora del corte
   const ahora = new Date();
-  const horaCorten = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const horaCorte = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-  const totalViajes  = delDia.length;
-  // Pendientes = status === 'pendiente' (aún sin 2do pesaje / destare)
-  const pendientes   = delDia.filter(r => r.status === 'pendiente');
-  const totPend      = pendientes.length;
+  const completados = todosLosDatos.filter(r => r.status !== 'pendiente');
+  const pendientes  = todosLosDatos.filter(r => r.status === 'pendiente');
+  const totalViajes = todosLosDatos.length;
+  const totPend     = pendientes.length;
+  const totComp     = completados.length;
+
+  // Conteo tipo camión en pendientes
   const pendGondolas = pendientes.filter(r => r.tipo_camion === 'GONDOLA').length;
   const pendVolteos  = pendientes.filter(r => r.tipo_camion === 'VOLTEO').length;
 
-  // Agrupar TODO el día por banco > material > destino > tipo de camión
-  const porBanco = {};
-  delDia.forEach(r => {
-    const b  = r.banco        || 'SIN BANCO';
-    const m  = r.material     || 'SIN MATERIAL';
-    const d  = r.destino      || 'SIN DESTINO';
-    const tc = r.tipo_camion  || 'SIN_TIPO';
-    if (!porBanco[b]) porBanco[b] = { total: 0, grupos: {} };
-    porBanco[b].total += 1;
-    const clave = m + '|||' + d + '|||' + tc;
-    porBanco[b].grupos[clave] = (porBanco[b].grupos[clave] || 0) + 1;
-  });
+  // ── Función auxiliar: agrupar lista por banco > grupos ──
+  function agruparPorBanco(lista) {
+    const map = {};
+    lista.forEach(r => {
+      const b  = r.banco       || 'SIN BANCO';
+      const m  = r.material    || 'SIN MATERIAL';
+      const d  = r.destino     || 'SIN DESTINO';
+      const tc = r.tipo_camion || 'SIN_TIPO';
+      if (!map[b]) map[b] = { total: 0, grupos: {} };
+      map[b].total += 1;
+      const clave = m + '|||' + d + '|||' + tc;
+      map[b].grupos[clave] = (map[b].grupos[clave] || 0) + 1;
+    });
+    return map;
+  }
 
-  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  // ── Función auxiliar: renderizar lista de bancos en HTML ──
+  function htmlBancos(mapa, colorAcento, colorTexto) {
+    const bancoKeys = Object.keys(mapa).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+    if (!bancoKeys.length) return `<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">—</div>`;
+    let h = '';
+    bancoKeys.forEach(b => {
+      const bd = mapa[b];
+      h += `<div style="margin-bottom:7px;">
+        <div style="font-weight:700;color:${colorAcento};font-size:12px;margin-bottom:2px;">
+          📍 ${nombreBanco(b)} <span style="font-weight:400;color:var(--text-muted)">(${bd.total})</span>
+        </div>`;
+      const gruposOrdenados = Object.entries(bd.grupos).sort((a,b2) => a[0].localeCompare(b2[0]));
+      gruposOrdenados.forEach(([clave, count]) => {
+        const [m, d, tc] = clave.split('|||');
+        const matTxt  = nombreMaterial(m);
+        const destTxt = d === 'SIN DESTINO' ? 'Sin destino' : d.charAt(0).toUpperCase() + d.slice(1).toLowerCase();
+        const tcTxt   = tc === 'SIN_TIPO' ? 'sin tipo' : nombreTipoCamion(tc);
+        h += `<div style="padding-left:10px;font-size:11.5px;color:${colorTexto};">
+          <span style="font-weight:700;min-width:22px;display:inline-block;">${String(count).padStart(2,'0')}</span>
+          — ${matTxt} (${tcTxt} · ${destTxt})
+        </div>`;
+      });
+      h += `</div>`;
+    });
+    return h;
+  }
 
-  // ── Cabecera ──
+  const bancosComp = agruparPorBanco(completados);
+  const bancosPend = agruparPorBanco(pendientes);
+
+  const tipoPendStr = [
+    pendGondolas > 0 ? `${pendGondolas} góndola${pendGondolas > 1 ? 's' : ''}` : '',
+    pendVolteos  > 0 ? `${pendVolteos} volteo${pendVolteos > 1 ? 's' : ''}` : ''
+  ].filter(Boolean).join(' · ');
+
   let html = `
-    <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:0.5px solid rgba(133,79,11,0.2);">
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Corte de información: <strong>${horaCorten}</strong></div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;">
-        <div style="background:var(--accent-light);border:0.5px solid rgba(15,110,86,0.25);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">
-          <div style="font-size:20px;font-weight:700;color:var(--accent);">${totalViajes}</div>
-          <div style="font-size:11px;color:var(--accent);opacity:0.85;">Total viajes ejecutados</div>
-        </div>
-        <div style="background:${totPend > 0 ? 'var(--warning-light)' : 'var(--accent-light)'};border:0.5px solid rgba(${totPend > 0 ? '133,79,11' : '15,110,86'},0.25);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">
-          <div style="font-size:20px;font-weight:700;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};">${totPend}</div>
-          <div style="font-size:11px;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};opacity:0.85;">Pendientes de destare</div>
-          ${totPend > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${pendGondolas > 0 ? pendGondolas + ' góndola' + (pendGondolas > 1 ? 's' : '') : ''}${pendGondolas > 0 && pendVolteos > 0 ? ' · ' : ''}${pendVolteos > 0 ? pendVolteos + ' volteo' + (pendVolteos > 1 ? 's' : '') : ''}</div>` : ''}
+    <!-- Corte -->
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">
+      Corte de información: <strong>${horaCorte}</strong>
+      <span style="margin-left:8px;font-size:10px;color:var(--accent);background:var(--accent-light);padding:1px 7px;border-radius:999px;">Acumulado global · sin filtro</span>
+    </div>
+
+    <!-- KPI cards -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+
+      <!-- COMPLETADOS -->
+      <div style="background:var(--accent-light);border:0.5px solid rgba(15,110,86,0.3);border-radius:10px;padding:10px 12px;">
+        <div style="font-size:22px;font-weight:700;color:var(--accent);text-align:center;">${totComp}</div>
+        <div style="font-size:11px;color:var(--accent);text-align:center;margin-bottom:8px;font-weight:600;">✅ Viajes completados</div>
+        <div style="border-top:0.5px solid rgba(15,110,86,0.2);padding-top:8px;">
+          ${htmlBancos(bancosComp, 'var(--accent)', 'var(--text)')}
         </div>
       </div>
+
+      <!-- PENDIENTES -->
+      <div style="background:${totPend > 0 ? 'var(--warning-light)' : 'var(--accent-light)'};border:0.5px solid rgba(${totPend > 0 ? '133,79,11' : '15,110,86'},0.3);border-radius:10px;padding:10px 12px;">
+        <div style="font-size:22px;font-weight:700;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};text-align:center;">${totPend}</div>
+        <div style="font-size:11px;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};text-align:center;margin-bottom:${totPend > 0 ? '2px' : '8px'};font-weight:600;">⏳ Pendientes de destare</div>
+        ${totPend > 0 ? `<div style="font-size:10px;color:var(--text-muted);text-align:center;margin-bottom:8px;">${tipoPendStr}</div>` : ''}
+        <div style="border-top:0.5px solid rgba(${totPend > 0 ? '133,79,11' : '15,110,86'},0.2);padding-top:8px;">
+          ${totPend > 0
+            ? htmlBancos(bancosPend, 'var(--warning)', 'var(--text)')
+            : `<div style="color:var(--accent);font-size:12px;text-align:center;">Sin pendientes 🎉</div>`
+          }
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Total general -->
+    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;font-size:13px;">
+      <span style="color:var(--text-muted);">Total de viajes registrados</span>
+      <strong style="color:var(--text);font-size:15px;">${totalViajes}</strong>
     </div>`;
-
-  // ── Detalle por banco ──
-  html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Detalle por banco de extracción</div>`;
-
-  ordenBancos.forEach(b => {
-    const bd = porBanco[b];
-    html += `
-      <div style="margin-bottom:8px;">
-        <div style="font-weight:700;color:var(--warning);font-size:13px;margin-bottom:3px;">
-          📍 BANCO ${nombreBanco(b)} <span style="font-weight:400;color:var(--text-muted)">(${bd.total} viaje${bd.total === 1 ? '' : 's'})</span>
-        </div>`;
-
-    // Ordenar grupos alfabéticamente
-    const gruposOrdenados = Object.entries(bd.grupos).sort((a,b) => a[0].localeCompare(b[0]));
-    gruposOrdenados.forEach(([clave, count]) => {
-      const [m, d, tc] = clave.split('|||');
-      const matTxt  = nombreMaterial(m);
-      const destTxt = d === 'SIN DESTINO' ? 'Sin destino' : d.charAt(0).toUpperCase() + d.slice(1).toLowerCase();
-      const tcTxt   = tc === 'SIN_TIPO' ? 'sin tipo' : nombreTipoCamion(tc);
-      html += `<div style="padding-left:12px;color:var(--text);font-size:12.5px;">
-        <span style="display:inline-block;min-width:28px;font-weight:700;color:var(--accent);">${String(count).padStart(2,'0')}</span>
-        — ${matTxt} (${tcTxt} - ${destTxt})
-      </div>`;
-    });
-
-    html += `</div>`;
-  });
 
   card.style.display = 'block';
   cont.innerHTML = html;

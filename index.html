@@ -49,7 +49,7 @@ header p { font-size: 11px; opacity: 0.8; }
   scrollbar-width: none;
   border-bottom: 0.5px solid var(--border);
 }
-.tab-bar:last-child { border-bottom: none; }
+.tab-bar:last-of-type { border-bottom: none; }
 .tab-bar::-webkit-scrollbar { display: none; }
 .tab-btn { flex: 1 0 auto; min-width: 64px; padding: 9px 8px 8px; border: none; background: none; font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: color 0.15s; border-bottom: 2px solid transparent; white-space: nowrap; }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -233,8 +233,7 @@ import { initializeApp }                          from "https://www.gstatic.com/
 import { getFirestore, collection, addDoc,
          getDoc, getDocs, doc, updateDoc, deleteDoc,
          query, orderBy, onSnapshot, where, limit, startAfter,
-         serverTimestamp, setDoc, increment, writeBatch,
-         getAggregateFromServer, sum }            from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         serverTimestamp, setDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, onAuthStateChanged,
          createUserWithEmailAndPassword,
          signInWithEmailAndPassword,
@@ -403,7 +402,6 @@ onAuthStateChanged(auth, async (user) => {
     const esVisor         = rol === 'visor';
     const esCapturista    = rol === 'capturista';
     const esAdminOMaster  = esAdmin || esMaster;
-    const esOperativo     = esAdminOMaster || esCoordinador; // puede ver todo sin Admin
 
     const tag = document.getElementById('user-tag');
     const etiquetaRol = esMaster ? ' (master)' : esAdmin ? ' (admin)' : esCoordinador ? ' (coordinador)' : esVisor ? ' (visor)' : ' (capturista)';
@@ -667,13 +665,19 @@ window.recalcularResumen = async function() {
       const mes = mesKeyFromFecha(r.fecha1);
       if (!mes) return;
       const ton = r.ton || ((r.neto_kg || 0) / 1000);
-      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {} };
+      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {} };
       const m = porMes[mes];
       m.total_viajes += 1;
       m.total_ton    += ton;
       if (r.material) m.por_material[r.material] = (m.por_material[r.material] || 0) + ton;
       if (r.banco)    m.por_banco[r.banco]       = (m.por_banco[r.banco]       || 0) + ton;
       if (r.destino)  m.por_destino[r.destino]   = (m.por_destino[r.destino]   || 0) + ton;
+      const bancoStr = (r.banco || 'SD').replace(/\s+/g, '_');
+      const matStr   = (r.material || 'SD').replace(/\s+/g, '_');
+      const destStr  = (r.destino || 'SD').replace(/\s+/g, '_');
+      const camStr   = (r.tipo_camion || 'SD').replace(/\s+/g, '_');
+      const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
+      m.por_combinacion[comboKey] = (m.por_combinacion[comboKey] || 0) + ton;
     });
     const meses = Object.keys(porMes);
     for (let i = 0; i < meses.length; i += 450) {
@@ -793,7 +797,7 @@ window.saveRecord = async function() {
   saveBtn.innerHTML = '<span class="spin"></span> Guardando…';
   
   try {
-    const { id: _localId, _fid: _fid2, ...payload } = data;
+    const { _fid: _fid2, ...payload } = data;
     payload.creadoPor = currentUser.uid;
 
     if (!window._editFid) {
@@ -918,7 +922,7 @@ window.completarPendiente = async function(fid) {
     status: 'completo'
   };
   try {
-    const { _fid: _f, id: _id, ...payload } = actualizado;
+    const { _fid: _f, ...payload } = actualizado;
 
     if (!navigator.onLine) {
       await window.saveToOutbox({ fid, original, nuevo: payload }, 'UPDATE');
@@ -938,8 +942,8 @@ window.completarPendiente = async function(fid) {
 } // ← cierre de window.completarPendiente
 
 window.manualSync = function() {
-  window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
   updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
+  window.showSyncToast('✅', 'Datos al día', 'ok', 2000);
 }
 
 window.openModal = function(fid) {
@@ -2124,8 +2128,8 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     Descargar excel
   </button>
 
-  <button class="btn btn-secondary" disabled title="Pendiente de definir" style="width:100%;margin-top:10px;opacity:0.55;cursor:not-allowed;">
-    Resumen
+  <button class="btn btn-secondary" disabled style="width:100%;margin-top:10px;opacity:0.45;cursor:not-allowed;" title="Próximamente">
+    Resumen (próximamente)
   </button>
 </div>
 
@@ -2352,7 +2356,6 @@ function getFormData() {
   const neto  = bruto - tara;
   const esPendiente = document.getElementById('f-pendiente').checked;
   return {
-    id:       Date.now(),
     fecha1:   document.getElementById('f-fecha1').value,
     hora1:    document.getElementById('f-hora1').value,
     fecha2:   esPendiente ? '' : document.getElementById('f-fecha2').value,
@@ -2702,9 +2705,9 @@ function renderDashboard() {
   const porMes = {};
   filtered.forEach(r => {
     if (!r.fecha1) return;
-    const [y, m, d] = r.fecha1.split('-');
+    const [y, m] = r.fecha1.split('-');
     const key = `${y}-${m}`;
-    const dObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d), 0, 0, 0);
+    const dObj = new Date(parseInt(y), parseInt(m) - 1, 1, 0, 0, 0);
     const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
     const label = `${mesStr}\n${y}`;
     const ton = r.ton || (r.neto_kg || 0) / 1000;
@@ -2820,7 +2823,6 @@ window.renderPendientes = function() {
     `;
   }).join('');
 };
-// (window.renderPendientes ya apunta a la función definida arriba)
 
 // ══════════════════════════════════════════════════════
 // PESTAÑA EXCEL
@@ -2829,7 +2831,7 @@ window.renderPendientes = function() {
 // sin depender del estado de "histórico" de otras pestañas.
 // ══════════════════════════════════════════════════════
 function initExcelTab() {
-  // Sin acción especial: los filtros propios de esta pestaña ya están listos para usarse.
+  // Reservado para inicialización futura de la pestaña Excel.
 }
 window.initExcelTab = initExcelTab;
 
@@ -3416,7 +3418,6 @@ function getRangoPeriodoReportes() {
   const hasta = document.getElementById('reportes-fecha-hasta').value;
   return { desde: desde || null, hasta: hasta || null };
 }
-window.getRangoPeriodoReportes = getRangoPeriodoReportes;
 
 function getReportesFiltradoBase() {
   const { desde, hasta } = getRangoPeriodoReportes();

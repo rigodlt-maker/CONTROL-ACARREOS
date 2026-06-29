@@ -1817,6 +1817,15 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     <div id="resumen-dia-contenido" style="font-size:13px;line-height:1.7;color:var(--text);"></div>
   </div>
 
+  <!-- ── ESTATUS OPERATIVO (viajes pendientes por destarar) ── -->
+  <div id="resumen-estatus-card" class="form-card" style="display:none;background:#fff8f0;border-color:rgba(133,79,11,0.25);">
+    <h3 style="color:var(--warning);display:flex;align-items:center;gap:6px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      📊 Estatus Operativo de Acarreos
+    </h3>
+    <div id="resumen-estatus-contenido" style="font-size:13px;line-height:1.75;color:var(--text);"></div>
+  </div>
+
   <div id="resumen-titulo-card" style="text-align:center;margin-bottom:14px;">
     <div style="font-size:15px;font-weight:700;color:var(--text);">ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ</div>
     <div id="resumen-subtitulo-fecha" style="font-size:12px;color:var(--text-muted);margin-top:3px;"></div>
@@ -2846,6 +2855,98 @@ function renderResumenDia() {
   cont.innerHTML = html;
 }
 
+// ── ESTATUS OPERATIVO: viajes del día con pendientes por destarar ──
+function renderResumenEstatus() {
+  const card = document.getElementById('resumen-estatus-card');
+  const cont = document.getElementById('resumen-estatus-contenido');
+  const tipo = document.getElementById('resumen-periodo-tipo').value;
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const hoy = isoHoy();
+
+  // Solo se muestra cuando el periodo seleccionado es "día" y coincide con hoy
+  if (tipo !== 'dia' || desde !== hoy) { card.style.display = 'none'; return; }
+
+  const datos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
+    : (window.db || []);
+  const delDia = datos.filter(r => r.fecha1 === hoy);
+
+  if (!delDia.length) { card.style.display = 'none'; return; }
+
+  // Hora del corte = ahora
+  const ahora = new Date();
+  const horaCorten = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const totalViajes  = delDia.length;
+  // Pendientes = status === 'pendiente' (aún sin 2do pesaje / destare)
+  const pendientes   = delDia.filter(r => r.status === 'pendiente');
+  const totPend      = pendientes.length;
+  const pendGondolas = pendientes.filter(r => r.tipo_camion === 'GONDOLA').length;
+  const pendVolteos  = pendientes.filter(r => r.tipo_camion === 'VOLTEO').length;
+
+  // Agrupar TODO el día por banco > material > destino > tipo de camión
+  const porBanco = {};
+  delDia.forEach(r => {
+    const b  = r.banco        || 'SIN BANCO';
+    const m  = r.material     || 'SIN MATERIAL';
+    const d  = r.destino      || 'SIN DESTINO';
+    const tc = r.tipo_camion  || 'SIN_TIPO';
+    if (!porBanco[b]) porBanco[b] = { total: 0, grupos: {} };
+    porBanco[b].total += 1;
+    const clave = m + '|||' + d + '|||' + tc;
+    porBanco[b].grupos[clave] = (porBanco[b].grupos[clave] || 0) + 1;
+  });
+
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+
+  // ── Cabecera ──
+  let html = `
+    <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:0.5px solid rgba(133,79,11,0.2);">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Corte de información: <strong>${horaCorten}</strong></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div style="background:var(--accent-light);border:0.5px solid rgba(15,110,86,0.25);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;color:var(--accent);">${totalViajes}</div>
+          <div style="font-size:11px;color:var(--accent);opacity:0.85;">Total viajes ejecutados</div>
+        </div>
+        <div style="background:${totPend > 0 ? 'var(--warning-light)' : 'var(--accent-light)'};border:0.5px solid rgba(${totPend > 0 ? '133,79,11' : '15,110,86'},0.25);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};">${totPend}</div>
+          <div style="font-size:11px;color:${totPend > 0 ? 'var(--warning)' : 'var(--accent)'};opacity:0.85;">Pendientes de destare</div>
+          ${totPend > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${pendGondolas > 0 ? pendGondolas + ' góndola' + (pendGondolas > 1 ? 's' : '') : ''}${pendGondolas > 0 && pendVolteos > 0 ? ' · ' : ''}${pendVolteos > 0 ? pendVolteos + ' volteo' + (pendVolteos > 1 ? 's' : '') : ''}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  // ── Detalle por banco ──
+  html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Detalle por banco de extracción</div>`;
+
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    html += `
+      <div style="margin-bottom:8px;">
+        <div style="font-weight:700;color:var(--warning);font-size:13px;margin-bottom:3px;">
+          📍 BANCO ${nombreBanco(b)} <span style="font-weight:400;color:var(--text-muted)">(${bd.total} viaje${bd.total === 1 ? '' : 's'})</span>
+        </div>`;
+
+    // Ordenar grupos alfabéticamente
+    const gruposOrdenados = Object.entries(bd.grupos).sort((a,b) => a[0].localeCompare(b[0]));
+    gruposOrdenados.forEach(([clave, count]) => {
+      const [m, d, tc] = clave.split('|||');
+      const matTxt  = nombreMaterial(m);
+      const destTxt = d === 'SIN DESTINO' ? 'Sin destino' : d.charAt(0).toUpperCase() + d.slice(1).toLowerCase();
+      const tcTxt   = tc === 'SIN_TIPO' ? 'sin tipo' : nombreTipoCamion(tc);
+      html += `<div style="padding-left:12px;color:var(--text);font-size:12.5px;">
+        <span style="display:inline-block;min-width:28px;font-weight:700;color:var(--accent);">${String(count).padStart(2,'0')}</span>
+        — ${matTxt} (${tcTxt} - ${destTxt})
+      </div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  card.style.display = 'block';
+  cont.innerHTML = html;
+}
+
 function renderResumenTitulo() {
   const tipo = document.getElementById('resumen-periodo-tipo').value;
   const { desde, hasta } = getRangoPeriodoResumen();
@@ -2935,6 +3036,7 @@ function renderResumen() {
 
   renderResumenTitulo();
   renderResumenDia();
+  renderResumenEstatus();
 
   const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   document.getElementById('resumen-kpi-viajes').textContent     = filtered.length;

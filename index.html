@@ -2128,9 +2128,6 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     Descargar excel
   </button>
 
-  <button class="btn btn-secondary" disabled style="width:100%;margin-top:10px;opacity:0.45;cursor:not-allowed;" title="Próximamente">
-    Resumen (próximamente)
-  </button>
 </div>
 
 <div class="tab-content" id="tab-admin">
@@ -3247,34 +3244,57 @@ function renderResumenTablaJerarquica(filtered) {
   });
 
   const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
-  const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
 
+  // Columnas numéricas con ancho fijo para que el nombre siempre tenga espacio a la izquierda
+  // grid: [nombre flexible] [viajes 52px] [ton 80px] [prom 80px]
+  const COL = 'grid-template-columns: 1fr 52px 80px 80px;';
+  const NUM = 'text-align:right; white-space:nowrap; padding-left:6px;';
+  const row = (bg, pad, fw, fs, color='') =>
+    `display:grid;${COL}padding:${pad};background:${bg};border-bottom:0.5px solid var(--border);font-weight:${fw};font-size:${fs};${color ? 'color:'+color+';' : ''}`;
+
   let html = '<div class="chart-card" style="padding:0;overflow:hidden;">';
+
+  // Encabezado
   html += `
-    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;background:var(--accent);color:white;font-size:11px;font-weight:700;padding:10px 12px;">
-      <div>BANCO</div><div style="text-align:right;">VIAJES</div><div style="text-align:right;">TON.</div><div style="text-align:right;">TON. PROM.</div>
+    <div style="${row('var(--accent)','10px 12px','700','11px','white')}">
+      <div>BANCO / MATERIAL / DESTINO</div>
+      <div style="${NUM}">VIAJES</div>
+      <div style="${NUM}">TON.</div>
+      <div style="${NUM}">PROM.</div>
     </div>`;
 
   ordenBancos.forEach(b => {
     const bd = porBanco[b];
     html += `
-      <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:10px 12px;background:var(--accent-light);font-weight:700;font-size:13px;border-bottom:0.5px solid var(--border);">
-        <div>${nombreBanco(b)}</div><div style="text-align:right;">${bd.viajes}</div><div style="text-align:right;">${fmtTon(bd.ton)}</div><div style="text-align:right;">${fmtProm(bd.ton, bd.viajes)}</div>
+      <div style="${row('var(--accent-light)','10px 12px','700','13px')}">
+        <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nombreBanco(b)}</div>
+        <div style="${NUM}">${bd.viajes}</div>
+        <div style="${NUM}">${fmtTon(bd.ton)}</div>
+        <div style="${NUM}">${fmtProm(bd.ton, bd.viajes)}</div>
       </div>`;
+
     const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
     materiales.forEach(m => {
       const md = bd.materiales[m];
       html += `
-        <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:8px 12px 8px 22px;background:var(--surface);font-weight:600;font-size:12.5px;border-bottom:0.5px solid var(--border);">
-          <div>${nombreMaterial(m)}</div><div style="text-align:right;">${md.viajes}</div><div style="text-align:right;">${fmtTon(md.ton)}</div><div style="text-align:right;">${fmtProm(md.ton, md.viajes)}</div>
+        <div style="${row('var(--surface)','8px 12px 8px 20px','600','12.5px')}">
+          <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nombreMaterial(m)}</div>
+          <div style="${NUM}">${md.viajes}</div>
+          <div style="${NUM}">${fmtTon(md.ton)}</div>
+          <div style="${NUM}">${fmtProm(md.ton, md.viajes)}</div>
         </div>`;
+
       const destinos = Object.keys(md.destinos).sort();
       destinos.forEach(d => {
         const dd = md.destinos[d];
         html += `
-          <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:7px 12px 7px 34px;background:var(--surface);font-size:12px;color:var(--text-muted);border-bottom:0.5px solid var(--border);">
-            <div>${d === 'SIN DESTINO' ? '— sin destino —' : d}</div><div style="text-align:right;">${dd.viajes}</div><div style="text-align:right;">${fmtTon(dd.ton)}</div><div style="text-align:right;">${fmtProm(dd.ton, dd.viajes)}</div>
+          <div style="${row('var(--surface)','7px 12px 7px 32px','400','12px','var(--text-muted)')}">
+            <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${d === 'SIN DESTINO' ? '— sin destino —' : d}</div>
+            <div style="${NUM}">${dd.viajes}</div>
+            <div style="${NUM}">${fmtTon(dd.ton)}</div>
+            <div style="${NUM}">${fmtProm(dd.ton, dd.viajes)}</div>
           </div>`;
       });
     });
@@ -3283,8 +3303,11 @@ function renderResumenTablaJerarquica(filtered) {
   const totalViajes = filtered.length;
   const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   html += `
-    <div style="display:grid;grid-template-columns:1.6fr 0.7fr 1fr 1fr;padding:11px 12px;background:var(--text);color:white;font-weight:700;font-size:13px;">
-      <div>TOTAL GENERAL</div><div style="text-align:right;">${totalViajes}</div><div style="text-align:right;">${fmtTon(totalTon)}</div><div style="text-align:right;">${fmtProm(totalTon, totalViajes)}</div>
+    <div style="${row('var(--text)','11px 12px','700','13px','white')}">
+      <div>TOTAL GENERAL</div>
+      <div style="${NUM}">${totalViajes}</div>
+      <div style="${NUM}">${fmtTon(totalTon)}</div>
+      <div style="${NUM}">${fmtProm(totalTon, totalViajes)}</div>
     </div>`;
   html += '</div>';
   wrap.innerHTML = html;

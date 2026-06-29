@@ -618,13 +618,25 @@ async function aplicarResumen(rec, signo) {
   if (!mes) return;
   const ton = rec.ton || ((rec.neto_kg || 0) / 1000);
   const ref = doc(db_f, COL_RESUMEN, mes);
+  
   const payload = {
     total_viajes: increment(signo),
     total_ton:    increment(signo * ton)
   };
+  
   if (rec.material) payload['por_material.' + rec.material] = increment(signo * ton);
   if (rec.banco)    payload['por_banco.'    + rec.banco]    = increment(signo * ton);
   if (rec.destino)  payload['por_destino.'  + rec.destino]  = increment(signo * ton);
+
+  // FASE 4: Guardado jerárquico 
+  const bancoStr = (rec.banco || 'SD').replace(/\s+/g, '_');
+  const matStr   = (rec.material || 'SD').replace(/\s+/g, '_');
+  const destStr  = (rec.destino || 'SD').replace(/\s+/g, '_');
+  const camStr   = (rec.tipo_camion || 'SD').replace(/\s+/g, '_');
+  const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
+  
+  payload['por_combinacion.' + comboKey] = increment(signo * ton);
+
   try {
     await setDoc(ref, payload, { merge: true });
   } catch (e) {
@@ -675,18 +687,91 @@ window.recalcularResumen = async function() {
   }
 }
 
+// ==========================================
+// FASE 2: MOTOR OFFLINE (IndexedDB Outbox)
+// ==========================================
+const openOutboxDB = () => {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('AcarreosOutbox', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('cola', { keyPath: 'localId' });
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = () => reject('Error abriendo IndexedDB Outbox');
+  });
+};
+
+window.saveToOutbox = async function(payload, type) {
+  const db_local = await openOutboxDB();
+  const tx = db_local.transaction('cola', 'readwrite');
+  const localId = 'loc_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const data = { localId, type, payload, ts_local: Date.now() };
+  tx.objectStore('cola').put(data);
+  return new Promise((resolve, reject) => { tx.oncomplete = () => resolve(data); tx.onerror = () => reject(tx.error); });
+};
+
+window.getOutbox = async function() {
+  const db_local = await openOutboxDB();
+  const tx = db_local.transaction('cola', 'readonly');
+  const req = tx.objectStore('cola').getAll();
+  return new Promise(resolve => { req.onsuccess = () => resolve(req.result); });
+};
+
+window.deleteFromOutbox = async function(localId) {
+  const db_local = await openOutboxDB();
+  const tx = db_local.transaction('cola', 'readwrite');
+  tx.objectStore('cola').delete(localId);
+  return new Promise(resolve => { tx.oncomplete = () => resolve(); });
+};
+
+window.addEventListener('online', async () => {
+  if(document.getElementById('sync-toast')) {
+    window.showSyncToast('⏳', 'Conexión recuperada, sincronizando...', 'pending');
+  }
+  await window.procesarColaOffline();
+});
+
+window.procesarColaOffline = async function() {
+  const registros = await window.getOutbox();
+  if (!registros.length) return;
+  
+  for (const reg of registros) {
+    try {
+      if (reg.type === 'CREATE') {
+        const payload = reg.payload;
+        let dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', payload.boleta), limit(1)));
+        if (!dupSnap.empty) {
+          payload.status = 'conflicto';
+          payload.resolucion_pendiente = true;
+        }
+        payload.ts = serverTimestamp();
+        await addDoc(collection(db_f, COL), payload);
+        await aplicarResumen(payload, +1);
+      } else if (reg.type === 'UPDATE') {
+        const { fid, original, nuevo } = reg.payload;
+        nuevo.ts_updated = serverTimestamp();
+        await updateDoc(doc(db_f, COL, fid), nuevo);
+        await moverResumen(original, nuevo);
+      }
+      await window.deleteFromOutbox(reg.localId);
+    } catch(e) {
+      console.error('Fallo al subir registro de la cola:', e);
+    }
+  }
+  window.showSyncToast('✅', 'Cola offline sincronizada', 'ok');
+};
+  
 window.saveRecord = async function() {
   const data = getFormData();
   const esPendiente = data.status === 'pendiente';
+  
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
   if (!data.folio)        { alert('Ingresa el folio.'); return; }
   if (!data.economico)    { alert('Ingresa el # económico.'); return; }
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
   if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
   if (!esPendiente) {
-    if (!data.fecha2)     { alert('Ingresa la fecha del 2do pesaje (o marca "Dejar como pendiente").'); return; }
-    if (!data.hora2)      { alert('Ingresa la hora del 2do pesaje (o marca "Dejar como pendiente").'); return; }
-    if (!data.ciclo)      { alert('El ciclo es requerido. Verifica las fechas y horas.'); return; }
+    if (!data.fecha2)     { alert('Ingresa la fecha del 2do pesaje.'); return; }
+    if (!data.hora2)      { alert('Ingresa la hora del 2do pesaje.'); return; }
+    if (!data.ciclo)      { alert('El ciclo es requerido.'); return; }
   }
   if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
@@ -695,36 +780,51 @@ window.saveRecord = async function() {
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
-    if (data.tara_kg  <= 0) { alert('Ingresa la tara (o marca "Dejar como pendiente").'); return; }
+    if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
     if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
   }
+  
   const saveBtn = document.getElementById('btn-guardar');
   saveBtn.disabled = true;
   saveBtn.innerHTML = '<span class="spin"></span> Guardando…';
+  
   try {
+    const { id: _localId, _fid: _fid2, ...payload } = data;
+    payload.creadoPor = currentUser.uid;
+
     if (!window._editFid) {
+      if (!navigator.onLine) {
+        await window.saveToOutbox(payload, 'CREATE');
+        window.showSyncToast('⏳', 'Sin señal. Guardado en cola offline', 'pending');
+        clearForm(); showTab(esPendiente ? 'pendientes' : 'db');
+        return;
+      }
+
       let dup = db.find(r => r.boleta === data.boleta) || dbHistorial.find(r => r.boleta === data.boleta);
       if (!dup) {
         const dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', data.boleta), limit(1)));
         if (!dupSnap.empty) dup = { _fid: dupSnap.docs[0].id, ...dupSnap.docs[0].data() };
       }
-      if (dup && !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) {
-        saveBtn.disabled = false;
-        saveBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar registro';
-        return;
-      }
-      const { id: _localId, ...payload } = data;
+      if (dup && !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) return;
+      
       payload.ts = serverTimestamp();
-      payload.creadoPor = currentUser.uid;
       await addDoc(collection(db_f, COL), payload);
-      await aplicarResumen(data, +1);
+      await aplicarResumen(data, +1); // Fase 5 (await)
       window.showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
+
     } else {
       const original = window._editOriginal || null;
-      const { id: _localId, _fid: _fid2, ...payload } = data;
+
+      if (!navigator.onLine) {
+        await window.saveToOutbox({ fid: window._editFid, original, nuevo: payload }, 'UPDATE');
+        window.showSyncToast('⏳', 'Sin señal. Actualizado offline', 'pending');
+        clearForm(); showTab(esPendiente ? 'pendientes' : 'db');
+        return;
+      }
+
       payload.ts_updated = serverTimestamp();
       await updateDoc(doc(db_f, COL, window._editFid), payload);
-      await moverResumen(original, data);
+      await moverResumen(original, data); // Fase 5 (await)
       window._editFid = null;
       window._editOriginal = null;
       window.showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
@@ -777,10 +877,12 @@ window.deleteRecord = async function() {
   try {
     const r = findRecord(window._currentFid);
     await deleteDoc(doc(db_f, COL, window._currentFid));
-    await aplicarResumen(r, -1);
+    await aplicarResumen(r, -1); // FASE 5: Await crítico
     closeModalForce();
     window.showSyncToast('✅', 'Registro eliminado', 'ok');
-  } catch(err) { alert('Error al eliminar: ' + err.message); }
+  } catch(err) {
+    alert('Error al eliminar: ' + err.message);
+  }
 }
 
 window.completarPendiente = async function(fid) {
@@ -813,15 +915,23 @@ window.completarPendiente = async function(fid) {
   };
   try {
     const { _fid: _f, id: _id, ...payload } = actualizado;
+
+    if (!navigator.onLine) {
+      await window.saveToOutbox({ fid, original, nuevo: payload }, 'UPDATE');
+      window.showSyncToast('⏳', 'Sin señal. Destare guardado en cola offline', 'pending');
+      if (typeof window.renderPendientes === 'function') window.renderPendientes();
+      return;
+    }
+
     payload.ts_updated = serverTimestamp();
     await updateDoc(doc(db_f, COL, fid), payload);
-    await moverResumen(original, actualizado);
+    await moverResumen(original, actualizado); // FASE 5: Await crítico
     window.showSyncToast('✅', 'Destare completado', 'ok');
     if (typeof window.renderPendientes === 'function') window.renderPendientes();
   } catch (e) {
     alert('Error al completar el registro: ' + e.message);
   }
-};
+} // ← cierre de window.completarPendiente
 
 window.manualSync = function() {
   window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);
@@ -2433,51 +2543,77 @@ window.limpiarFiltrosDashboard = limpiarFiltrosDashboard;
 // ══════════════════════════════════════════════════════
 // PENDIENTES
 // ══════════════════════════════════════════════════════
-function renderPendientes() {
-  const list = document.getElementById('pendientes-list');
-  if (!list) return;
-  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
-  const pendientes = combinados.filter(r => r.status === 'pendiente').sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
-  if (!pendientes.length) {
-    list.innerHTML = `<div class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <p>Sin viajes pendientes de destare por ahora.</p>
-    </div>`;
+// (escHtml ya está definida arriba — no se redefine aquí)
+
+window.renderPendientes = function() {
+  const wrap = document.getElementById('pendientes-list');
+  if (!wrap) return;
+  
+  // Incluimos tanto "pendiente" como "conflicto" (generados por duplicidad offline)
+  const pend = db.filter(r => r.status === 'pendiente' || r.status === 'conflicto');
+  if (!pend.length) {
+    wrap.innerHTML = '<div class="empty-state">No hay viajes pendientes o en conflicto.</div>';
     return;
   }
-  list.innerHTML = pendientes.map(r => `
-    <div class="form-card" style="margin-bottom:10px;" id="pend-card-${escHtml(r._fid)}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-        <div>
-          <div style="font-weight:600;font-size:14px;">Boleta #${escHtml(r.boleta || '—')}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escHtml(r.placas||'—')} · ${escHtml(r.material||'—')}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">1er pesaje: ${fmtFecha(r.fecha1)} ${escHtml(r.hora1||'')} · Bruto: ${r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX')+' kg' : '—'}</div>
-        </div>
-        <span class="badge" style="background:var(--warning-light);color:var(--warning);white-space:nowrap;">⏳ Pendiente</span>
+  
+  const ahoraMs = Date.now();
+  const HORAS_ALERTA = 12; // Modifica aquí el umbral de horas estancado
+
+  // FASE 3: Ordenar para que los más viejos (estancados) aparezcan hasta arriba
+  pend.sort((a,b) => new Date(a.fecha1 + 'T' + (a.hora1||'00:00')) - new Date(b.fecha1 + 'T' + (b.hora1||'00:00')));
+
+  // FASE 5: Sanitizar todas las inserciones innerHTML con window.escHtml()
+  wrap.innerHTML = pend.map(r => {
+    const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00')).getTime();
+    const diffHoras = (ahoraMs - dt1) / 3600000;
+    const estancado = diffHoras > HORAS_ALERTA && r.status === 'pendiente';
+    const conflicto = r.status === 'conflicto';
+    
+    let badgeHTML = '';
+    let borderStyle = 'var(--warning)';
+    
+    if(conflicto) {
+      badgeHTML = `<span class="badge" style="background:var(--danger-light);color:var(--danger)">⚠️ Conflicto (Duplicado)</span>`;
+      borderStyle = 'var(--danger)';
+    } else if (estancado) {
+      badgeHTML = `<span class="badge" style="background:#fcebeb;color:#a32d2d">⏰ Estancado (+${Math.floor(diffHoras)}h)</span>`;
+      borderStyle = '#a32d2d';
+    }
+
+    return `
+    <div class="form-card" style="border-left: 4px solid ${borderStyle};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+         <div style="flex:1">
+            <div style="font-weight:600; font-size:14px; color:${conflicto||estancado ? 'var(--danger)' : 'inherit'}">Boleta: ${window.escHtml(r.boleta)}</div>
+            <div style="font-size:11px;color:var(--text-muted); margin-top:2px;">Placas: ${window.escHtml(r.placas)} | Folio: ${window.escHtml(r.folio)}</div>
+            ${badgeHTML}
+         </div>
+         <div style="font-size:11px;color:var(--text-muted);text-align:right">
+            ${window.escHtml(r.fecha1)}<br>${window.escHtml(r.hora1)}
+         </div>
       </div>
-      <div class="field-row two-col">
-        <div>
-          <label>Fecha 2do pesaje</label>
-          <input type="date" id="pend-fecha2-${r._fid}">
+      
+      ${conflicto ? `
+        <div style="margin-top:10px; font-size:12px; color:var(--danger);">
+          El sistema detectó que esta boleta ya existía al subir de modo offline. Por favor revisa y edita en Base de Datos.
         </div>
-        <div>
-          <label>Hora 2do pesaje</label>
-          <input type="time" id="pend-hora2-${r._fid}">
+      ` : `
+        <div class="field-row two-col" style="margin-top:12px;">
+           <div><label>Fecha 2</label><input type="date" id="pend-fecha2-${window.escHtml(r._fid)}" value="${new Date().toISOString().slice(0,10)}"></div>
+           <div><label>Hora 2</label><input type="time" id="pend-hora2-${window.escHtml(r._fid)}"></div>
         </div>
-      </div>
-      <div class="field-row">
-        <label>Tara (kg)</label>
-        <input type="number" id="pend-tara-${r._fid}" placeholder="0000" inputmode="decimal">
-      </div>
-      <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="completarPendiente('${r._fid}')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        Completar destare
-      </button>
+        <div class="field-row">
+           <label>Tara (kg)</label><input type="number" id="pend-tara-${window.escHtml(r._fid)}" placeholder="0000" inputmode="decimal">
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="completarPendiente('${window.escHtml(r._fid)}')">
+           Completar pesaje
+        </button>
+      `}
     </div>
-  `).join('');
-  initDateHints();
-}
-window.renderPendientes = renderPendientes;
+    `;
+  }).join('');
+};
+// (window.renderPendientes ya apunta a la función definida arriba)
 
 // ══════════════════════════════════════════════════════
 // PESTAÑA EXCEL

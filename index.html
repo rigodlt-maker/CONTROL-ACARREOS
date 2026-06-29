@@ -426,6 +426,10 @@ onAuthStateChanged(auth, async (user) => {
     const resumenBtn = document.getElementById('btn-resumen-tab');
     if (resumenBtn) resumenBtn.style.display = 'flex';
 
+    // Reportes visible para todos los roles autorizados (admin, master, coordinador, visor, capturista)
+    const reportesBtn = document.getElementById('btn-reportes-tab');
+    if (reportesBtn) reportesBtn.style.display = 'flex';
+
     // ── FILA 2: Gráficos, Excel, Admin ──
     const graficosBtn = document.getElementById('btn-graficos-tab');
     if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
@@ -436,7 +440,7 @@ onAuthStateChanged(auth, async (user) => {
     const adminBtn = document.getElementById('btn-admin-tab');
     if (adminBtn) adminBtn.style.display = esAdminOMaster ? 'flex' : 'none';
 
-    const tabsPermitidas = ['resumen'];
+    const tabsPermitidas = ['resumen', 'reportes'];
     if (esCapturista || esAdminOMaster || esCoordinador) tabsPermitidas.push('form', 'pendientes');
     if (esAdminOMaster || esCoordinador) tabsPermitidas.push('db');
     if (esAdminOMaster || esCoordinador || esVisor) tabsPermitidas.push('graficos', 'excel');
@@ -1089,6 +1093,47 @@ window.usarVentanaRecienteEnResumenFn = function() {
   if (nota) nota.textContent = '';
 };
 
+let reportesHistoricoCompleto     = null;
+  window.reportesHistoricoCompleto = reportesHistoricoCompleto;
+let usandoHistoricoReportes       = false;
+  window.usandoHistoricoReportes  = usandoHistoricoReportes;
+let cargandoHistoricoReportes     = false;
+
+window.cargarHistoricoCompletoReportesFn = async function(forzar) {
+  if (cargandoHistoricoReportes) return;
+  if (reportesHistoricoCompleto && !forzar) {
+    usandoHistoricoReportes = true;
+    window.usandoHistoricoReportes = true;
+    return;
+  }
+  cargandoHistoricoReportes = true;
+  const nota = document.getElementById('reportes-historico-nota');
+  if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
+  try {
+    reportesHistoricoCompleto = await traerTodoFirestore(null, null, (n) => {
+      if (nota) nota.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+    });
+    window.reportesHistoricoCompleto = reportesHistoricoCompleto;
+    usandoHistoricoReportes = true;
+    window.usandoHistoricoReportes = true;
+    if (nota) nota.textContent = '✅ Histórico completo cargado: ' + reportesHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total.';
+  } catch (e) {
+    if (nota) nota.textContent = '';
+    console.error('[Reportes] Error al cargar histórico completo:', e);
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+    throw e; // re-lanzar para que el wrapper lo capture
+  } finally {
+    cargandoHistoricoReportes = false;
+  }
+};
+
+window.usarVentanaRecienteEnReportesFn = function() {
+  usandoHistoricoReportes = false;
+  window.usandoHistoricoReportes = false;
+  const nota = document.getElementById('reportes-historico-nota');
+  if (nota) nota.textContent = '';
+};
+
 
 window.buscarHistorial = async function() {
   const qtexto = (document.getElementById('filter-input').value || '').trim();
@@ -1298,6 +1343,10 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     <button class="tab-btn" onclick="showTab('resumen')" id="btn-resumen-tab" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       Resumen
+    </button>
+    <button class="tab-btn" onclick="showTab('reportes'); renderReportes();" id="btn-reportes-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 2h6a1 1 0 011 1v1H8V3a1 1 0 011-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></svg>
+      Reportes
     </button>
   </div>
   <div class="tab-bar" id="tab-bar-row2">
@@ -1670,6 +1719,22 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     </div>
   </div>
 
+  <div class="chart-card">
+    <h3>Góndola vs Volteo — Toneladas promedio por día</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div class="kpi-card" style="background:var(--info-light);border-color:rgba(26,79,138,0.25);">
+        <div class="val" id="dash-prom-gondola" style="color:var(--info);">0 t</div>
+        <div class="lbl" style="color:var(--info);">Promedio Góndola / día</div>
+      </div>
+      <div class="kpi-card" style="background:var(--warning-light);border-color:rgba(133,79,11,0.25);">
+        <div class="val" id="dash-prom-volteo" style="color:var(--warning);">0 t</div>
+        <div class="lbl" style="color:var(--warning);">Promedio Volteo / día</div>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="chart-gondola-volteo"></canvas></div>
+    <div id="dash-gv-empty" style="display:none;text-align:center;font-size:12px;color:var(--text-muted);padding:8px 0 0;">Sin viajes de góndola o volteo para los filtros seleccionados.</div>
+  </div>
+
   <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
 </div>
 
@@ -1817,15 +1882,6 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     <div id="resumen-dia-contenido" style="font-size:13px;line-height:1.7;color:var(--text);"></div>
   </div>
 
-  <!-- ── ESTATUS OPERATIVO (viajes pendientes por destarar) ── -->
-  <div id="resumen-estatus-card" class="form-card" style="display:none;background:#fff8f0;border-color:rgba(133,79,11,0.25);">
-    <h3 style="color:var(--warning);display:flex;align-items:center;gap:6px;">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      📊 Estatus Operativo de Acarreos
-    </h3>
-    <div id="resumen-estatus-contenido" style="font-size:13px;line-height:1.75;color:var(--text);"></div>
-  </div>
-
   <div id="resumen-titulo-card" style="text-align:center;margin-bottom:14px;">
     <div style="font-size:15px;font-weight:700;color:var(--text);">ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ</div>
     <div id="resumen-subtitulo-fecha" style="font-size:12px;color:var(--text-muted);margin-top:3px;"></div>
@@ -1845,6 +1901,161 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
   <div id="resumen-tabla-jerarquica"></div>
 
   <div id="resumen-empty-state" class="dash-empty" style="display:none">Sin datos para el periodo y filtros seleccionados.</div>
+</div>
+
+<div class="tab-content" id="tab-reportes">
+  <div id="reportes-titulo-card" style="text-align:center;margin-bottom:14px;">
+    <div style="font-size:15px;font-weight:700;color:var(--text);">📋 REPORTES</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">Tablas de reporte filtrables por fecha, banco, material, cuerpo y tipo de camión.</div>
+  </div>
+
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-primary" id="btn-reportes-historico" onclick="cargarHistoricoCompletoReportes()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-reportes-ventana" onclick="usarVentanaRecienteEnReportes()" style="font-size:12px;">
+        Volver a ventana
+      </button>
+    </div>
+    <div id="reportes-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Periodo
+    </h3>
+    <div class="slicers-grid">
+      <div class="full">
+        <label>Ver por</label>
+        <select id="reportes-periodo-tipo" onchange="cambiarPeriodoReportes()">
+          <option value="dia">Día</option>
+          <option value="semana">Semana</option>
+          <option value="mes">Mes</option>
+          <option value="rango" selected>Rango de días</option>
+        </select>
+      </div>
+      <div class="full" id="reportes-periodo-dia-wrap" style="display:none">
+        <label>Fecha</label>
+        <input type="date" id="reportes-fecha-dia" onchange="renderReportes()"/>
+      </div>
+      <div class="full" id="reportes-periodo-semana-wrap" style="display:none">
+        <label>Semana (cualquier día de esa semana)</label>
+        <input type="date" id="reportes-fecha-semana" onchange="renderReportes()"/>
+      </div>
+      <div class="full" id="reportes-periodo-mes-wrap" style="display:none">
+        <label>Mes</label>
+        <input type="month" id="reportes-fecha-mes" onchange="renderReportes()"/>
+      </div>
+      <div id="reportes-periodo-rango-wrap">
+        <label>Desde</label>
+        <input type="date" id="reportes-fecha-desde" onchange="renderReportes()"/>
+      </div>
+      <div id="reportes-periodo-rango-wrap2">
+        <label>Hasta</label>
+        <input type="date" id="reportes-fecha-hasta" onchange="renderReportes()"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Banco (Origen)</label>
+        <div class="ms-wrap" id="ms-reportes-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-reportes-banco-btn" onclick="toggleMS('reportes-banco')">
+            <span id="ms-reportes-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-reportes-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-TAJO" value="EL TAJO" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-TRITURA" value="TRITURA" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Material</label>
+        <div class="ms-wrap" id="ms-reportes-material-wrap">
+          <button type="button" class="ms-btn" id="ms-reportes-material-btn" onclick="toggleMS('reportes-material')">
+            <span id="ms-reportes-material-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-reportes-material-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-NUC" value="NUCLEO" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-NUC">Núcleo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-BER" value="BERMA" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-BER">Berma</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-BAP" value="BERMA DE APOYO" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-BAP">Berma de apoyo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-SEC1">Secundaria 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-SEC2">Secundaria 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-COR" value="CORAZA" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-COR">Coraza</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Cuerpo (Destino)</label>
+        <div class="ms-wrap" id="ms-reportes-cuerpo-wrap">
+          <button type="button" class="ms-btn" id="ms-reportes-cuerpo-btn" onclick="toggleMS('reportes-cuerpo')">
+            <span id="ms-reportes-cuerpo-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-reportes-cuerpo-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-AM">Acopio Marino</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-MU" value="MURO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-MU">Muro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-MO" value="MORRO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-MO">Morro</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C1" value="CUERPO 1" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C1">Cuerpo 1</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C2" value="CUERPO 2" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C2">Cuerpo 2</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C3" value="CUERPO 3" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C3">Cuerpo 3</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C4" value="CUERPO 4" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C4">Cuerpo 4</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C5" value="CUERPO 5" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C5">Cuerpo 5</label></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label>Tipo de camión</label>
+        <div class="ms-wrap" id="ms-reportes-tipocamion-wrap">
+          <button type="button" class="ms-btn" id="ms-reportes-tipocamion-btn" onclick="toggleMS('reportes-tipocamion')">
+            <span id="ms-reportes-tipocamion-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-reportes-tipocamion-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('reportes-tipocamion')"><label for="cb-reportes-tc-VOLTEO">Volteo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('reportes-tipocamion')"><label for="cb-reportes-tc-GONDOLA">Góndola</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosReportes()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <!-- ── TABLA: ESTATUS OPERATIVO DE ACARREOS ── -->
+  <div id="reportes-estatus-card" class="form-card" style="display:none;background:#fff8f0;border-color:rgba(133,79,11,0.25);">
+    <h3 style="color:var(--warning);display:flex;align-items:center;gap:6px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      📊 Estatus Operativo de Acarreos
+    </h3>
+    <div id="reportes-estatus-contenido" style="font-size:13px;line-height:1.75;color:var(--text);"></div>
+  </div>
+
+  <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 0;">
+    Próximamente se agregarán más tablas de reporte en esta sección.
+  </div>
 </div>
 
 <div class="tab-content" id="tab-excel">
@@ -2069,6 +2280,7 @@ function showTab(t) {
     admin: 'btn-admin-tab',
     graficos: 'btn-graficos-tab',
     resumen: 'btn-resumen-tab',
+    reportes: 'btn-reportes-tab',
     excel: 'btn-excel-tab',
     pendientes: 'btn-pendientes-tab'
   };
@@ -2078,6 +2290,7 @@ function showTab(t) {
   if (t === 'graficos') renderDashboard();
   if (t === 'pendientes') renderPendientes();
   if (t === 'resumen') initResumenTab();
+  if (t === 'reportes') initReportesTab();
   initDateHints();
 }
 
@@ -2342,6 +2555,7 @@ const customBubblePlugin = {
 let chartMaterial = null;
 let chartBanco    = null;
 let chartMeses    = null;
+let chartGondolaVolteo = null;
 
 function getMsSelected(key) {
   const dd = document.getElementById('ms-' + key + '-dd');
@@ -2389,6 +2603,7 @@ function onMsChange(key) {
   updateMsBtn(key);
   if (key.startsWith('excel-')) return;
   if (key.startsWith('resumen-')) { renderResumen(); return; }
+  if (key.startsWith('reportes-')) { renderReportes(); return; }
   renderDashboard();
 }
 
@@ -2543,6 +2758,69 @@ function renderDashboard() {
       }
     },
     plugins: [customBubblePlugin]
+  });
+
+  // ── Comparativo Góndola vs Volteo: toneladas por día ──
+  const porDiaTipo = {};
+  filtered.forEach(r => {
+    if (!r.fecha1) return;
+    const tc = r.tipo_camion;
+    if (tc !== 'GONDOLA' && tc !== 'VOLTEO') return;
+    if (!porDiaTipo[r.fecha1]) porDiaTipo[r.fecha1] = { GONDOLA: 0, VOLTEO: 0 };
+    porDiaTipo[r.fecha1][tc] += (r.ton || (r.neto_kg || 0) / 1000);
+  });
+
+  const diasOrdenadosGV = Object.keys(porDiaTipo).sort();
+  const labelsDiasGV    = diasOrdenadosGV.map(fmtFechaCorta);
+  const dataGondola     = diasOrdenadosGV.map(d => +porDiaTipo[d].GONDOLA.toFixed(2));
+  const dataVolteo      = diasOrdenadosGV.map(d => +porDiaTipo[d].VOLTEO.toFixed(2));
+
+  const totalGondola = dataGondola.reduce((a,b) => a + b, 0);
+  const totalVolteo  = dataVolteo.reduce((a,b) => a + b, 0);
+
+  // Días para calcular el promedio: si hay un rango de fechas filtrado, se usa
+  // el rango completo (cuenta también días sin viajes); si no hay filtro de
+  // fechas, se usa el rango real de fechas presentes en los datos filtrados.
+  const fDesdeGV = document.getElementById('dash-fecha-desde').value;
+  const fHastaGV = document.getElementById('dash-fecha-hasta').value;
+  let numDiasGV;
+  if (fDesdeGV && fHastaGV) {
+    numDiasGV = Math.max(1, Math.round((new Date(fHastaGV) - new Date(fDesdeGV)) / 86400000) + 1);
+  } else if (diasOrdenadosGV.length) {
+    numDiasGV = Math.max(1, Math.round((new Date(diasOrdenadosGV[diasOrdenadosGV.length - 1]) - new Date(diasOrdenadosGV[0])) / 86400000) + 1);
+  } else {
+    numDiasGV = 1;
+  }
+
+  const promGondola = totalGondola / numDiasGV;
+  const promVolteo  = totalVolteo  / numDiasGV;
+  const elPromGondola = document.getElementById('dash-prom-gondola');
+  const elPromVolteo  = document.getElementById('dash-prom-volteo');
+  if (elPromGondola) elPromGondola.textContent = promGondola.toFixed(2) + ' t';
+  if (elPromVolteo)  elPromVolteo.textContent  = promVolteo.toFixed(2) + ' t';
+
+  const gvEmpty = document.getElementById('dash-gv-empty');
+  if (gvEmpty) gvEmpty.style.display = diasOrdenadosGV.length ? 'none' : 'block';
+
+  const ctxGV = document.getElementById('chart-gondola-volteo').getContext('2d');
+  if (chartGondolaVolteo) chartGondolaVolteo.destroy();
+  chartGondolaVolteo = new Chart(ctxGV, {
+    type: 'bar',
+    data: {
+      labels: labelsDiasGV,
+      datasets: [
+        { label: 'Góndola', data: dataGondola, backgroundColor: '#1a4f8a', borderRadius: 4 },
+        { label: 'Volteo',  data: dataVolteo,  backgroundColor: '#854f0b', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2) + ' t' } }
+      },
+      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } }, x: { ticks: { font: { size: 10 } } } }
+    }
   });
 }
 
@@ -2856,18 +3134,36 @@ function renderResumenDia() {
   cont.innerHTML = html;
 }
 
-// ── ESTATUS OPERATIVO: acumulado global, ignora filtros de banco/material/fecha ──
-function renderResumenEstatus() {
-  const card = document.getElementById('resumen-estatus-card');
-  const cont = document.getElementById('resumen-estatus-contenido');
+// ── ESTATUS OPERATIVO (pestaña REPORTES): respeta los filtros de fecha/banco/material/cuerpo/tipo de camión ──
+function descripcionFiltrosReportes() {
+  const { desde, hasta } = getRangoPeriodoReportes();
+  const bancos      = getMsSelected('reportes-banco');
+  const materiales  = getMsSelected('reportes-material');
+  const cuerpos     = getMsSelected('reportes-cuerpo');
+  const tiposCamion = getMsSelected('reportes-tipocamion');
+  const partes = [];
+  if (desde || hasta) partes.push('📅 ' + (desde ? fmtFechaCorta(desde) : '…') + ' – ' + (hasta ? fmtFechaCorta(hasta) : '…'));
+  if (bancos.length)      partes.push('Banco: ' + bancos.map(nombreBanco).join(', '));
+  if (materiales.length)  partes.push('Material: ' + materiales.map(nombreMaterial).join(', '));
+  if (cuerpos.length)     partes.push('Cuerpo: ' + cuerpos.join(', '));
+  if (tiposCamion.length) partes.push('Tipo: ' + tiposCamion.map(nombreTipoCamion).join(', '));
+  return partes.length ? partes.join(' · ') : 'Acumulado global · sin filtro';
+}
 
-  // SIEMPRE usa TODOS los datos de window.db (o histórico si está activo)
-  // No respeta filtros de banco, material, cuerpo ni periodo
-  const todosLosDatos = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
-    ? window.resumenHistoricoCompleto
-    : (window.db || []);
+function renderReportesEstatus() {
+  const card = document.getElementById('reportes-estatus-card');
+  const cont = document.getElementById('reportes-estatus-contenido');
+  if (!card || !cont) return;
 
-  if (!todosLosDatos.length) { card.style.display = 'none'; return; }
+  // Usa los datos según los filtros seleccionados en la pestaña Reportes
+  // (periodo, banco, material, cuerpo y tipo de camión)
+  const todosLosDatos = getReportesFiltradoBase();
+
+  if (!todosLosDatos.length) {
+    card.style.display = 'block';
+    cont.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">Sin datos para los filtros seleccionados.</div>';
+    return;
+  }
 
   // Hora del corte
   const ahora = new Date();
@@ -2938,7 +3234,7 @@ function renderResumenEstatus() {
     <!-- Corte -->
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">
       Corte de información: <strong>${horaCorte}</strong>
-      <span style="margin-left:8px;font-size:10px;color:var(--accent);background:var(--accent-light);padding:1px 7px;border-radius:999px;">Acumulado global · sin filtro</span>
+      <span style="margin-left:8px;font-size:10px;color:var(--accent);background:var(--accent-light);padding:1px 7px;border-radius:999px;">${descripcionFiltrosReportes()}</span>
     </div>
 
     <!-- KPI cards -->
@@ -2970,13 +3266,14 @@ function renderResumenEstatus() {
 
     <!-- Total general -->
     <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;font-size:13px;">
-      <span style="color:var(--text-muted);">Total de viajes registrados</span>
+      <span style="color:var(--text-muted);">Total de viajes (según filtros)</span>
       <strong style="color:var(--text);font-size:15px;">${totalViajes}</strong>
     </div>`;
 
   card.style.display = 'block';
   cont.innerHTML = html;
 }
+window.renderReportesEstatus = renderReportesEstatus;
 
 function renderResumenTitulo() {
   const tipo = document.getElementById('resumen-periodo-tipo').value;
@@ -3067,7 +3364,6 @@ function renderResumen() {
 
   renderResumenTitulo();
   renderResumenDia();
-  renderResumenEstatus();
 
   const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   document.getElementById('resumen-kpi-viajes').textContent     = filtered.length;
@@ -3077,6 +3373,149 @@ function renderResumen() {
   renderResumenTablaJerarquica(filtered);
 }
 window.renderResumen = renderResumen;
+
+// ══════════════════════════════════════════════════════
+// PESTAÑA REPORTES
+// Contenedor de tablas/reportes filtrables (fecha, banco, material,
+// cuerpo, tipo de camión). La primera tabla es "Estatus Operativo de
+// Acarreos" (antes vivía en Resumen, mostrando siempre el acumulado
+// global). Aquí sí respeta los filtros seleccionados.
+// ══════════════════════════════════════════════════════
+function initReportesTab() {
+  const nota = document.getElementById('reportes-historico-nota');
+  const btnHist = document.getElementById('btn-reportes-historico');
+  const btnVent = document.getElementById('btn-reportes-ventana');
+  if (nota) {
+    nota.textContent = (window.usandoHistoricoReportes && window.reportesHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.reportesHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+  if (window.usandoHistoricoReportes && window.reportesHistoricoCompleto) {
+    if (btnVent) btnVent.className = 'btn btn-primary';
+    if (btnHist) btnHist.className = 'btn btn-secondary';
+  } else {
+    if (btnVent) btnVent.className = 'btn btn-secondary';
+    if (btnHist) btnHist.className = 'btn btn-primary';
+  }
+  cambiarPeriodoReportes();
+}
+window.initReportesTab = initReportesTab;
+
+window.usarVentanaRecienteEnReportes = function() {
+  window.usarVentanaRecienteEnReportesFn();
+  initReportesTab();
+  renderReportes();
+};
+
+window.cargarHistoricoCompletoReportes = async function() {
+  const btn = document.getElementById('btn-reportes-historico');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
+  try {
+    await window.cargarHistoricoCompletoReportesFn(false);
+
+    // Forzar "rango de días" y limpiar fechas para mostrar el histórico completo real
+    document.getElementById('reportes-periodo-tipo').value = 'rango';
+    document.getElementById('reportes-fecha-desde').value = '';
+    document.getElementById('reportes-fecha-hasta').value = '';
+    cambiarPeriodoReportes();
+
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    initReportesTab();
+    renderReportes();
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
+};
+
+function limpiarFiltrosReportes() {
+  ['reportes-banco','reportes-material','reportes-cuerpo','reportes-tipocamion'].forEach(key => {
+    const dd = document.getElementById('ms-' + key + '-dd');
+    if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateMsBtn(key);
+  });
+  renderReportes();
+}
+window.limpiarFiltrosReportes = limpiarFiltrosReportes;
+
+function cambiarPeriodoReportes() {
+  const tipo = document.getElementById('reportes-periodo-tipo').value;
+  document.getElementById('reportes-periodo-dia-wrap').style.display    = (tipo === 'dia')    ? 'block' : 'none';
+  document.getElementById('reportes-periodo-semana-wrap').style.display = (tipo === 'semana') ? 'block' : 'none';
+  document.getElementById('reportes-periodo-mes-wrap').style.display    = (tipo === 'mes')    ? 'block' : 'none';
+  document.getElementById('reportes-periodo-rango-wrap').style.display  = (tipo === 'rango')  ? 'block' : 'none';
+  document.getElementById('reportes-periodo-rango-wrap2').style.display = (tipo === 'rango')  ? 'block' : 'none';
+  const fDia = document.getElementById('reportes-fecha-dia');
+  if (tipo === 'dia' && !fDia.value) fDia.value = isoHoy();
+  const fSemana = document.getElementById('reportes-fecha-semana');
+  if (tipo === 'semana' && !fSemana.value) fSemana.value = isoHoy();
+  const fMes = document.getElementById('reportes-fecha-mes');
+  if (tipo === 'mes' && !fMes.value) fMes.value = isoHoy().slice(0,7);
+  initDateHints();
+  renderReportes();
+}
+window.cambiarPeriodoReportes = cambiarPeriodoReportes;
+
+// Devuelve {desde, hasta} en formato YYYY-MM-DD según el periodo seleccionado en Reportes
+function getRangoPeriodoReportes() {
+  const tipo = document.getElementById('reportes-periodo-tipo').value;
+  if (tipo === 'dia') {
+    const f = document.getElementById('reportes-fecha-dia').value || isoHoy();
+    return { desde: f, hasta: f };
+  }
+  if (tipo === 'semana') {
+    const base = document.getElementById('reportes-fecha-semana').value || isoHoy();
+    const [y,m,d] = base.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const diaSemana = dt.getDay();
+    const offsetLunes = (diaSemana === 0) ? 6 : diaSemana - 1;
+    const lunes = new Date(dt); lunes.setDate(dt.getDate() - offsetLunes);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    const toIso = (x) => x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+    return { desde: toIso(lunes), hasta: toIso(domingo) };
+  }
+  if (tipo === 'mes') {
+    const base = document.getElementById('reportes-fecha-mes').value || isoHoy().slice(0,7);
+    const [y,m] = base.split('-').map(Number);
+    const ultimoDia = new Date(y, m, 0).getDate();
+    return { desde: `${base}-01`, hasta: `${base}-${String(ultimoDia).padStart(2,'0')}` };
+  }
+  // rango
+  const desde = document.getElementById('reportes-fecha-desde').value;
+  const hasta = document.getElementById('reportes-fecha-hasta').value;
+  return { desde: desde || null, hasta: hasta || null };
+}
+window.getRangoPeriodoReportes = getRangoPeriodoReportes;
+
+function getReportesFiltradoBase() {
+  const { desde, hasta } = getRangoPeriodoReportes();
+  const bancos      = getMsSelected('reportes-banco');
+  const materiales  = getMsSelected('reportes-material');
+  const cuerpos     = getMsSelected('reportes-cuerpo');
+  const tiposCamion = getMsSelected('reportes-tipocamion');
+  const datos = (window.usandoHistoricoReportes && window.reportesHistoricoCompleto)
+    ? window.reportesHistoricoCompleto
+    : (window.db || []);
+  return datos.filter(r => {
+    if (!r.fecha1) return false;
+    if (desde && r.fecha1 < desde) return false;
+    if (hasta && r.fecha1 > hasta) return false;
+    if (bancos.length      && !bancos.includes(r.banco))            return false;
+    if (materiales.length  && !materiales.includes(r.material))     return false;
+    if (cuerpos.length     && !cuerpos.includes(r.destino))         return false;
+    if (tiposCamion.length && !tiposCamion.includes(r.tipo_camion)) return false;
+    return true;
+  });
+}
+window.getReportesFiltradoBase = getReportesFiltradoBase;
+
+// Orquestador de la pestaña Reportes: aquí se van a colgar las distintas
+// "tablas" de reportes a futuro. Por ahora solo Estatus Operativo.
+function renderReportes() {
+  renderReportesEstatus();
+}
+window.renderReportes = renderReportes;
 
 // descargarExcelDesdeTab es independiente: trae los datos directo de Firestore
 // según los filtros propios de esta pestaña (no depende de otras pestañas).

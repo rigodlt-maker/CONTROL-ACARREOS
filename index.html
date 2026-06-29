@@ -877,10 +877,12 @@ window.deleteRecord = async function() {
   try {
     const r = findRecord(window._currentFid);
     await deleteDoc(doc(db_f, COL, window._currentFid));
-    await aplicarResumen(r, -1);
+    await aplicarResumen(r, -1); // FASE 5: Await crítico
     closeModalForce();
     window.showSyncToast('✅', 'Registro eliminado', 'ok');
-  } catch(err) { alert('Error al eliminar: ' + err.message); }
+  } catch(err) {
+    alert('Error al eliminar: ' + err.message);
+  }
 }
 
 window.completarPendiente = async function(fid) {
@@ -911,17 +913,16 @@ window.completarPendiente = async function(fid) {
     ton: neto > 0 ? parseFloat((neto / 1000).toFixed(3)) : 0,
     status: 'completo'
   };
-  try {
+ try {
     const { _fid: _f, id: _id, ...payload } = actualizado;
     payload.ts_updated = serverTimestamp();
     await updateDoc(doc(db_f, COL, fid), payload);
-    await moverResumen(original, actualizado);
+    await moverResumen(original, actualizado); // FASE 5: Await crítico
     window.showSyncToast('✅', 'Destare completado', 'ok');
-    if (typeof  === 'function') ();
+    if (typeof window.renderPendientes === 'function') window.renderPendientes();
   } catch (e) {
     alert('Error al completar el registro: ' + e.message);
-  }
-};
+  };
 
 window.manualSync = function() {
   window.showSyncToast('⏳', 'Sincronizando…', 'pending', 2000);

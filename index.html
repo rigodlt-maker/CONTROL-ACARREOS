@@ -2534,50 +2534,80 @@ window.limpiarFiltrosDashboard = limpiarFiltrosDashboard;
 // ══════════════════════════════════════════════════════
 // PENDIENTES
 // ══════════════════════════════════════════════════════
-function renderPendientes() {
-  const list = document.getElementById('pendientes-list');
-  if (!list) return;
-  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
-  const pendientes = combinados.filter(r => r.status === 'pendiente').sort((a,b) => (a.fecha1||'').localeCompare(b.fecha1||''));
-  if (!pendientes.length) {
-    list.innerHTML = `<div class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <p>Sin viajes pendientes de destare por ahora.</p>
-    </div>`;
+window.escHtml = function(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[&<>'"]/g, 
+    tag => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[tag] || tag));
+};
+
+window.renderPendientes = function() {
+  const wrap = document.getElementById('pendientes-list');
+  if (!wrap) return;
+  
+  // Incluimos tanto "pendiente" como "conflicto" (generados por duplicidad offline)
+  const pend = db.filter(r => r.status === 'pendiente' || r.status === 'conflicto');
+  if (!pend.length) {
+    wrap.innerHTML = '<div class="empty-state">No hay viajes pendientes o en conflicto.</div>';
     return;
   }
-  list.innerHTML = pendientes.map(r => `
-    <div class="form-card" style="margin-bottom:10px;" id="pend-card-${escHtml(r._fid)}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-        <div>
-          <div style="font-weight:600;font-size:14px;">Boleta #${escHtml(r.boleta || '—')}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escHtml(r.placas||'—')} · ${escHtml(r.material||'—')}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">1er pesaje: ${fmtFecha(r.fecha1)} ${escHtml(r.hora1||'')} · Bruto: ${r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX')+' kg' : '—'}</div>
-        </div>
-        <span class="badge" style="background:var(--warning-light);color:var(--warning);white-space:nowrap;">⏳ Pendiente</span>
+  
+  const ahoraMs = Date.now();
+  const HORAS_ALERTA = 12; // Modifica aquí el umbral de horas estancado
+
+  // FASE 3: Ordenar para que los más viejos (estancados) aparezcan hasta arriba
+  pend.sort((a,b) => new Date(a.fecha1 + 'T' + (a.hora1||'00:00')) - new Date(b.fecha1 + 'T' + (b.hora1||'00:00')));
+
+  // FASE 5: Sanitizar todas las inserciones innerHTML con window.escHtml()
+  wrap.innerHTML = pend.map(r => {
+    const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00')).getTime();
+    const diffHoras = (ahoraMs - dt1) / 3600000;
+    const estancado = diffHoras > HORAS_ALERTA && r.status === 'pendiente';
+    const conflicto = r.status === 'conflicto';
+    
+    let badgeHTML = '';
+    let borderStyle = 'var(--warning)';
+    
+    if(conflicto) {
+      badgeHTML = `<span class="badge" style="background:var(--danger-light);color:var(--danger)">⚠️ Conflicto (Duplicado)</span>`;
+      borderStyle = 'var(--danger)';
+    } else if (estancado) {
+      badgeHTML = `<span class="badge" style="background:#fcebeb;color:#a32d2d">⏰ Estancado (+${Math.floor(diffHoras)}h)</span>`;
+      borderStyle = '#a32d2d';
+    }
+
+    return `
+    <div class="form-card" style="border-left: 4px solid ${borderStyle};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+         <div style="flex:1">
+            <div style="font-weight:600; font-size:14px; color:${conflicto||estancado ? 'var(--danger)' : 'inherit'}">Boleta: ${window.escHtml(r.boleta)}</div>
+            <div style="font-size:11px;color:var(--text-muted); margin-top:2px;">Placas: ${window.escHtml(r.placas)} | Folio: ${window.escHtml(r.folio)}</div>
+            ${badgeHTML}
+         </div>
+         <div style="font-size:11px;color:var(--text-muted);text-align:right">
+            ${window.escHtml(r.fecha1)}<br>${window.escHtml(r.hora1)}
+         </div>
       </div>
-      <div class="field-row two-col">
-        <div>
-          <label>Fecha 2do pesaje</label>
-          <input type="date" id="pend-fecha2-${r._fid}">
+      
+      ${conflicto ? `
+        <div style="margin-top:10px; font-size:12px; color:var(--danger);">
+          El sistema detectó que esta boleta ya existía al subir de modo offline. Por favor revisa y edita en Base de Datos.
         </div>
-        <div>
-          <label>Hora 2do pesaje</label>
-          <input type="time" id="pend-hora2-${r._fid}">
+      ` : `
+        <div class="field-row two-col" style="margin-top:12px;">
+           <div><label>Fecha 2</label><input type="date" id="pend-fecha2-${window.escHtml(r._fid)}" value="${new Date().toISOString().slice(0,10)}"></div>
+           <div><label>Hora 2</label><input type="time" id="pend-hora2-${window.escHtml(r._fid)}"></div>
         </div>
-      </div>
-      <div class="field-row">
-        <label>Tara (kg)</label>
-        <input type="number" id="pend-tara-${r._fid}" placeholder="0000" inputmode="decimal">
-      </div>
-      <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="completarPendiente('${r._fid}')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        Completar destare
-      </button>
+        <div class="field-row">
+           <label>Tara (kg)</label><input type="number" id="pend-tara-${window.escHtml(r._fid)}" placeholder="0000" inputmode="decimal">
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="completarPendiente('${window.escHtml(r._fid)}')">
+           Completar pesaje
+        </button>
+      `}
     </div>
-  `).join('');
-  initDateHints();
-}
+    `;
+  }).join('');
+};
 window.renderPendientes = renderPendientes;
 
 // ══════════════════════════════════════════════════════

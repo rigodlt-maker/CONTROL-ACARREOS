@@ -428,9 +428,15 @@ onAuthStateChanged(auth, async (user) => {
     const reportesBtn = document.getElementById('btn-reportes-tab');
     if (reportesBtn) reportesBtn.style.display = 'flex';
 
-    // ── FILA 2: Gráficos, Excel, Admin ──
+    // ── FILA 2: Suministros (antes Gráficos), Avances, Acopios, Excel, Admin ──
     const graficosBtn = document.getElementById('btn-graficos-tab');
     if (graficosBtn) graficosBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
+
+    const avancesBtn = document.getElementById('btn-avances-tab');
+    if (avancesBtn) avancesBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
+
+    const acopiosBtn = document.getElementById('btn-acopios-tab');
+    if (acopiosBtn) acopiosBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
 
     const excelBtn = document.getElementById('btn-excel-tab');
     if (excelBtn) excelBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
@@ -441,7 +447,7 @@ onAuthStateChanged(auth, async (user) => {
     const tabsPermitidas = ['resumen', 'reportes'];
     if (esCapturista || esAdminOMaster || esCoordinador) tabsPermitidas.push('form', 'pendientes');
     if (esAdminOMaster || esCoordinador) tabsPermitidas.push('db');
-    if (esAdminOMaster || esCoordinador || esVisor) tabsPermitidas.push('graficos', 'excel');
+    if (esAdminOMaster || esCoordinador || esVisor) tabsPermitidas.push('graficos', 'avances', 'acopios', 'excel');
     if (esAdminOMaster) tabsPermitidas.push('admin');
     const tabActivaEl = document.querySelector('.tab-content.active');
     const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form';
@@ -1371,7 +1377,15 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
   <div class="tab-bar" id="tab-bar-row2">
     <button class="tab-btn" onclick="showTab('graficos'); renderDashboard();" id="btn-graficos-tab" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      Gráficos
+      Suministros
+    </button>
+    <button class="tab-btn" onclick="showTab('avances'); initAvancesTab();" id="btn-avances-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Avances
+    </button>
+    <button class="tab-btn" onclick="showTab('acopios'); initAcopiosTab();" id="btn-acopios-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+      Acopios
     </button>
     <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1613,6 +1627,13 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     Usa esto si necesitas ver/buscar entre el total de viajes ejecutados.
   </div>
 
+  <div style="padding:0 0 10px;">
+    <button class="btn btn-secondary" id="btn-solo-barcaza" onclick="toggleSoloBarcaza()" style="width:100%;font-size:12px;">
+      🚢 Ver solo tickets de Barcaza
+    </button>
+  </div>
+  <div id="barcaza-resumen-panel" style="display:none;margin-bottom:10px;"></div>
+
   <div id="records-list"></div>
 
   <div style="padding:8px 0 4px;">
@@ -1623,6 +1644,9 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 </div>
 
 <div class="tab-content" id="tab-graficos">
+  <div style="font-size:11.5px;color:var(--text-muted);background:var(--info-light);border-radius:var(--radius);padding:8px 12px;margin-bottom:10px;">
+    ℹ️ Esta pestaña muestra únicamente el material que salió de un <strong>Banco de materiales</strong>, sin importar su destino final (Acopio o Rompeolas). Sirve para conciliar contra el banco de materiales y el sindicato.
+  </div>
   <div class="slicers-card" style="margin-bottom:10px;">
     <h3>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1740,14 +1764,34 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 
   <div class="chart-card" style="padding:0;overflow:hidden;border-color:var(--accent);">
     <h3 style="background:var(--accent);color:white;margin:0;padding:14px;text-align:center;font-size:14px;font-weight:bold;justify-content:center;">
-      TONELADAS POR MES
+      TONELADAS POR <span id="lbl-meses-o-anos">MES</span>
     </h3>
+    <div style="display:flex;gap:6px;justify-content:center;padding:10px 10px 0;">
+      <button class="btn btn-primary" id="btn-vista-mensual" style="font-size:11px;padding:5px 12px;" onclick="cambiarVistaMeses('mensual')">Mensual</button>
+      <button class="btn btn-secondary" id="btn-vista-anual" style="font-size:11px;padding:5px 12px;" onclick="cambiarVistaMeses('anual')">Anual</button>
+    </div>
     <div class="chart-wrap" id="wrap-chart-meses" style="padding:20px 20px 20px 0;background:#f4f7f9;">
       <canvas id="chart-meses"></canvas>
     </div>
   </div>
 
   <div id="dash-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
+</div>
+
+<div class="tab-content" id="tab-avances">
+  <div class="slicers-card" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    <div style="font-size:12px;color:var(--text-muted);" id="avances-estado">Cargando…</div>
+    <button class="btn btn-secondary" style="font-size:12px;" onclick="initAvancesTab(true)">🔄 Actualizar</button>
+  </div>
+  <div id="avances-content"></div>
+</div>
+
+<div class="tab-content" id="tab-acopios">
+  <div class="slicers-card" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    <div style="font-size:12px;color:var(--text-muted);" id="acopios-estado">Cargando…</div>
+    <button class="btn btn-secondary" style="font-size:12px;" onclick="initAcopiosTab(true)">🔄 Actualizar</button>
+  </div>
+  <div id="acopios-content"></div>
 </div>
 
 <div class="tab-content" id="tab-resumen">
@@ -2234,6 +2278,70 @@ const RANGOS_ACOPIO = {
 };
 
 // ══════════════════════════════════════════════════════
+// FASE 3 — Catálogo de totales de material (tabla de metas)
+// Fuente: tabla de totales proporcionada por Rod (original.pdf).
+// Cada fila es un concepto único de "Suministro y colocación" por
+// Cuerpo + Material + Rango. MURO se maneja aparte (meta única, sin
+// desglose por material) porque así lo confirmó Rod en la sección 5.
+// ══════════════════════════════════════════════════════
+const CATALOGO_TOTALES = [
+  // Cuerpo 1
+  { cuerpo:'CUERPO 1', material:'NUCLEO',         rango:'0.02 a 0.20 ton', cantidad: 71271.41 },
+  { cuerpo:'CUERPO 1', material:'SECUNDARIA 2',   rango:'0.20 a 0.30 ton', cantidad: 17506.45 },
+  { cuerpo:'CUERPO 1', material:'SECUNDARIA 1',   rango:'0.30 a 0.50 ton', cantidad: 49910.19 },
+  { cuerpo:'CUERPO 1', material:'CORAZA',         rango:'5.8 ton',         cantidad: 23230.12 },
+  { cuerpo:'CUERPO 1', material:'BERMA',          rango:'0.30 a 0.50 ton', cantidad: 13594.09 },
+  { cuerpo:'CUERPO 1', material:'BERMA DE APOYO', rango:'0.20 a 0.30 ton', cantidad: 30349.36 },
+  // Cuerpo 2
+  { cuerpo:'CUERPO 2', material:'NUCLEO',         rango:'0.02 a 0.20 ton', cantidad: 144120.91 },
+  { cuerpo:'CUERPO 2', material:'SECUNDARIA 2',   rango:'0.30 a 0.50 ton', cantidad: 45408.64 },
+  { cuerpo:'CUERPO 2', material:'SECUNDARIA 1',   rango:'0.50 a 1.00 ton', cantidad: 73336.87 },
+  { cuerpo:'CUERPO 2', material:'CORAZA',         rango:'10 ton',          cantidad: 58306.08 },
+  { cuerpo:'CUERPO 2', material:'BERMA',          rango:'0.50 a 1.00 ton', cantidad: 24928.39 },
+  { cuerpo:'CUERPO 2', material:'BERMA DE APOYO', rango:'0.30 a 0.50 ton', cantidad: 65231.88 },
+  // Cuerpo 3
+  { cuerpo:'CUERPO 3', material:'NUCLEO',         rango:'0.01 a 0.50 ton', cantidad: 152621.83 },
+  { cuerpo:'CUERPO 3', material:'SECUNDARIA 2',   rango:'0.50 a 0.80 ton', cantidad: 74711.96 },
+  { cuerpo:'CUERPO 3', material:'SECUNDARIA 1',   rango:'0.80 a 1.50 ton', cantidad: 98057.72 },
+  { cuerpo:'CUERPO 3', material:'CORAZA',         rango:'16 ton',          cantidad: 91547.99 },
+  { cuerpo:'CUERPO 3', material:'BERMA',          rango:'0.80 a 1.50 ton', cantidad: 33535.11 },
+  { cuerpo:'CUERPO 3', material:'BERMA DE APOYO', rango:'0.50 a 0.80 ton', cantidad: 133388.56 },
+  // Cuerpo 4
+  { cuerpo:'CUERPO 4', material:'NUCLEO',         rango:'0.01 a 0.50 ton', cantidad: 1102621.43 },
+  { cuerpo:'CUERPO 4', material:'SECUNDARIA 2',   rango:'0.60 a 1.00 ton', cantidad: 237478.39 },
+  { cuerpo:'CUERPO 4', material:'SECUNDARIA 1',   rango:'1.00 a 2.00 ton', cantidad: 264991.55 },
+  { cuerpo:'CUERPO 4', material:'CORAZA',         rango:'19 ton',          cantidad: 170846.84 },
+  { cuerpo:'CUERPO 4', material:'BERMA',          rango:'1.00 a 2.00 ton', cantidad: 90715.72 },
+  { cuerpo:'CUERPO 4', material:'BERMA DE APOYO', rango:'0.60 a 1.00 ton', cantidad: 148770.37 },
+  // Cuerpo 5 (Coraza es N/A — se usan Core-Loc's, no aplica en el catálogo)
+  { cuerpo:'CUERPO 5', material:'NUCLEO',         rango:'0.01 a 0.50 ton', cantidad: 1589917.68 },
+  { cuerpo:'CUERPO 5', material:'SECUNDARIA 2',   rango:'0.80 a 1.20 ton', cantidad: 313163.16 },
+  { cuerpo:'CUERPO 5', material:'SECUNDARIA 1',   rango:'1.20 a 2.30 ton', cantidad: 357015.53 },
+  { cuerpo:'CUERPO 5', material:'BERMA',          rango:'1.20 a 2.30 ton', cantidad: 156740.23 },
+  { cuerpo:'CUERPO 5', material:'BERMA DE APOYO', rango:'0.80 a 1.20 ton', cantidad: 166087.31 },
+  // Morro (Coraza es N/A — Core-Loc's)
+  { cuerpo:'MORRO', material:'NUCLEO',         rango:'0.01 a 0.50 ton', cantidad: 339691.17 },
+  { cuerpo:'MORRO', material:'SECUNDARIA 2',   rango:'1.00 a 1.50 ton', cantidad: 59265.44 },
+  { cuerpo:'MORRO', material:'SECUNDARIA 1',   rango:'1.50 a 3.00 ton', cantidad: 54931.65 },
+  { cuerpo:'MORRO', material:'BERMA',          rango:'1.50 a 3.00 ton', cantidad: 50921.33 },
+  { cuerpo:'MORRO', material:'BERMA DE APOYO', rango:'1.00 a 1.50 ton', cantidad: 41555.24 }
+];
+// Muro: meta única de 20,000 ton, sin desglose por material/rango (confirmado por Rod).
+const MURO_META_TOTAL = 20000;
+window.CATALOGO_TOTALES = CATALOGO_TOTALES;
+window.MURO_META_TOTAL  = MURO_META_TOTAL;
+
+// NOTA IMPORTANTE (limitación conocida, documentada para futuras fases):
+// El par (material, rango) "NUCLEO" + "0.01 a 0.50 ton" se repite en 4 cuerpos
+// distintos (Cuerpo 3, Cuerpo 4, Cuerpo 5 y Morro). El catálogo original de Rod
+// no distingue de qué cuerpo viene ese material mientras está almacenado en el
+// acopio (el acopio se secciona por material/rango, no por cuerpo destino).
+// Por lo tanto, en la pestaña "Acopios" la existencia de ese par se muestra
+// agregada (sin poder saber a cuál de los 4 cuerpos se destinará hasta que se
+// genera el ticket de colocación). El resto de combinaciones material+rango
+// del catálogo son únicas por cuerpo y no tienen este problema.
+
+// ══════════════════════════════════════════════════════
 // FASE 1 — Origen dinámico (Banco / Acopio), Barcaza y Concepto de negocio
 // ══════════════════════════════════════════════════════
 const ORIGEN_BANCOS = [
@@ -2323,6 +2431,178 @@ function nombreConcepto(c) {
 }
 window.nombreConcepto = nombreConcepto;
 
+// ══════════════════════════════════════════════════════
+// FASE 4/5 — Cálculos de Avances y Acopios
+// Ambas pestañas necesitan el HISTÓRICO COMPLETO (no solo la ventana
+// reciente), porque son totales acumulados de toda la obra. Se reutiliza
+// traerTodoFirestore() (ya usado por el histórico del Dashboard) y se
+// cachea en window.avancesAcopiosData para no repetir la consulta cada
+// vez que el usuario cambia de pestaña.
+// ══════════════════════════════════════════════════════
+window.avancesAcopiosData = null;
+window.cargandoAvancesAcopios = false;
+
+async function asegurarDatosAvancesAcopios(forzar) {
+  if (window.cargandoAvancesAcopios) return window.avancesAcopiosData;
+  if (window.avancesAcopiosData && !forzar) return window.avancesAcopiosData;
+  window.cargandoAvancesAcopios = true;
+  ['avances-estado','acopios-estado'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '⏳ Cargando histórico completo…';
+  });
+  try {
+    const datos = await traerTodoFirestore(null, null, (n) => {
+      ['avances-estado','acopios-estado'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
+      });
+    });
+    window.avancesAcopiosData = datos;
+    ['avances-estado','acopios-estado'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '✅ ' + datos.length.toLocaleString('es-MX') + ' registro(s) considerados (histórico completo).';
+    });
+    return datos;
+  } catch (e) {
+    ['avances-estado','acopios-estado'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico para Avances/Acopios: ' + e.message);
+    return [];
+  } finally {
+    window.cargandoAvancesAcopios = false;
+  }
+}
+window.asegurarDatosAvancesAcopios = asegurarDatosAvancesAcopios;
+
+function tonOf(r) { return r.ton || (r.neto_kg || 0) / 1000; }
+
+// Ticket "de colocación" = trabajo terminado en el rompeolas, venga de Banco
+// o de Acopio (ambos casos usan concepto COLOCACION_TERRESTRE/MARINA). No se
+// duplica: cada ticket es un pesaje independiente y solo el que llega al
+// rompeolas cuenta aquí (Banco→Acopio no cuenta como colocación).
+function esTicketColocacion(r) {
+  return r.concepto === 'COLOCACION_TERRESTRE' || r.concepto === 'COLOCACION_MARINA';
+}
+
+// Calcula, para cada fila del catálogo (Cuerpo+Material+Rango), cuánto se ha
+// colocado. Devuelve también los totales de Muro y los totales globales
+// (marino/terrestre) usados para la validación cruzada de la Fase 9.
+function computeAvances(datos) {
+  const colocadoPorFila = {}; // key = cuerpo|material|rango -> ton
+  let colocadoMuro = 0;
+  let totalMarino = 0, totalTerrestre = 0, totalColocado = 0;
+
+  datos.forEach(r => {
+    if (!esTicketColocacion(r)) return;
+    const t = tonOf(r);
+    totalColocado += t;
+    if (r.concepto === 'COLOCACION_MARINA') totalMarino += t; else totalTerrestre += t;
+    if (r.destino === 'MURO') { colocadoMuro += t; return; }
+    const key = (r.destino||'') + '|' + (r.material||'') + '|' + (r.rango||'');
+    colocadoPorFila[key] = (colocadoPorFila[key] || 0) + t;
+  });
+
+  const filas = CATALOGO_TOTALES.map(c => {
+    const key = c.cuerpo + '|' + c.material + '|' + c.rango;
+    const colocado = colocadoPorFila[key] || 0;
+    const faltante = Math.max(0, c.cantidad - colocado);
+    const exceso   = Math.max(0, colocado - c.cantidad);
+    const pct = c.cantidad > 0 ? Math.min(999, (colocado / c.cantidad) * 100) : 0;
+    return { ...c, colocado, faltante, exceso, pct, completo: colocado >= c.cantidad };
+  });
+
+  const metaTotalCatalogo = CATALOGO_TOTALES.reduce((s,c) => s + c.cantidad, 0);
+  const colocadoTotalCatalogo = filas.reduce((s,f) => s + f.colocado, 0);
+
+  return {
+    filas,
+    muro: { cantidad: MURO_META_TOTAL, colocado: colocadoMuro, faltante: Math.max(0, MURO_META_TOTAL - colocadoMuro), pct: Math.min(999,(colocadoMuro/MURO_META_TOTAL)*100) },
+    totales: {
+      metaTotalCatalogo, colocadoTotalCatalogo,
+      totalMarino, totalTerrestre, totalColocado,
+      totalGeneral: metaTotalCatalogo + MURO_META_TOTAL,
+      colocadoGeneral: colocadoTotalCatalogo + colocadoMuro
+    }
+  };
+}
+window.computeAvances = computeAvances;
+
+// Balance de inventario por Acopio (Marino/Terrestre), desglosado por
+// Material+Rango: entradas (Suministro que llegó + transferencias entrantes)
+// menos salidas (Colocación que salió de ese acopio + transferencias salientes).
+function computeAcopios(datos) {
+  const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
+  const balance = {}; // acopio -> { 'material|rango' -> {entradas, salidas} }
+  ACOPIOS.forEach(a => balance[a] = {});
+
+  function addMov(acopio, material, rango, campo, ton) {
+    if (!balance[acopio]) return;
+    const key = (material||'') + '|' + (rango||'');
+    if (!balance[acopio][key]) balance[acopio][key] = { material, rango, entradas: 0, salidas: 0 };
+    balance[acopio][key][campo] += ton;
+  }
+
+  datos.forEach(r => {
+    const t = tonOf(r);
+    if (r.concepto === 'SUMINISTRO' && ACOPIOS.includes(r.destino)) {
+      addMov(r.destino, r.material, r.rango, 'entradas', t);
+    } else if ((r.concepto === 'COLOCACION_TERRESTRE' || r.concepto === 'COLOCACION_MARINA') && r.origen_tipo === 'ACOPIO' && ACOPIOS.includes(r.banco)) {
+      addMov(r.banco, r.material, r.rango, 'salidas', t);
+    } else if (r.concepto === 'TRANSFERENCIA_ACOPIOS') {
+      if (ACOPIOS.includes(r.banco))   addMov(r.banco,   r.material, r.rango, 'salidas', t);
+      if (ACOPIOS.includes(r.destino)) addMov(r.destino, r.material, r.rango, 'entradas', t);
+    }
+  });
+
+  const resultado = {};
+  ACOPIOS.forEach(a => {
+    resultado[a] = Object.values(balance[a])
+      .map(b => ({ ...b, existencia: b.entradas - b.salidas }))
+      .sort((x,y) => (y.existencia) - (x.existencia));
+  });
+
+  // Existencia combinada por material+rango (Marino + Terrestre), para cruzar
+  // contra Avances: una barcaza puede cargar de cualquiera de los dos acopios.
+  const existenciaCombinada = {};
+  ACOPIOS.forEach(a => resultado[a].forEach(b => {
+    const key = b.material + '|' + b.rango;
+    existenciaCombinada[key] = (existenciaCombinada[key] || 0) + b.existencia;
+  }));
+
+  return { porAcopio: resultado, existenciaCombinada };
+}
+window.computeAcopios = computeAcopios;
+
+// Cruza Avances (lo que falta por colocar en cada Cuerpo+Material+Rango) con
+// la existencia disponible en Acopios para ese mismo Material+Rango (sumada
+// entre los cuerpos que comparten el mismo par, ver nota de la Fase 3).
+function computeAlertasAvanceAcopio(avances, acopios) {
+  const grupos = {}; // 'material|rango' -> { filas:[...], faltanteTotal, colocadoTotal, metaTotal }
+  avances.filas.forEach(f => {
+    const key = f.material + '|' + f.rango;
+    if (!grupos[key]) grupos[key] = { material: f.material, rango: f.rango, cuerpos: [], metaTotal: 0, colocadoTotal: 0 };
+    grupos[key].cuerpos.push(f.cuerpo);
+    grupos[key].metaTotal += f.cantidad;
+    grupos[key].colocadoTotal += f.colocado;
+  });
+  return Object.values(grupos).map(g => {
+    const faltanteTotal = Math.max(0, g.metaTotal - g.colocadoTotal);
+    const existencia = acopios.existenciaCombinada[g.material + '|' + g.rango] || 0;
+    let alerta = null;
+    if (faltanteTotal <= 0 && existencia > 0.5) {
+      alerta = { tipo: 'sobre-envio', msg: `El concepto ya está completo (${g.cuerpos.join(', ')}), pero hay ${existencia.toFixed(2)} ton de ${g.material} (${g.rango}) en acopio sin colocar. Revisa por qué se sigue suministrando.` };
+    } else if (faltanteTotal > 0 && existencia > 0 && existencia < faltanteTotal) {
+      alerta = { tipo: 'falta-suministrar', msg: `Faltan ${(faltanteTotal - existencia).toFixed(2)} ton de ${g.material} (${g.rango}) por suministrar desde banco para completar ${g.cuerpos.join(', ')} (ya hay ${existencia.toFixed(2)} ton en acopio esperando colocación).` };
+    } else if (faltanteTotal > 0 && existencia >= faltanteTotal && existencia > 0) {
+      alerta = { tipo: 'listo-para-colocar', msg: `Ya hay suficiente material en acopio (${existencia.toFixed(2)} ton de ${g.material} ${g.rango}) para completar ${g.cuerpos.join(', ')} — falta colocarlo.` };
+    }
+    return { ...g, faltanteTotal, existencia, alerta };
+  }).filter(g => g.alerta);
+}
+window.computeAlertasAvanceAcopio = computeAlertasAvanceAcopio;
+
 // ── Escapado XSS: sanitiza cualquier valor antes de insertarlo en innerHTML ──
 function escHtml(v) {
   if (v === null || v === undefined) return '';
@@ -2379,6 +2659,8 @@ function showTab(t) {
   const tabBtnMap = {
     admin: 'btn-admin-tab',
     graficos: 'btn-graficos-tab',
+    avances: 'btn-avances-tab',
+    acopios: 'btn-acopios-tab',
     resumen: 'btn-resumen-tab',
     reportes: 'btn-reportes-tab',
     excel: 'btn-excel-tab',
@@ -2388,6 +2670,8 @@ function showTab(t) {
   if (tabBtn) tabBtn.classList.add('active');
   if (t === 'db') renderDB();
   if (t === 'graficos') renderDashboard();
+  if (t === 'avances') initAvancesTab();
+  if (t === 'acopios') initAcopiosTab();
   if (t === 'pendientes') renderPendientes();
   if (t === 'resumen') initResumenTab();
   if (t === 'reportes') initReportesTab();
@@ -2554,15 +2838,55 @@ function fmtFecha(val) {
   return val;
 }
 
+// FASE 2: filtro "solo tickets de Barcaza" (toggle) — estado global de la pestaña DB
+window.soloBarcazaDB = false;
+function toggleSoloBarcaza() {
+  window.soloBarcazaDB = !window.soloBarcazaDB;
+  const btn = document.getElementById('btn-solo-barcaza');
+  if (btn) btn.className = window.soloBarcazaDB ? 'btn btn-primary' : 'btn btn-secondary';
+  renderDB();
+}
+window.toggleSoloBarcaza = toggleSoloBarcaza;
+
 function renderDB() {
   const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
   const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
-  const filtered = combinados.filter(r =>
-    ['boleta','folio','economico','placas','material','banco','destino','rango'].some(k => (r[k]||'').toLowerCase().includes(q))
+  let filtered = combinados.filter(r =>
+    ['boleta','folio','economico','placas','material','banco','destino','rango','folio_barcaza'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
+  if (window.soloBarcazaDB) filtered = filtered.filter(r => r.tipo_camion === 'BARCAZA');
+
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
   document.getElementById('stat-total').textContent     = filtered.length;
   document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
+
+  // FASE 2: si el filtro aísla un único folio_barcaza con 2+ tickets, mostrar
+  // un panel-resumen con el total de toneladas y el desglose por cuerpo/destino.
+  const resumenEl = document.getElementById('barcaza-resumen-panel');
+  if (resumenEl) {
+    const folios = [...new Set(filtered.map(r => r.folio_barcaza).filter(Boolean))];
+    if (folios.length === 1 && filtered.filter(r => r.folio_barcaza === folios[0]).length >= 2) {
+      const ticketsFolio = filtered.filter(r => r.folio_barcaza === folios[0]);
+      const totalTon = ticketsFolio.reduce((s,r)=>s+(r.ton||(r.neto_kg||0)/1000),0);
+      const porDestino = {};
+      ticketsFolio.forEach(r => { const k = r.destino||'Sin destino'; porDestino[k] = (porDestino[k]||0) + (r.ton||(r.neto_kg||0)/1000); });
+      resumenEl.style.display = 'block';
+      resumenEl.innerHTML = `
+        <div class="slicers-card" style="border-color:var(--accent);">
+          <h3>🚢 Barcaza ${escHtml(folios[0])} — resumen</h3>
+          <div style="font-size:12.5px;">
+            <strong>${ticketsFolio.length}</strong> ticket(s) · <strong>${totalTon.toLocaleString('es-MX',{maximumFractionDigits:2})} t</strong> en total
+          </div>
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
+            ${Object.entries(porDestino).map(([d,t]) => `<span class="badge badge-green">${escHtml(d)}: ${t.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span>`).join('')}
+          </div>
+        </div>`;
+    } else {
+      resumenEl.style.display = 'none';
+      resumenEl.innerHTML = '';
+    }
+  }
+
   const list = document.getElementById('records-list');
   if (!filtered.length) {
     list.innerHTML = `<div class="empty-state">
@@ -2580,6 +2904,8 @@ function renderDB() {
           ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
           ${r.banco   ? '<span class="badge badge-blue">'+escHtml(r.banco)+'</span>'   : ''}
           ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
+          ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
+          ${r.concepto === 'TRANSFERENCIA_ACOPIOS' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⚠️ Transferencia</span>' : ''}
         </div>
       </div>
       <div class="rec-peso">
@@ -2747,6 +3073,12 @@ function getDashboardFiltered() {
     if (!r.fecha1) return false;
     if (desde && r.fecha1 < desde) return false;
     if (hasta && r.fecha1 > hasta) return false;
+    // FASE 6: esta pestaña ("Suministros") solo debe reflejar material que salió
+    // de un Banco de materiales, sin importar su destino final (Acopio o
+    // Rompeolas) — sirve para conciliar contra el banco y el sindicato.
+    // Registros anteriores a la Fase 1 no tienen origen_tipo: se asumen BANCO
+    // (siempre lo fueron, ya que el campo "Acopio" como origen no existía).
+    if ((r.origen_tipo || 'BANCO') !== 'BANCO') return false;
     if (bancos.length    && !bancos.includes(r.banco))    return false;
     if (materiales.length && !materiales.includes(r.material)) return false;
     if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
@@ -2825,17 +3157,36 @@ function renderDashboard() {
     }
   });
 
+  // FASE 7: la vista puede ser 'mensual' (default) o 'anual' — la obra dura
+  // ~5 años y la vista mensual se vuelve muy extensa para verla completa.
+  const vistaMeses = window.dashVistaMeses || 'mensual';
+  const lblEl = document.getElementById('lbl-meses-o-anos');
+  if (lblEl) lblEl.textContent = vistaMeses === 'anual' ? 'AÑO' : 'MES';
+  const btnM = document.getElementById('btn-vista-mensual');
+  const btnA = document.getElementById('btn-vista-anual');
+  if (btnM && btnA) {
+    btnM.className = vistaMeses === 'mensual' ? 'btn btn-primary' : 'btn btn-secondary';
+    btnA.className = vistaMeses === 'anual'   ? 'btn btn-primary' : 'btn btn-secondary';
+  }
+
   const porMes = {};
   filtered.forEach(r => {
     if (!r.fecha1) return;
     const [y, m] = r.fecha1.split('-');
-    const key = `${y}-${m}`;
-    const dObj = new Date(parseInt(y), parseInt(m) - 1, 1, 0, 0, 0);
-    const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
-    const label = `${mesStr}\n${y}`;
     const ton = r.ton || (r.neto_kg || 0) / 1000;
-    if (!porMes[key]) porMes[key] = { label, val: 0 };
-    porMes[key].val += ton;
+    if (vistaMeses === 'anual') {
+      const key = y;
+      const label = `${y}`;
+      if (!porMes[key]) porMes[key] = { label, val: 0 };
+      porMes[key].val += ton;
+    } else {
+      const key = `${y}-${m}`;
+      const dObj = new Date(parseInt(y), parseInt(m) - 1, 1, 0, 0, 0);
+      const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
+      const label = `${mesStr}\n${y}`;
+      if (!porMes[key]) porMes[key] = { label, val: 0 };
+      porMes[key].val += ton;
+    }
   });
 
   const mesesKeys = Object.keys(porMes).sort();
@@ -2872,6 +3223,128 @@ function renderDashboard() {
 
 window.renderDashboard         = renderDashboard;
 window.limpiarFiltrosDashboard = limpiarFiltrosDashboard;
+
+function cambiarVistaMeses(vista) {
+  window.dashVistaMeses = vista;
+  renderDashboard();
+}
+window.cambiarVistaMeses = cambiarVistaMeses;
+
+// ══════════════════════════════════════════════════════
+// FASE 4 — Pestaña "Avances" (avance de colocación vs. catálogo de metas)
+// ══════════════════════════════════════════════════════
+function barraHtml(pct, completo) {
+  const pctClamp = Math.min(100, pct);
+  const color = completo ? 'var(--accent)' : (pct > 85 ? 'var(--warning)' : 'var(--info)');
+  return `<div style="background:#eef1f0;border-radius:999px;height:8px;overflow:hidden;margin-top:4px;">
+    <div style="background:${color};height:100%;width:${pctClamp}%;"></div>
+  </div>`;
+}
+
+window.initAvancesTab = async function(forzar) {
+  const wrap = document.getElementById('avances-content');
+  if (!wrap) return;
+  const datos = await asegurarDatosAvancesAcopios(forzar);
+  if (!datos) return;
+  renderAvances(datos);
+};
+
+function renderAvances(datos) {
+  const wrap = document.getElementById('avances-content');
+  if (!wrap) return;
+  const av = computeAvances(datos);
+  const ac = computeAcopios(datos);
+  const alertas = computeAlertasAvanceAcopio(av, ac);
+  const t = av.totales;
+
+  const kpiHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="val">${t.colocadoGeneral.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado total (rompeolas + muro)</div></div>
+      <div class="kpi-card"><div class="val">${t.totalGeneral.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Meta total (catálogo + muro)</div></div>
+      <div class="kpi-card"><div class="val">${((t.colocadoGeneral/t.totalGeneral)*100).toFixed(1)}%</div><div class="lbl">Avance global</div></div>
+      <div class="kpi-card"><div class="val">${t.totalMarino.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado por mar</div></div>
+      <div class="kpi-card"><div class="val">${t.totalTerrestre.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado por tierra</div></div>
+      <div class="kpi-card"><div class="val">${av.muro.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${av.muro.cantidad.toLocaleString('es-MX')} t</div><div class="lbl">Muro (${av.muro.pct.toFixed(1)}%)</div></div>
+    </div>`;
+
+  const alertasHtml = alertas.length ? `
+    <div class="chart-card">
+      <h3>⚠️ Alertas de suministro vs. colocación</h3>
+      ${alertas.map(a => `
+        <div style="border-left:3px solid ${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'};background:${a.alerta.tipo==='sobre-envio'?'var(--danger-light)':'var(--warning-light)'};padding:8px 10px;border-radius:6px;margin-bottom:8px;font-size:12.5px;color:${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'}">
+          ${escHtml(a.alerta.msg)}
+        </div>`).join('')}
+    </div>` : `<div class="chart-card"><h3>✅ Sin alertas</h3><p style="font-size:12.5px;color:var(--text-muted)">No hay descuadres detectados entre lo suministrado a acopio y lo colocado en rompeolas.</p></div>`;
+
+  const cuerpos = [...new Set(av.filas.map(f => f.cuerpo))];
+  const tablasHtml = cuerpos.map(cuerpo => {
+    const filas = av.filas.filter(f => f.cuerpo === cuerpo);
+    const metaCuerpo = filas.reduce((s,f)=>s+f.cantidad,0);
+    const colocadoCuerpo = filas.reduce((s,f)=>s+f.colocado,0);
+    return `
+    <div class="chart-card">
+      <h3>${escHtml(cuerpo)} — ${colocadoCuerpo.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${metaCuerpo.toLocaleString('es-MX',{maximumFractionDigits:2})} t (${((colocadoCuerpo/metaCuerpo)*100).toFixed(1)}%)</h3>
+      ${filas.map(f => `
+        <div style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;">
+            <span><strong>${escHtml(nombreMaterialLegible(f.material))}</strong> · ${escHtml(f.rango)}</span>
+            <span>${f.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${f.cantidad.toLocaleString('es-MX',{maximumFractionDigits:2})} t ${f.completo ? '✅' : ''}</span>
+          </div>
+          ${barraHtml(f.pct, f.completo)}
+          ${f.exceso > 0 ? `<div style="font-size:11px;color:var(--danger);margin-top:2px;">⚠️ Excedente de ${f.exceso.toLocaleString('es-MX',{maximumFractionDigits:2})} t sobre la meta</div>` : ''}
+        </div>`).join('')}
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = kpiHtml + alertasHtml + tablasHtml;
+}
+window.renderAvances = renderAvances;
+
+function nombreMaterialLegible(m) {
+  return { 'NUCLEO':'Núcleo', 'SECUNDARIA 2':'Secundaria 2', 'SECUNDARIA 1':'Secundaria 1', 'CORAZA':'Coraza', 'BERMA':'Berma', 'BERMA DE APOYO':'Berma de apoyo' }[m] || m;
+}
+
+// ══════════════════════════════════════════════════════
+// FASE 5 — Pestaña "Acopios" (inventario disponible por acopio)
+// ══════════════════════════════════════════════════════
+window.initAcopiosTab = async function(forzar) {
+  const wrap = document.getElementById('acopios-content');
+  if (!wrap) return;
+  const datos = await asegurarDatosAvancesAcopios(forzar);
+  if (!datos) return;
+  renderAcopios(datos);
+};
+
+function renderAcopios(datos) {
+  const wrap = document.getElementById('acopios-content');
+  if (!wrap) return;
+  const ac = computeAcopios(datos);
+
+  const nombreAcopio = { 'ACOPIO MARINO': '🌊 Acopio Marino', 'ACOPIO TERRESTRE': '🚚 Acopio Terrestre' };
+
+  const html = ['ACOPIO MARINO','ACOPIO TERRESTRE'].map(acopio => {
+    const filas = ac.porAcopio[acopio] || [];
+    const totalExistencia = filas.reduce((s,f)=>s+f.existencia,0);
+    const totalEntradas    = filas.reduce((s,f)=>s+f.entradas,0);
+    const totalSalidas     = filas.reduce((s,f)=>s+f.salidas,0);
+    return `
+    <div class="chart-card">
+      <h3>${nombreAcopio[acopio]} — Existencia actual: ${totalExistencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t</h3>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">Entradas históricas: ${totalEntradas.toLocaleString('es-MX',{maximumFractionDigits:2})} t &nbsp;·&nbsp; Salidas históricas: ${totalSalidas.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div>
+      ${filas.length ? filas.map(f => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12.5px;">
+          <span><strong>${escHtml(nombreMaterialLegible(f.material))}</strong> · ${escHtml(f.rango)}</span>
+          <span style="text-align:right;">
+            <div style="font-weight:700;color:${f.existencia < 0 ? 'var(--danger)' : 'var(--accent)'}">${f.existencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div>
+            <div style="font-size:10px;color:var(--text-muted)">+${f.entradas.toLocaleString('es-MX',{maximumFractionDigits:2})} / -${f.salidas.toLocaleString('es-MX',{maximumFractionDigits:2})}</div>
+          </span>
+        </div>`).join('') : '<p style="font-size:12.5px;color:var(--text-muted)">Sin movimientos registrados todavía.</p>'}
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = html;
+}
+window.renderAcopios = renderAcopios;
 
 // ══════════════════════════════════════════════════════
 // PENDIENTES

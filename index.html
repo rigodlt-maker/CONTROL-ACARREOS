@@ -783,13 +783,18 @@ window.saveRecord = async function() {
   }
   if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
-  if (!data.banco)        { alert('Selecciona el banco de origen.'); return; }
+  if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
     if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
     if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+  }
+  // Caso excepcional: transferencia entre acopios (Acopio -> Acopio). Se permite, pero se pide confirmación
+  // explícita para evitar que se genere por un error de selección en el formulario.
+  if (data.concepto === 'TRANSFERENCIA_ACOPIOS') {
+    if (!confirm('Este viaje es una TRANSFERENCIA ENTRE ACOPIOS (' + data.banco + ' → ' + data.destino + '), un caso excepcional. ¿Confirmas que es correcto?')) return;
   }
   
   const saveBtn = document.getElementById('btn-guardar');
@@ -864,9 +869,16 @@ window.editRecord = function() {
     const el = document.getElementById(id); if (el) el.value = v || '';
   });
   document.getElementById('f-material').value = r.material || '';
+  // Registros anteriores a la Fase 1 no tienen origen_tipo guardado: se asume BANCO
+  // (era la única opción de origen que existía antes de este cambio).
+  document.getElementById('f-origen-tipo').value = r.origen_tipo || 'BANCO';
+  updateOrigenOptions();
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
   document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
+  toggleFolioBarcaza();
+  document.getElementById('f-folio-barcaza').value = r.folio_barcaza || '';
+  checkTransferenciaAcopios();
   document.getElementById('f-pendiente').checked = (r.status === 'pendiente');
   togglePendienteForm();
   calcCiclo(); calcPesos(); updateRangos();
@@ -964,12 +976,15 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
     <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
     <div class="detail-row"><span class="dk"># Económico</span><span class="dv">${fmt(r.economico)}</span></div>
-    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${escHtml(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : r.tipo_camion || '—'))}</span></div>
+    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${escHtml(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : (r.tipo_camion === 'BARCAZA' ? 'Barcaza' : r.tipo_camion || '—')))}</span></div>
+    ${r.folio_barcaza ? `<div class="detail-row"><span class="dk">Folio de barcaza</span><span class="dv">${fmt(r.folio_barcaza)}</span></div>` : ''}
     <div class="detail-section" style="margin-top:8px">Material y Destino</div>
     <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
     <div class="detail-row"><span class="dk">Rango</span><span class="dv">${fmt(r.rango)}</span></div>
-    <div class="detail-row"><span class="dk">Banco (Origen)</span><span class="dv">${fmt(r.banco)}</span></div>
+    <div class="detail-row"><span class="dk">Tipo de origen</span><span class="dv">${r.origen_tipo === 'ACOPIO' ? 'Acopio' : 'Banco'}</span></div>
+    <div class="detail-row"><span class="dk">Origen</span><span class="dv">${fmt(r.banco)}</span></div>
     <div class="detail-row"><span class="dk">Destino</span><span class="dv">${fmt(r.destino)}</span></div>
+    <div class="detail-row"><span class="dk">Concepto</span><span class="dv" style="font-weight:600">${r.concepto ? nombreConcepto(r.concepto) : '—'}</span></div>
     <div class="detail-section" style="margin-top:8px">Pesos</div>
     <div class="detail-row"><span class="dk">Peso Bruto</span><span class="dv">${fmtNum(r.bruto_kg,' kg')}</span></div>
     <div class="detail-row"><span class="dk">Tara</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtNum(r.tara_kg,' kg')}</span></div>
@@ -1432,11 +1447,17 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     </div>
     <div class="field-row">
       <label>Tipo de camión *</label>
-      <select id="f-tipo-camion">
+      <select id="f-tipo-camion" onchange="toggleFolioBarcaza()">
         <option value="">— Seleccionar —</option>
         <option value="VOLTEO">Volteo</option>
         <option value="GONDOLA">Góndola</option>
+        <option value="BARCAZA">Barcaza</option>
       </select>
+    </div>
+    <div class="field-row" id="wrap-folio-barcaza" style="display:none">
+      <label>Folio de barcaza (opcional)</label>
+      <input type="text" id="f-folio-barcaza" placeholder="Ej: BARCAZA-014"/>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Úsalo para agrupar todos los tickets que cargaron la misma barcaza. No afecta los cálculos, solo trazabilidad en reportes.</div>
     </div>
   </div>
 
@@ -1467,21 +1488,21 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
       </div>
     </div>
     <div class="range-hint" id="range-hint"></div>
+    <div class="field-row">
+      <label>Tipo de origen *</label>
+      <select id="f-origen-tipo" onchange="updateOrigenOptions()">
+        <option value="BANCO">Banco de materiales</option>
+        <option value="ACOPIO">Acopio</option>
+      </select>
+    </div>
     <div class="field-row two-col">
       <div>
-        <label>Banco (Origen) *</label>
-        <select id="f-banco">
-          <option value="">— Seleccionar —</option>
-          <option value="EL TAJO">El Tajo</option>
-          <option value="TRITURA">Tritura</option>
-          <option value="MOZOMBOA1">Mozomboa GAMI</option>
-          <option value="MOZOMBOA2">Mozomboa LERMA</option>
-          <option value="MOZOMBOA3">Mozomboa PORFIRIO</option>
-        </select>
+        <label id="f-origen-label">Origen (Banco) *</label>
+        <select id="f-banco"></select>
       </div>
       <div>
         <label>Destino *</label>
-        <select id="f-destino" onchange="updateRangos()">
+        <select id="f-destino" onchange="updateRangos(); checkTransferenciaAcopios();">
           <option value="">— Seleccionar —</option>
           <option value="ACOPIO MARINO">Acopio Marino</option>
           <option value="ACOPIO TERRESTRE">Acopio Terrestre</option>
@@ -1494,6 +1515,9 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
           <option value="CUERPO 5">Cuerpo 5</option>
         </select>
       </div>
+    </div>
+    <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:#fff3cd;border:1px solid #e0a800;border-radius:var(--radius);color:#7a5c00;font-size:12px;">
+      ⚠️ Estás registrando un movimiento de <strong>Acopio → Acopio</strong> (transferencia entre acopios). Es un caso excepcional — confirma que es correcto antes de guardar.
     </div>
   </div>
 
@@ -2209,6 +2233,96 @@ const RANGOS_ACOPIO = {
   'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
 };
 
+// ══════════════════════════════════════════════════════
+// FASE 1 — Origen dinámico (Banco / Acopio), Barcaza y Concepto de negocio
+// ══════════════════════════════════════════════════════
+const ORIGEN_BANCOS = [
+  { value: 'EL TAJO',     label: 'El Tajo' },
+  { value: 'TRITURA',     label: 'Tritura' },
+  { value: 'MOZOMBOA1',   label: 'Mozomboa GAMI' },
+  { value: 'MOZOMBOA2',   label: 'Mozomboa LERMA' },
+  { value: 'MOZOMBOA3',   label: 'Mozomboa PORFIRIO' }
+];
+const ORIGEN_ACOPIOS = [
+  { value: 'ACOPIO MARINO',    label: 'Acopio Marino' },
+  { value: 'ACOPIO TERRESTRE', label: 'Acopio Terrestre' }
+];
+
+// Repuebla el select #f-banco (campo "Origen") según si el tipo de origen
+// elegido es BANCO o ACOPIO. El id del select se conserva como "f-banco"
+// por compatibilidad con el resto de la app (filtros, reportes, Excel, etc.)
+// que ya leen el campo `banco` de cada registro como "de dónde salió el material".
+function updateOrigenOptions() {
+  const tipo = document.getElementById('f-origen-tipo').value;
+  const sel  = document.getElementById('f-banco');
+  const label = document.getElementById('f-origen-label');
+  const opciones = tipo === 'ACOPIO' ? ORIGEN_ACOPIOS : ORIGEN_BANCOS;
+  const valorPrevio = sel.value;
+  sel.innerHTML = '<option value="">— Seleccionar —</option>' +
+    opciones.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  // Si el valor previo sigue siendo válido en la nueva lista, se conserva (útil al editar un registro)
+  if (opciones.some(o => o.value === valorPrevio)) sel.value = valorPrevio;
+  label.textContent = tipo === 'ACOPIO' ? 'Origen (Acopio) *' : 'Origen (Banco) *';
+  checkTransferenciaAcopios();
+}
+window.updateOrigenOptions = updateOrigenOptions;
+
+function toggleFolioBarcaza() {
+  const esBarcaza = document.getElementById('f-tipo-camion').value === 'BARCAZA';
+  document.getElementById('wrap-folio-barcaza').style.display = esBarcaza ? 'block' : 'none';
+  if (!esBarcaza) document.getElementById('f-folio-barcaza').value = '';
+}
+window.toggleFolioBarcaza = toggleFolioBarcaza;
+
+// Muestra el aviso cuando el movimiento capturado es Acopio → Acopio
+// (transferencia entre acopios): caso excepcional pero posible en campo.
+function checkTransferenciaAcopios() {
+  const origenTipo = document.getElementById('f-origen-tipo').value;
+  const destino     = document.getElementById('f-destino').value;
+  const esTransferencia = origenTipo === 'ACOPIO' && ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(destino);
+  const aviso = document.getElementById('alerta-transferencia-acopios');
+  if (aviso) aviso.style.display = esTransferencia ? 'block' : 'none';
+  return esTransferencia;
+}
+window.checkTransferenciaAcopios = checkTransferenciaAcopios;
+
+// Deriva el "concepto" de negocio del viaje a partir de origen, destino y tipo de transporte.
+// No se captura manualmente: se calcula siempre igual que en el proceso real de obra.
+//   BANCO   -> ACOPIO              => SUMINISTRO
+//   BANCO   -> ROMPEOLAS/MURO      => COLOCACION_TERRESTRE o COLOCACION_MARINA (+ suministro_y_colocacion completo)
+//   ACOPIO  -> ROMPEOLAS/MURO      => COLOCACION_TERRESTRE o COLOCACION_MARINA (completa un suministro previo)
+//   ACOPIO  -> ACOPIO              => TRANSFERENCIA_ACOPIOS (excepcional)
+function computeConcepto(origenTipo, destino, tipoCamion) {
+  const destinoEsAcopio     = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
+  const destinoEsRompeolas  = !!destino && !destinoEsAcopio; // MURO, MORRO, CUERPO 1‑5
+  const esMedioMarino       = tipoCamion === 'BARCAZA';
+
+  if (origenTipo === 'ACOPIO' && destinoEsAcopio) {
+    return { concepto: 'TRANSFERENCIA_ACOPIOS', suministro_y_colocacion: false };
+  }
+  if (origenTipo === 'BANCO' && destinoEsAcopio) {
+    return { concepto: 'SUMINISTRO', suministro_y_colocacion: false };
+  }
+  if (origenTipo === 'BANCO' && destinoEsRompeolas) {
+    return { concepto: esMedioMarino ? 'COLOCACION_MARINA' : 'COLOCACION_TERRESTRE', suministro_y_colocacion: true };
+  }
+  if (origenTipo === 'ACOPIO' && destinoEsRompeolas) {
+    return { concepto: esMedioMarino ? 'COLOCACION_MARINA' : 'COLOCACION_TERRESTRE', suministro_y_colocacion: false };
+  }
+  return { concepto: '', suministro_y_colocacion: false };
+}
+window.computeConcepto = computeConcepto;
+
+function nombreConcepto(c) {
+  return {
+    'SUMINISTRO': 'Suministro',
+    'COLOCACION_TERRESTRE': 'Colocación (medios terrestres)',
+    'COLOCACION_MARINA': 'Colocación (medios marinos)',
+    'TRANSFERENCIA_ACOPIOS': 'Transferencia entre acopios'
+  }[c] || '—';
+}
+window.nombreConcepto = nombreConcepto;
+
 // ── Escapado XSS: sanitiza cualquier valor antes de insertarlo en innerHTML ──
 function escHtml(v) {
   if (v === null || v === undefined) return '';
@@ -2256,6 +2370,7 @@ function initDateHints() {
 }
 window.initDateHints = initDateHints;
 document.addEventListener('DOMContentLoaded', initDateHints);
+document.addEventListener('DOMContentLoaded', () => { if (document.getElementById('f-banco')) updateOrigenOptions(); });
 
 function showTab(t) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -2352,6 +2467,10 @@ function getFormData() {
   const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
   const neto  = bruto - tara;
   const esPendiente = document.getElementById('f-pendiente').checked;
+  const origenTipo  = document.getElementById('f-origen-tipo').value || 'BANCO';
+  const destino     = document.getElementById('f-destino').value;
+  const tipoCamion  = document.getElementById('f-tipo-camion').value;
+  const { concepto, suministro_y_colocacion } = computeConcepto(origenTipo, destino, tipoCamion);
   return {
     fecha1:   document.getElementById('f-fecha1').value,
     hora1:    document.getElementById('f-hora1').value,
@@ -2363,12 +2482,16 @@ function getFormData() {
     economico:document.getElementById('f-economico').value.trim().toUpperCase(),
     placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
     material: document.getElementById('f-material').value,
-    rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(document.getElementById('f-destino').value)
+    rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(destino)
                 ? document.getElementById('f-rango-select').value
                 : document.getElementById('f-rango').value,
-    banco:    document.getElementById('f-banco').value,
-    destino:  document.getElementById('f-destino').value,
-    tipo_camion: document.getElementById('f-tipo-camion').value,
+    banco:    document.getElementById('f-banco').value, // "origen" — se conserva el nombre de campo por compatibilidad
+    origen_tipo: origenTipo, // 'BANCO' | 'ACOPIO'
+    destino:  destino,
+    tipo_camion: tipoCamion, // 'VOLTEO' | 'GONDOLA' | 'BARCAZA'
+    folio_barcaza: tipoCamion === 'BARCAZA' ? document.getElementById('f-folio-barcaza').value.trim() : '',
+    concepto: concepto, // 'SUMINISTRO' | 'COLOCACION_TERRESTRE' | 'COLOCACION_MARINA' | 'TRANSFERENCIA_ACOPIOS'
+    suministro_y_colocacion: suministro_y_colocacion, // true solo cuando Banco -> Rompeolas/Muro directo
     bruto_kg: bruto, tara_kg: esPendiente ? 0 : tara, neto_kg: esPendiente ? 0 : neto,
     ton:      (!esPendiente && neto > 0) ? parseFloat((neto / 1000).toFixed(3)) : 0,
     status:   esPendiente ? 'pendiente' : 'completo',
@@ -2381,9 +2504,12 @@ function clearForm() {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('f-material').selectedIndex = 0;
-  document.getElementById('f-banco').selectedIndex    = 0;
+  document.getElementById('f-origen-tipo').selectedIndex = 0;
+  updateOrigenOptions();
   document.getElementById('f-destino').selectedIndex  = 0;
   document.getElementById('f-tipo-camion').selectedIndex = 0;
+  toggleFolioBarcaza();
+  checkTransferenciaAcopios();
   document.getElementById('f-ciclo').value = '';
   document.getElementById('f-rango').value = '';
   document.getElementById('f-rango').style.display = 'block';

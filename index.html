@@ -2421,6 +2421,31 @@ function computeConcepto(origenTipo, destino, tipoCamion) {
 }
 window.computeConcepto = computeConcepto;
 
+// FASE 8 — Fallback de concepto para registros anteriores a la Fase 1.
+// Confirmado con Rod (jul-2026): antes de la Fase 1 no existía el concepto de
+// "Acopio" como origen — todo viaje capturado salía de Banco. Por lo tanto,
+// para un registro sin r.concepto guardado, es seguro inferirlo con
+// computeConcepto('BANCO', r.destino, r.tipo_camion):
+//   - si destino era un Acopio           => SUMINISTRO
+//   - si destino era Rompeolas/Muro/etc  => COLOCACION_TERRESTRE o MARINA
+//     (con suministro_y_colocacion=true, el caso extraordinario que Rod
+//     describió como "esos son suministro y colocación").
+// tipo_camion sí existía como campo obligatorio desde antes de la Fase 1
+// (ver línea ~794), así que nunca falta el dato necesario para inferir.
+//
+// Uso deliberadamente acotado: solo Avances y Acopios consumen esta función,
+// porque son las dos pestañas que SUMAN toneladas para decisiones de obra
+// (metas, alertas). Base de Datos/Reportes/Resumen/Excel siguen mostrando el
+// concepto tal cual está guardado (vacío/"—" si el registro es viejo) porque
+// son vistas de auditoría línea por línea, no de agregados — decisión
+// documentada, no un olvido. Si más adelante se requiere ahí también, se
+// replica este mismo patrón en una entrega aparte.
+function conceptoEfectivo(r) {
+  if (r.concepto) return r.concepto;
+  return computeConcepto('BANCO', r.destino, r.tipo_camion).concepto;
+}
+window.conceptoEfectivo = conceptoEfectivo;
+
 function nombreConcepto(c) {
   return {
     'SUMINISTRO': 'Suministro',
@@ -2483,7 +2508,8 @@ function tonOf(r) { return r.ton || (r.neto_kg || 0) / 1000; }
 // duplica: cada ticket es un pesaje independiente y solo el que llega al
 // rompeolas cuenta aquí (Banco→Acopio no cuenta como colocación).
 function esTicketColocacion(r) {
-  return r.concepto === 'COLOCACION_TERRESTRE' || r.concepto === 'COLOCACION_MARINA';
+  const c = conceptoEfectivo(r);
+  return c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA';
 }
 
 // Calcula, para cada fila del catálogo (Cuerpo+Material+Rango), cuánto se ha
@@ -2498,7 +2524,7 @@ function computeAvances(datos) {
     if (!esTicketColocacion(r)) return;
     const t = tonOf(r);
     totalColocado += t;
-    if (r.concepto === 'COLOCACION_MARINA') totalMarino += t; else totalTerrestre += t;
+    if (conceptoEfectivo(r) === 'COLOCACION_MARINA') totalMarino += t; else totalTerrestre += t;
     if (r.destino === 'MURO') { colocadoMuro += t; return; }
     const key = (r.destino||'') + '|' + (r.material||'') + '|' + (r.rango||'');
     colocadoPorFila[key] = (colocadoPorFila[key] || 0) + t;
@@ -2546,11 +2572,12 @@ function computeAcopios(datos) {
 
   datos.forEach(r => {
     const t = tonOf(r);
-    if (r.concepto === 'SUMINISTRO' && ACOPIOS.includes(r.destino)) {
+    const c = conceptoEfectivo(r); // Fase 8: infiere para registros sin r.concepto (pre-Fase 1)
+    if (c === 'SUMINISTRO' && ACOPIOS.includes(r.destino)) {
       addMov(r.destino, r.material, r.rango, 'entradas', t);
-    } else if ((r.concepto === 'COLOCACION_TERRESTRE' || r.concepto === 'COLOCACION_MARINA') && r.origen_tipo === 'ACOPIO' && ACOPIOS.includes(r.banco)) {
+    } else if ((c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA') && r.origen_tipo === 'ACOPIO' && ACOPIOS.includes(r.banco)) {
       addMov(r.banco, r.material, r.rango, 'salidas', t);
-    } else if (r.concepto === 'TRANSFERENCIA_ACOPIOS') {
+    } else if (c === 'TRANSFERENCIA_ACOPIOS') {
       if (ACOPIOS.includes(r.banco))   addMov(r.banco,   r.material, r.rango, 'salidas', t);
       if (ACOPIOS.includes(r.destino)) addMov(r.destino, r.material, r.rango, 'entradas', t);
     }

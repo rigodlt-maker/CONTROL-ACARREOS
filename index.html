@@ -792,6 +792,10 @@ window.saveRecord = async function() {
   if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
+  { // FASE 10: vertido es obligatorio solo cuando el destino es colocación (Cuerpo/Muro/Morro)
+    const destinoEsAcopio = data.destino === 'ACOPIO MARINO' || data.destino === 'ACOPIO TERRESTRE';
+    if (!!data.destino && !destinoEsAcopio && !data.vertido) { alert('Selecciona el vertido (Marino o Terrestre).'); return; }
+  }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
     if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
@@ -882,6 +886,8 @@ window.editRecord = function() {
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
   document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
+  toggleVertido(); // FASE 10: muestra/oculta el campo según destino, y resetea vertido
+  document.getElementById('f-vertido').value = r.vertido || '';
   toggleFolioBarcaza();
   document.getElementById('f-folio-barcaza').value = r.folio_barcaza || '';
   checkTransferenciaAcopios();
@@ -982,7 +988,8 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Folio</span><span class="dv">${fmt(r.folio)}</span></div>
     <div class="detail-row"><span class="dk">Placas</span><span class="dv">${fmt(r.placas)}</span></div>
     <div class="detail-row"><span class="dk"># Económico</span><span class="dv">${fmt(r.economico)}</span></div>
-    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${escHtml(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : (r.tipo_camion === 'BARCAZA' ? 'Barcaza' : r.tipo_camion || '—')))}</span></div>
+    <div class="detail-row"><span class="dk">Tipo de camión</span><span class="dv">${escHtml(r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : (r.tipo_camion === 'ARTICULADO' ? 'Articulado' : r.tipo_camion || '—')))}</span></div>
+    ${r.vertido ? `<div class="detail-row"><span class="dk">Vertido</span><span class="dv">${r.vertido === 'MARINO' ? '🌊 Marino' : '🚚 Terrestre'}</span></div>` : ''}
     ${r.folio_barcaza ? `<div class="detail-row"><span class="dk">Folio de barcaza</span><span class="dv">${fmt(r.folio_barcaza)}</span></div>` : ''}
     <div class="detail-section" style="margin-top:8px">Material y Destino</div>
     <div class="detail-row"><span class="dk">Material</span><span class="dv">${fmt(r.material)}</span></div>
@@ -1461,17 +1468,17 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     </div>
     <div class="field-row">
       <label>Tipo de camión *</label>
-      <select id="f-tipo-camion" onchange="toggleFolioBarcaza()">
+      <select id="f-tipo-camion">
         <option value="">— Seleccionar —</option>
         <option value="VOLTEO">Volteo</option>
         <option value="GONDOLA">Góndola</option>
-        <option value="BARCAZA">Barcaza</option>
+        <option value="ARTICULADO">Articulado</option>
       </select>
     </div>
     <div class="field-row" id="wrap-folio-barcaza" style="display:none">
       <label>Folio de barcaza (opcional)</label>
       <input type="text" id="f-folio-barcaza" placeholder="Ej: BARCAZA-014"/>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Úsalo para agrupar todos los tickets que cargaron la misma barcaza. No afecta los cálculos, solo trazabilidad en reportes.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Úsalo para agrupar todos los tickets que corresponden al mismo viaje de barcaza. No afecta los cálculos, solo trazabilidad en reportes.</div>
     </div>
   </div>
 
@@ -1516,7 +1523,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
       </div>
       <div>
         <label>Destino *</label>
-        <select id="f-destino" onchange="updateRangos(); checkTransferenciaAcopios();">
+        <select id="f-destino" onchange="updateRangos(); checkTransferenciaAcopios(); toggleVertido();">
           <option value="">— Seleccionar —</option>
           <option value="ACOPIO MARINO">Acopio Marino</option>
           <option value="ACOPIO TERRESTRE">Acopio Terrestre</option>
@@ -1529,6 +1536,15 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
           <option value="CUERPO 5">Cuerpo 5</option>
         </select>
       </div>
+    </div>
+    <div class="field-row" id="wrap-vertido" style="display:none">
+      <label>Vertido *</label>
+      <select id="f-vertido" onchange="toggleFolioBarcaza()">
+        <option value="">— Seleccionar —</option>
+        <option value="TERRESTRE">Terrestre</option>
+        <option value="MARINO">Marino</option>
+      </select>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Determina si esta colocación cuenta como marina o terrestre (Fase 10 — reemplaza el uso de "Barcaza" como tipo de camión).</div>
     </div>
     <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:#fff3cd;border:1px solid #e0a800;border-radius:var(--radius);color:#7a5c00;font-size:12px;">
       ⚠️ Estás registrando un movimiento de <strong>Acopio → Acopio</strong> (transferencia entre acopios). Es un caso excepcional — confirma que es correcto antes de guardar.
@@ -1918,6 +1934,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
           <div class="ms-dropdown" id="ms-resumen-tipocamion-dd">
             <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-VOLTEO">Volteo</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-GONDOLA">Góndola</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-tc-ARTICULADO" value="ARTICULADO" onchange="onMsChange('resumen-tipocamion')"><label for="cb-resumen-tc-ARTICULADO">Articulado</label></div>
           </div>
         </div>
       </div>
@@ -2088,6 +2105,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
           <div class="ms-dropdown" id="ms-reportes-tipocamion-dd">
             <div class="ms-option"><input type="checkbox" id="cb-reportes-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('reportes-tipocamion')"><label for="cb-reportes-tc-VOLTEO">Volteo</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('reportes-tipocamion')"><label for="cb-reportes-tc-GONDOLA">Góndola</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-tc-ARTICULADO" value="ARTICULADO" onchange="onMsChange('reportes-tipocamion')"><label for="cb-reportes-tc-ARTICULADO">Articulado</label></div>
           </div>
         </div>
       </div>
@@ -2376,11 +2394,25 @@ function updateOrigenOptions() {
 window.updateOrigenOptions = updateOrigenOptions;
 
 function toggleFolioBarcaza() {
-  const esBarcaza = document.getElementById('f-tipo-camion').value === 'BARCAZA';
-  document.getElementById('wrap-folio-barcaza').style.display = esBarcaza ? 'block' : 'none';
-  if (!esBarcaza) document.getElementById('f-folio-barcaza').value = '';
+  const esMarino = document.getElementById('f-vertido').value === 'MARINO';
+  document.getElementById('wrap-folio-barcaza').style.display = esMarino ? 'block' : 'none';
+  if (!esMarino) document.getElementById('f-folio-barcaza').value = '';
 }
 window.toggleFolioBarcaza = toggleFolioBarcaza;
+
+// FASE 10 — Muestra el campo "Vertido" (Marino/Terrestre) solo cuando el
+// destino es una colocación (Cuerpo/Muro/Morro), que es el único caso donde
+// el medio marino/terrestre importa para el concepto de negocio. Reemplaza
+// la vieja inferencia por tipo_camion==='BARCAZA' (ya no existe ese tipo).
+function toggleVertido() {
+  const destino = document.getElementById('f-destino').value;
+  const destinoEsAcopio = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
+  const destinoEsRompeolas = !!destino && !destinoEsAcopio;
+  document.getElementById('wrap-vertido').style.display = destinoEsRompeolas ? 'block' : 'none';
+  if (!destinoEsRompeolas) document.getElementById('f-vertido').value = '';
+  toggleFolioBarcaza();
+}
+window.toggleVertido = toggleVertido;
 
 // Muestra el aviso cuando el movimiento capturado es Acopio → Acopio
 // (transferencia entre acopios): caso excepcional pero posible en campo.
@@ -2400,10 +2432,14 @@ window.checkTransferenciaAcopios = checkTransferenciaAcopios;
 //   BANCO   -> ROMPEOLAS/MURO      => COLOCACION_TERRESTRE o COLOCACION_MARINA (+ suministro_y_colocacion completo)
 //   ACOPIO  -> ROMPEOLAS/MURO      => COLOCACION_TERRESTRE o COLOCACION_MARINA (completa un suministro previo)
 //   ACOPIO  -> ACOPIO              => TRANSFERENCIA_ACOPIOS (excepcional)
-function computeConcepto(origenTipo, destino, tipoCamion) {
+// FASE 10: el 3er parámetro pasó de ser tipoCamion (con 'BARCAZA') a ser
+// vertido ('MARINO' | 'TERRESTRE'), capturado con un campo explícito en el
+// formulario. Ya no existe el tipo de camión "Barcaza": las barcazas se
+// cargan con camiones "Articulado", y el medio se declara aparte.
+function computeConcepto(origenTipo, destino, vertido) {
   const destinoEsAcopio     = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
   const destinoEsRompeolas  = !!destino && !destinoEsAcopio; // MURO, MORRO, CUERPO 1‑5
-  const esMedioMarino       = tipoCamion === 'BARCAZA';
+  const esMedioMarino       = vertido === 'MARINO';
 
   if (origenTipo === 'ACOPIO' && destinoEsAcopio) {
     return { concepto: 'TRANSFERENCIA_ACOPIOS', suministro_y_colocacion: false };
@@ -2442,7 +2478,11 @@ window.computeConcepto = computeConcepto;
 // replica este mismo patrón en una entrega aparte.
 function conceptoEfectivo(r) {
   if (r.concepto) return r.concepto;
-  return computeConcepto('BANCO', r.destino, r.tipo_camion).concepto;
+  // FASE 10: los registros pre-Fase-10 nunca tuvieron 'vertido' guardado; al
+  // pasar undefined, esMedioMarino da false y se infiere COLOCACION_TERRESTRE,
+  // lo cual es correcto porque los únicos registros históricos con medio
+  // marino real (tipo_camion='BARCAZA') fueron eliminados de la base (jul-2026).
+  return computeConcepto('BANCO', r.destino, r.vertido).concepto;
 }
 window.conceptoEfectivo = conceptoEfectivo;
 
@@ -2781,7 +2821,8 @@ function getFormData() {
   const origenTipo  = document.getElementById('f-origen-tipo').value || 'BANCO';
   const destino     = document.getElementById('f-destino').value;
   const tipoCamion  = document.getElementById('f-tipo-camion').value;
-  const { concepto, suministro_y_colocacion } = computeConcepto(origenTipo, destino, tipoCamion);
+  const vertido     = document.getElementById('f-vertido').value; // FASE 10: '' | 'MARINO' | 'TERRESTRE'
+  const { concepto, suministro_y_colocacion } = computeConcepto(origenTipo, destino, vertido);
   return {
     fecha1:   document.getElementById('f-fecha1').value,
     hora1:    document.getElementById('f-hora1').value,
@@ -2799,8 +2840,9 @@ function getFormData() {
     banco:    document.getElementById('f-banco').value, // "origen" — se conserva el nombre de campo por compatibilidad
     origen_tipo: origenTipo, // 'BANCO' | 'ACOPIO'
     destino:  destino,
-    tipo_camion: tipoCamion, // 'VOLTEO' | 'GONDOLA' | 'BARCAZA'
-    folio_barcaza: tipoCamion === 'BARCAZA' ? document.getElementById('f-folio-barcaza').value.trim() : '',
+    tipo_camion: tipoCamion, // 'VOLTEO' | 'GONDOLA' | 'ARTICULADO'
+    vertido: vertido, // FASE 10: '' | 'MARINO' | 'TERRESTRE' — solo aplica si destino es colocación
+    folio_barcaza: vertido === 'MARINO' ? document.getElementById('f-folio-barcaza').value.trim() : '',
     concepto: concepto, // 'SUMINISTRO' | 'COLOCACION_TERRESTRE' | 'COLOCACION_MARINA' | 'TRANSFERENCIA_ACOPIOS'
     suministro_y_colocacion: suministro_y_colocacion, // true solo cuando Banco -> Rompeolas/Muro directo
     bruto_kg: bruto, tara_kg: esPendiente ? 0 : tara, neto_kg: esPendiente ? 0 : neto,
@@ -2881,7 +2923,10 @@ function renderDB() {
   let filtered = combinados.filter(r =>
     ['boleta','folio','economico','placas','material','banco','destino','rango','folio_barcaza'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
-  if (window.soloBarcazaDB) filtered = filtered.filter(r => r.tipo_camion === 'BARCAZA');
+  // FASE 10: ya no existe tipo_camion='BARCAZA'. "Tickets de barcaza" ahora
+  // son los que tienen folio_barcaza asignado (viajes marinos cargados por
+  // camión Articulado y agrupados por folio de barcaza).
+  if (window.soloBarcazaDB) filtered = filtered.filter(r => !!r.folio_barcaza);
 
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
   document.getElementById('stat-total').textContent     = filtered.length;
@@ -3617,7 +3662,7 @@ const NOMBRES_MATERIAL = {
 };
 function nombreBanco(b)    { return NOMBRES_BANCO[b]    || b || 'Sin banco'; }
 function nombreMaterial(m) { return NOMBRES_MATERIAL[m] || m || 'Sin material'; }
-function nombreTipoCamion(t) { return t === 'GONDOLA' ? 'Góndola' : (t === 'VOLTEO' ? 'Volteo' : 'sin tipo de camión'); }
+function nombreTipoCamion(t) { return t === 'GONDOLA' ? 'Góndola' : (t === 'VOLTEO' ? 'Volteo' : (t === 'ARTICULADO' ? 'Articulado' : 'sin tipo de camión')); }
 
 function fmtFechaCorta(iso) {
   if (!iso) return '';

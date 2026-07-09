@@ -223,6 +223,7 @@ body.modal-open { position: fixed; inset: 0; overflow: hidden; width: 100%; }
 .ms-option label { cursor:pointer; flex:1; }
 .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .kpi-card { background: var(--accent-light); border: 0.5px solid rgba(15,110,86,0.25); border-radius: var(--radius); padding: 12px; text-align: center; }
+.kpi-card-wide { grid-column: 1 / -1; }
 .kpi-card .val { font-size: 20px; font-weight: 700; color: var(--accent); }
 .kpi-card .lbl { font-size: 11px; color: var(--accent); opacity: 0.85; margin-top: 2px; }
 .chart-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
@@ -2362,6 +2363,14 @@ const MURO_META_TOTAL = 20000;
 window.CATALOGO_TOTALES = CATALOGO_TOTALES;
 window.MURO_META_TOTAL  = MURO_META_TOTAL;
 
+// Avance programado a la fecha (curva de avance planeada), en % del
+// rompeolas. Jesús lo va a proporcionar — mientras tanto se deja en null y
+// la tarjeta de Avances lo muestra como "pendiente de definir". Cuando se
+// tenga el dato, poner aquí el número (ej. 0.5) o, si cambia seguido,
+// convertir esto en un campo editable desde Admin más adelante.
+const AVANCE_PROGRAMADO_PCT = null;
+window.AVANCE_PROGRAMADO_PCT = AVANCE_PROGRAMADO_PCT;
+
 // NOTA IMPORTANTE (limitación conocida, documentada para futuras fases):
 // El par (material, rango) "NUCLEO" + "0.01 a 0.50 ton" se repite en 4 cuerpos
 // distintos (Cuerpo 3, Cuerpo 4, Cuerpo 5 y Morro). El catálogo original de Rod
@@ -2683,16 +2692,20 @@ function computeAlertasAvanceAcopio(avances, acopios) {
     grupos[key].metaTotal += f.cantidad;
     grupos[key].colocadoTotal += f.colocado;
   });
+  // Formatea toneladas con comas de miles (es-MX) y 2 decimales, para que
+  // los números grandes en las alertas sean legibles (ej. "164,071.82").
+  const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   return Object.values(grupos).map(g => {
     const faltanteTotal = Math.max(0, g.metaTotal - g.colocadoTotal);
     const existencia = acopios.existenciaCombinada[g.material + '|' + g.rango] || 0;
     let alerta = null;
     if (faltanteTotal <= 0 && existencia > 0.5) {
-      alerta = { tipo: 'sobre-envio', msg: `El concepto ya está completo (${g.cuerpos.join(', ')}), pero hay ${existencia.toFixed(2)} ton de ${g.material} (${g.rango}) en acopio sin colocar. Revisa por qué se sigue suministrando.` };
+      alerta = { tipo: 'sobre-envio', msg: `El concepto ya está completo (${g.cuerpos.join(', ')}), pero hay ${fmtTon(existencia)} ton de ${g.material} (${g.rango}) en acopio sin colocar. Revisa por qué se sigue suministrando.` };
     } else if (faltanteTotal > 0 && existencia > 0 && existencia < faltanteTotal) {
-      alerta = { tipo: 'falta-suministrar', msg: `Faltan ${(faltanteTotal - existencia).toFixed(2)} ton de ${g.material} (${g.rango}) por suministrar desde banco para completar ${g.cuerpos.join(', ')} (ya hay ${existencia.toFixed(2)} ton en acopio esperando colocación).` };
+      alerta = { tipo: 'falta-suministrar', msg: `Faltan ${fmtTon(faltanteTotal - existencia)} ton de ${g.material} (${g.rango}) por suministrar desde banco para completar ${g.cuerpos.join(', ')} (ya hay ${fmtTon(existencia)} ton en acopio esperando colocación).` };
     } else if (faltanteTotal > 0 && existencia >= faltanteTotal && existencia > 0) {
-      alerta = { tipo: 'listo-para-colocar', msg: `Ya hay suficiente material en acopio (${existencia.toFixed(2)} ton de ${g.material} ${g.rango}) para completar ${g.cuerpos.join(', ')} — falta colocarlo.` };
+      alerta = { tipo: 'listo-para-colocar', msg: `Ya hay suficiente material en acopio (${fmtTon(existencia)} ton de ${g.material} ${g.rango}) para completar ${g.cuerpos.join(', ')} — falta colocarlo.` };
     }
     return { ...g, faltanteTotal, existencia, alerta };
   }).filter(g => g.alerta);
@@ -2806,12 +2819,22 @@ function calcPesos() {
 }
 
 function updateRangos() {
+  document.getElementById('f-rango-pendiente').checked = false; // cambiar destino/material reinicia el pendiente
+  aplicarRangoCatalogo();
+}
+
+// Calcula y aplica el rango de catálogo (si existe) para la combinación
+// actual de Destino+Material, sin tocar el checkbox de "pendiente". Se
+// separó de updateRangos() para poder reutilizarla cuando se DESMARCA el
+// checkbox "No se conoce el rango aún": en ese caso hay que recalcular el
+// rango real (si ya existe en catálogo para lo que el usuario ya
+// seleccionó) en vez de dejar el campo vacío, como pasaba antes.
+function aplicarRangoCatalogo() {
   const destino    = document.getElementById('f-destino').value;
   const material   = document.getElementById('f-material').value;
   const rangoEl    = document.getElementById('f-rango');
   const rangoSelEl = document.getElementById('f-rango-select');
   const hintEl     = document.getElementById('range-hint');
-  document.getElementById('f-rango-pendiente').checked = false; // cambiar destino/material reinicia el pendiente
   rangoEl.value = '';
   rangoSelEl.innerHTML = '<option value="">— Seleccionar rango —</option>';
   rangoEl.disabled = false; rangoSelEl.disabled = false;
@@ -2853,13 +2876,15 @@ function toggleRangoPendiente() {
   const esAcopio   = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
   const rangoEl    = document.getElementById('f-rango');
   const rangoSelEl = document.getElementById('f-rango-select');
-  if (esAcopio) {
-    rangoSelEl.disabled = pendiente;
-    if (pendiente) rangoSelEl.value = '';
-  } else {
-    rangoEl.disabled = pendiente;
-    if (pendiente) rangoEl.value = '';
+  if (pendiente) {
+    if (esAcopio) { rangoSelEl.disabled = true; rangoSelEl.value = ''; }
+    else          { rangoEl.disabled = true; rangoEl.value = ''; }
+    return;
   }
+  // Bug reportado por Jesús: al desmarcar "pendiente" antes solo se
+  // rehabilitaba el campo vacío. Ahora se vuelve a calcular el rango real
+  // del catálogo para el Destino+Material ya seleccionados (si existe).
+  aplicarRangoCatalogo();
 }
 window.toggleRangoPendiente = toggleRangoPendiente;
 
@@ -3382,14 +3407,29 @@ function renderAvances(datos) {
   const alertas = computeAlertasAvanceAcopio(av, ac);
   const t = av.totales;
 
+  const avanceGlobalPct = (t.colocadoGeneral / t.totalGeneral) * 100;
+  const avanceProgramadoHtml = (window.AVANCE_PROGRAMADO_PCT === null || window.AVANCE_PROGRAMADO_PCT === undefined)
+    ? '<div class="val" style="font-size:14px;color:var(--text-muted);">— pendiente —</div>'
+    : `<div class="val">${window.AVANCE_PROGRAMADO_PCT.toFixed(1)}%</div>`;
+
   const kpiHtml = `
     <div class="kpi-row">
-      <div class="kpi-card"><div class="val">${t.colocadoGeneral.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado total (rompeolas + muro)</div></div>
-      <div class="kpi-card"><div class="val">${t.totalGeneral.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Meta total (catálogo + muro)</div></div>
-      <div class="kpi-card"><div class="val">${((t.colocadoGeneral/t.totalGeneral)*100).toFixed(1)}%</div><div class="lbl">Avance global</div></div>
-      <div class="kpi-card"><div class="val">${t.totalMarino.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado por mar</div></div>
+      <div class="kpi-card kpi-card-wide"><div class="val">${t.colocadoGeneral.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado total (rompeolas + muro)</div></div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="val">${t.metaTotalCatalogo.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Meta catálogo (rompeolas)</div></div>
+      <div class="kpi-card"><div class="val">${av.muro.cantidad.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Meta muro (extraordinario)</div></div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="val">${avanceGlobalPct.toFixed(1)}%</div><div class="lbl">Avance global</div></div>
+      <div class="kpi-card">${avanceProgramadoHtml}<div class="lbl">Avance programado a la fecha</div></div>
+    </div>
+    <div class="kpi-row">
       <div class="kpi-card"><div class="val">${t.totalTerrestre.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado por tierra</div></div>
-      <div class="kpi-card"><div class="val">${av.muro.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${av.muro.cantidad.toLocaleString('es-MX')} t</div><div class="lbl">Muro (${av.muro.pct.toFixed(1)}%)</div></div>
+      <div class="kpi-card"><div class="val">${t.totalMarino.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div><div class="lbl">Colocado por mar</div></div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-card kpi-card-wide"><div class="val">${av.muro.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${av.muro.cantidad.toLocaleString('es-MX')} t</div><div class="lbl">Muro (${av.muro.pct.toFixed(1)}%)</div></div>
     </div>`;
 
   const alertasHtml = alertas.length ? `

@@ -121,9 +121,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 /* ── MODAL ── */
 .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; align-items: flex-end; justify-content: center; }
 .modal-overlay.open { display: flex; }
-.modal { background: var(--surface); border-radius: 16px 16px 0 0; width: 100%; max-height: 85vh; overflow-y: auto; padding: 16px; }
-.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+body.modal-open { position: fixed; inset: 0; overflow: hidden; width: 100%; }
+.modal { background: var(--surface); border-radius: 16px 16px 0 0; width: 100%; max-height: 85vh; padding: 16px; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
 .modal-header h2 { font-size: 16px; font-weight: 600; }
+.modal-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-shrink: 0; }
+#modal-body { overflow-y: auto; flex: 1; }
 .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
 .detail-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
 .detail-row:last-child { border-bottom: none; }
@@ -789,12 +792,14 @@ window.saveRecord = async function() {
   }
   if (!data.placas)       { alert('Ingresa las placas del vehículo.'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
+  if (!data.rango)        { alert('Selecciona el rango de material, o marca "pendiente" si aún no se conoce.'); return; }
   if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
-  { // FASE 10: vertido es obligatorio solo cuando el destino es colocación (Cuerpo/Muro/Morro)
+  { // FASE 10: vertido y folio de barcaza son obligatorios solo cuando el destino es colocación (Cuerpo/Muro/Morro)
     const destinoEsAcopio = data.destino === 'ACOPIO MARINO' || data.destino === 'ACOPIO TERRESTRE';
     if (!!data.destino && !destinoEsAcopio && !data.vertido) { alert('Selecciona el vertido (Marino o Terrestre).'); return; }
+    if (data.vertido === 'MARINO' && !data.folio_barcaza) { alert('Ingresa el folio de barcaza.'); return; }
   }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
@@ -895,7 +900,10 @@ window.editRecord = function() {
   togglePendienteForm();
   calcCiclo(); calcPesos(); updateRangos();
   setTimeout(() => {
-    if (r.rango) {
+    if (r.rango === 'PENDIENTE') {
+      document.getElementById('f-rango-pendiente').checked = true;
+      toggleRangoPendiente();
+    } else if (r.rango) {
       if (r.destino === 'ACOPIO MARINO' || r.destino === 'ACOPIO TERRESTRE') {
         document.getElementById('f-rango-select').value = r.rango;
       } else { document.getElementById('f-rango').value = r.rango; }
@@ -1005,6 +1013,7 @@ window.openModal = function(fid) {
     <div class="detail-row"><span class="dk">Toneladas</span><span class="dv" style="color:var(--accent);font-weight:700">${r.status === 'pendiente' ? '⏳ Pendiente' : (r.ton ? r.ton + ' ton' : '—')}</span></div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
+  document.body.classList.add('modal-open'); // evita que el fondo se desplace/rompa el overlay al hacer zoom
   const btnDel = document.getElementById('btn-delete-record');
   if (btnDel) btnDel.style.display = (window._currentUserRol === 'master') ? '' : 'none';
 }
@@ -1475,11 +1484,6 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
         <option value="ARTICULADO">Articulado</option>
       </select>
     </div>
-    <div class="field-row" id="wrap-folio-barcaza" style="display:none">
-      <label>Folio de barcaza (opcional)</label>
-      <input type="text" id="f-folio-barcaza" placeholder="Ej: BARCAZA-014"/>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Úsalo para agrupar todos los tickets que corresponden al mismo viaje de barcaza. No afecta los cálculos, solo trazabilidad en reportes.</div>
-    </div>
   </div>
 
   <div class="form-card">
@@ -1501,11 +1505,15 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
         </select>
       </div>
       <div>
-        <label>Rango de material</label>
+        <label>Rango de material *</label>
         <input type="text" id="f-rango" class="calc-field-neutral" readonly placeholder="Selecciona destino y material" style="display:block"/>
         <select id="f-rango-select" style="display:none;width:100%;height:38px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);color:var(--text);">
           <option value="">— Seleccionar rango —</option>
         </select>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="f-rango-pendiente" onchange="toggleRangoPendiente()" style="width:auto;"/>
+          <label for="f-rango-pendiente" style="font-size:11.5px;color:var(--text-muted);margin:0;">No se conoce el rango aún (marcar como pendiente)</label>
+        </div>
       </div>
     </div>
     <div class="range-hint" id="range-hint"></div>
@@ -1544,7 +1552,12 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
         <option value="TERRESTRE">Terrestre</option>
         <option value="MARINO">Marino</option>
       </select>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Determina si esta colocación cuenta como marina o terrestre (Fase 10 — reemplaza el uso de "Barcaza" como tipo de camión).</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Determina si esta colocación cuenta como marina o terrestre.</div>
+    </div>
+    <div class="field-row" id="wrap-folio-barcaza" style="display:none">
+      <label>Folio de barcaza *</label>
+      <input type="text" id="f-folio-barcaza" placeholder="Ej: BARCAZA-014"/>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Agrupa todos los tickets que corresponden al mismo viaje de barcaza.</div>
     </div>
     <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:#fff3cd;border:1px solid #e0a800;border-radius:var(--radius);color:#7a5c00;font-size:12px;">
       ⚠️ Estás registrando un movimiento de <strong>Acopio → Acopio</strong> (transferencia entre acopios). Es un caso excepcional — confirma que es correcto antes de guardar.
@@ -2244,8 +2257,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-    <div id="modal-body"></div>
-    <div style="display:flex;gap:8px;margin-top:14px;">
+    <div class="modal-actions">
       <button class="btn btn-secondary" onclick="editRecord()" style="flex:1">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         Editar
@@ -2254,6 +2266,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
       </button>
     </div>
+    <div id="modal-body"></div>
   </div>
 </div>
 
@@ -2600,12 +2613,28 @@ window.computeAvances = computeAvances;
 // menos salidas (Colocación que salió de ese acopio + transferencias salientes).
 function computeAcopios(datos) {
   const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
-  const balance = {}; // acopio -> { 'material|rango' -> {entradas, salidas} }
+  const balance = {}; // acopio -> { 'material|rango_normalizado' -> {entradas, salidas} }
   ACOPIOS.forEach(a => balance[a] = {});
 
-  function addMov(acopio, material, rango, campo, ton) {
+  // Normaliza el texto del rango para que dos registros que se refieren al
+  // mismo rango físico (ej. "0.02 a 0.20" y "0.02 a 0.20 ton", con espacios
+  // extra o mayúsculas distintas) se agrupen bajo la MISMA clave. Esto es lo
+  // que causaba que una salida apareciera como un renglón aparte en vez de
+  // restarse de la entrada correspondiente — el dato histórico no siempre
+  // guardó el rango con el mismo formato exacto. 'PENDIENTE' se conserva tal
+  // cual, sin normalizar, para que quede visualmente separado y detectable.
+  function normalizarRango(r) {
+    let s = (r || '').trim().replace(/\s+/g, ' ');
+    if (s.toUpperCase() === 'PENDIENTE') return 'PENDIENTE';
+    s = s.replace(/\s*ton\s*$/i, '').trim();
+    return s ? s + ' ton' : '';
+  }
+  window.normalizarRango = normalizarRango;
+
+  function addMov(acopio, material, rangoOriginal, campo, ton) {
     if (!balance[acopio]) return;
-    const key = (material||'') + '|' + (rango||'');
+    const rango = normalizarRango(rangoOriginal);
+    const key = (material||'') + '|' + rango;
     if (!balance[acopio][key]) balance[acopio][key] = { material, rango, entradas: 0, salidas: 0 };
     balance[acopio][key][campo] += ton;
   }
@@ -2782,8 +2811,10 @@ function updateRangos() {
   const rangoEl    = document.getElementById('f-rango');
   const rangoSelEl = document.getElementById('f-rango-select');
   const hintEl     = document.getElementById('range-hint');
+  document.getElementById('f-rango-pendiente').checked = false; // cambiar destino/material reinicia el pendiente
   rangoEl.value = '';
   rangoSelEl.innerHTML = '<option value="">— Seleccionar rango —</option>';
+  rangoEl.disabled = false; rangoSelEl.disabled = false;
   hintEl.style.display = 'none';
   if (!destino || !material) { rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none'; return; }
   if (destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE') {
@@ -2794,24 +2825,43 @@ function updateRangos() {
       opciones.forEach(op => { const opt = document.createElement('option'); opt.value = op; opt.textContent = op; rangoSelEl.appendChild(opt); });
       hintEl.style.display = 'block';
       hintEl.innerHTML = `<strong>${destino} / ${material}:</strong> Selecciona el rango que corresponde.`;
-    } else {
-      const opt = document.createElement('option'); opt.value = 'Sin rango para este material';
-      opt.textContent = 'Sin rango para este material'; rangoSelEl.appendChild(opt); rangoSelEl.value = 'Sin rango para este material';
     }
+    // Si no hay opciones de catálogo para este material, se deja vacío: el
+    // capturista debe marcar "pendiente" para poder guardar (ya no se guarda
+    // silenciosamente el texto "Sin rango para este material").
     return;
   }
   rangoEl.style.display = 'block'; rangoSelEl.style.display = 'none';
   const destinoRangos = RANGOS[destino];
-  if (!destinoRangos) { rangoEl.value = 'Sin rango definido'; return; }
-  const rango = destinoRangos[material];
+  const rango = destinoRangos ? destinoRangos[material] : null;
   if (rango) {
     rangoEl.value = rango;
     hintEl.style.display = 'block';
     hintEl.innerHTML = `<strong>Rango ${destino} / ${material}:</strong> ${rango}`;
+  }
+  // Si no hay rango definido para este Cuerpo+Material, se deja vacío: el
+  // capturista debe marcar "pendiente" (ya no se guarda un texto placeholder).
+}
+
+// Marca el rango como "PENDIENTE" (a definir por el capturista/coordinador
+// después) en vez de dejar guardado un texto placeholder tipo "Sin rango
+// definido", que antes se guardaba silenciosamente y rompía el cruce de
+// entradas/salidas en Acopios (cada texto distinto era una clave distinta).
+function toggleRangoPendiente() {
+  const pendiente  = document.getElementById('f-rango-pendiente').checked;
+  const destino    = document.getElementById('f-destino').value;
+  const esAcopio   = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
+  const rangoEl    = document.getElementById('f-rango');
+  const rangoSelEl = document.getElementById('f-rango-select');
+  if (esAcopio) {
+    rangoSelEl.disabled = pendiente;
+    if (pendiente) rangoSelEl.value = '';
   } else {
-    rangoEl.value = 'Sin rango para esta combinación';
+    rangoEl.disabled = pendiente;
+    if (pendiente) rangoEl.value = '';
   }
 }
+window.toggleRangoPendiente = toggleRangoPendiente;
 
 function getFormData() {
   const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
@@ -2834,9 +2884,11 @@ function getFormData() {
     economico:document.getElementById('f-economico').value.trim().toUpperCase(),
     placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
     material: document.getElementById('f-material').value,
-    rango:    ['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(destino)
-                ? document.getElementById('f-rango-select').value
-                : document.getElementById('f-rango').value,
+    rango:    document.getElementById('f-rango-pendiente').checked
+                ? 'PENDIENTE'
+                : (['ACOPIO MARINO','ACOPIO TERRESTRE'].includes(destino)
+                    ? document.getElementById('f-rango-select').value
+                    : document.getElementById('f-rango').value),
     banco:    document.getElementById('f-banco').value, // "origen" — se conserva el nombre de campo por compatibilidad
     origen_tipo: origenTipo, // 'BANCO' | 'ACOPIO'
     destino:  destino,
@@ -2998,6 +3050,7 @@ function closeModal(e) {
 }
 function closeModalForce() {
   document.getElementById('modal-overlay').classList.remove('open');
+  document.body.classList.remove('modal-open');
   window._currentFid = null;
 }
 
@@ -3401,14 +3454,14 @@ function renderAcopios(datos) {
     const totalSalidas     = filas.reduce((s,f)=>s+f.salidas,0);
     return `
     <div class="chart-card">
-      <h3>${nombreAcopio[acopio]} — Existencia actual: ${totalExistencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t</h3>
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">Entradas históricas: ${totalEntradas.toLocaleString('es-MX',{maximumFractionDigits:2})} t &nbsp;·&nbsp; Salidas históricas: ${totalSalidas.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div>
+      <h3>${nombreAcopio[acopio]} — Disponible: ${totalExistencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t</h3>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">Suministrado (histórico): ${totalEntradas.toLocaleString('es-MX',{maximumFractionDigits:2})} t &nbsp;·&nbsp; Sacado (histórico): ${totalSalidas.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div>
       ${filas.length ? filas.map(f => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12.5px;">
-          <span><strong>${escHtml(nombreMaterialLegible(f.material))}</strong> · ${escHtml(f.rango)}</span>
+          <span><strong>${escHtml(nombreMaterialLegible(f.material))}</strong> · ${f.rango === 'PENDIENTE' ? '<span style="color:var(--warning)">⚠️ rango pendiente</span>' : escHtml(f.rango || 'sin rango')}</span>
           <span style="text-align:right;">
-            <div style="font-weight:700;color:${f.existencia < 0 ? 'var(--danger)' : 'var(--accent)'}">${f.existencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t</div>
-            <div style="font-size:10px;color:var(--text-muted)">+${f.entradas.toLocaleString('es-MX',{maximumFractionDigits:2})} / -${f.salidas.toLocaleString('es-MX',{maximumFractionDigits:2})}</div>
+            <div style="font-weight:700;color:${f.existencia < 0 ? 'var(--danger)' : 'var(--accent)'}">${f.existencia.toLocaleString('es-MX',{maximumFractionDigits:2})} t <span style="font-size:9px;font-weight:400;color:var(--text-muted)">disponible</span></div>
+            <div style="font-size:10px;color:var(--text-muted)">Suministrado: ${f.entradas.toLocaleString('es-MX',{maximumFractionDigits:2})} · Sacado: ${f.salidas.toLocaleString('es-MX',{maximumFractionDigits:2})}</div>
           </span>
         </div>`).join('') : '<p style="font-size:12.5px;color:var(--text-muted)">Sin movimientos registrados todavía.</p>'}
     </div>`;

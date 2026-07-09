@@ -308,6 +308,24 @@ function appError(msg) {
   document.getElementById('fb-error-msg').textContent = msg;
 }
 
+// Escape hatch para cuando la pantalla de error queda "atorada" porque la
+// sesión de Auth activa no tiene un documento de perfil válido en
+// Firestore: "Reintentar" (location.reload) por sí solo no ayuda, porque
+// recarga la página con la MISMA sesión rota. Este botón cierra esa sesión
+// para que la persona pueda entrar con otra cuenta sin tener que borrar el
+// caché del navegador.
+window.salirDeSesionRota = async function() {
+  try {
+    if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+    if (unsubUsers)  { unsubUsers();  unsubUsers  = null; }
+    await signOut(auth);
+  } catch (e) {
+    // Si signOut falla (p.ej. sin red), igual recargamos: al no haber
+    // sesión persistida útil, showLogin() se mostrará de todos modos.
+  }
+  location.reload();
+}
+
 window.switchAuthTab = function(tab) {
   document.querySelectorAll('.auth-tab').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.auth-form').forEach(el => el.classList.remove('active'));
@@ -398,7 +416,17 @@ onAuthStateChanged(auth, async (user) => {
   }
   try {
     // ── SEGURIDAD: leer SOLO el documento propio, no toda la colección ──
-    const mySnap = await getDoc(doc(db_f, COL_USERS, user.uid));
+    let mySnap = await getDoc(doc(db_f, COL_USERS, user.uid));
+
+    // El registro crea la cuenta de Auth y, justo después, el documento de
+    // perfil en Firestore. Como createUserWithEmailAndPassword dispara este
+    // listener de inmediato, puede haber una pequeña carrera en la que el
+    // perfil todavía no se termina de escribir. Reintentamos una vez tras
+    // una breve espera antes de concluir que realmente no existe.
+    if (!mySnap.exists()) {
+      await new Promise(r => setTimeout(r, 1200));
+      mySnap = await getDoc(doc(db_f, COL_USERS, user.uid));
+    }
     currentUserDoc = mySnap.exists() ? mySnap.data() : null;
 
     if (!currentUserDoc) {
@@ -1300,6 +1328,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
   <h2>⚠️ Error de conexión</h2>
   <p id="fb-error-msg">No se pudo conectar.</p>
   <button onclick="location.reload()">Reintentar</button>
+  <button id="fb-error-signout" onclick="window.salirDeSesionRota()" style="background:transparent;color:var(--text-muted);text-decoration:underline;padding:6px 10px;">Cerrar sesión e intentar con otra cuenta</button>
 </div>
 
 <div id="login-screen">

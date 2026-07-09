@@ -17,7 +17,7 @@
 // todo. Si no subes el número, el navegador puede seguir sirviendo el
 // index.html viejo desde caché aunque ya hayas subido uno nuevo al hosting.
 
-const CACHE_NAME = 'control-acarreos-v2';
+const CACHE_NAME = 'control-acarreos-v3';
 
 const APP_SHELL = [
   './',

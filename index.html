@@ -821,7 +821,7 @@ window.saveRecord = async function() {
   const esPendiente = data.status === 'pendiente';
   
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
-  if (!data.folio)        { alert('Ingresa el folio.'); return; }
+  if (data.origen_tipo !== 'ACOPIO' && !data.folio) { alert('Ingresa el folio.'); return; }
   if (!data.economico)    { alert('Ingresa el # económico.'); return; }
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
   if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
@@ -1497,42 +1497,6 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 
   <div class="form-card">
     <h3>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
-      Identificación
-    </h3>
-    <div class="field-row two-col">
-      <div>
-        <label>Boleta *</label>
-        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
-      </div>
-      <div>
-        <label>Placas *</label>
-        <input type="text" id="f-placas" placeholder="Ej: 5XDC16A"/>
-      </div>
-    </div>
-    <div class="field-row two-col">
-      <div>
-        <label>Folio *</label>
-        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
-      </div>
-      <div>
-        <label># Económico *</label>
-        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
-      </div>
-    </div>
-    <div class="field-row">
-      <label>Tipo de camión *</label>
-      <select id="f-tipo-camion">
-        <option value="">— Seleccionar —</option>
-        <option value="VOLTEO">Volteo</option>
-        <option value="GONDOLA">Góndola</option>
-        <option value="ARTICULADO">Articulado</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="form-card">
-    <h3>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
       Material y Destino
     </h3>
@@ -1606,6 +1570,42 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     </div>
     <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:#fff3cd;border:1px solid #e0a800;border-radius:var(--radius);color:#7a5c00;font-size:12px;">
       ⚠️ Estás registrando un movimiento de <strong>Acopio → Acopio</strong> (transferencia entre acopios). Es un caso excepcional — confirma que es correcto antes de guardar.
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
+      Identificación
+    </h3>
+    <div class="field-row two-col">
+      <div>
+        <label>Boleta * <span style="font-weight:400;color:var(--text-muted);">(# Ticket)</span></label>
+        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
+      </div>
+      <div>
+        <label>Placas *</label>
+        <input type="text" id="f-placas" placeholder="Ej: 5XDC16A"/>
+      </div>
+    </div>
+    <div class="field-row two-col">
+      <div id="wrap-folio">
+        <label>Folio * <span style="font-weight:400;color:var(--text-muted);">(Vale)</span></label>
+        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
+      </div>
+      <div>
+        <label># Económico *</label>
+        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
+      </div>
+    </div>
+    <div class="field-row">
+      <label>Tipo de camión *</label>
+      <select id="f-tipo-camion">
+        <option value="">— Seleccionar —</option>
+        <option value="VOLTEO">Volteo</option>
+        <option value="GONDOLA">Góndola</option>
+        <option value="ARTICULADO">Articulado</option>
+      </select>
     </div>
   </div>
 
@@ -2407,6 +2407,30 @@ const MURO_META_TOTAL = 20000;
 window.CATALOGO_TOTALES = CATALOGO_TOTALES;
 window.MURO_META_TOTAL  = MURO_META_TOTAL;
 
+// Catálogo de Vol. Mar / Vol. Tierra por cuerpo (tabla "Movimiento mar y
+// tierra con cantidades de catálogo original"). Es un concepto de catálogo
+// INDEPENDIENTE de Acopio Marino/Acopio Terrestre (esos son solo el lugar
+// donde llegan los suministros): aquí se cuantifica dónde se coloca
+// finalmente el material dentro de cada cuerpo — en el mar o en tierra —
+// contra la meta original de catálogo. Se compara contra los tickets de
+// colocación (COLOCACION_MARINA/COLOCACION_TERRESTRE) filtrados por
+// r.destino === cuerpo y r.vertido === 'MARINO'/'TERRESTRE'.
+const CATALOGO_VERTIDO_TOTALES = [
+  { cuerpo:'CUERPO 1', vertido:'MARINO',    cantidad: 115214.86 },
+  { cuerpo:'CUERPO 1', vertido:'TERRESTRE', cantidad: 90646.76 },
+  { cuerpo:'CUERPO 2', vertido:'MARINO',    cantidad: 234281.18 },
+  { cuerpo:'CUERPO 2', vertido:'TERRESTRE', cantidad: 177051.58 },
+  { cuerpo:'CUERPO 3', vertido:'MARINO',    cantidad: 319545.48 },
+  { cuerpo:'CUERPO 3', vertido:'TERRESTRE', cantidad: 264317.66 },
+  { cuerpo:'CUERPO 4', vertido:'MARINO',    cantidad: 1342107.51 },
+  { cuerpo:'CUERPO 4', vertido:'TERRESTRE', cantidad: 673316.78 },
+  { cuerpo:'CUERPO 5', vertido:'MARINO',    cantidad: 1912745.20 },
+  { cuerpo:'CUERPO 5', vertido:'TERRESTRE', cantidad: 670178.69 },
+  { cuerpo:'MORRO',    vertido:'MARINO',    cantidad: 432167.74 },
+  { cuerpo:'MORRO',    vertido:'TERRESTRE', cantidad: 114197.09 }
+];
+window.CATALOGO_VERTIDO_TOTALES = CATALOGO_VERTIDO_TOTALES;
+
 // Avance programado a la fecha (curva de avance planeada), en % del
 // rompeolas. Jesús lo va a proporcionar — mientras tanto se deja en null y
 // la tarjeta de Avances lo muestra como "pendiente de definir". Cuando se
@@ -2455,9 +2479,23 @@ function updateOrigenOptions() {
   // Si el valor previo sigue siendo válido en la nueva lista, se conserva (útil al editar un registro)
   if (opciones.some(o => o.value === valorPrevio)) sel.value = valorPrevio;
   label.textContent = tipo === 'ACOPIO' ? 'Origen (Acopio) *' : 'Origen (Banco) *';
+  toggleFolio();
   checkTransferenciaAcopios();
 }
 window.updateOrigenOptions = updateOrigenOptions;
+
+// El Folio (Vale) solo existe como documento físico cuando el material sale
+// de un Banco de materiales. Cuando el origen es Acopio no hay folio real
+// (el material ya pasó por el banco antes), así que el campo se oculta y
+// deja de ser obligatorio.
+function toggleFolio() {
+  const tipo = document.getElementById('f-origen-tipo').value;
+  const esBanco = tipo !== 'ACOPIO';
+  const wrap = document.getElementById('wrap-folio');
+  if (wrap) wrap.style.display = esBanco ? 'block' : 'none';
+  if (!esBanco) document.getElementById('f-folio').value = '';
+}
+window.toggleFolio = toggleFolio;
 
 function toggleFolioBarcaza() {
   const esMarino = document.getElementById('f-vertido').value === 'MARINO';
@@ -2645,11 +2683,30 @@ function computeAvances(datos) {
     return { ...c, colocado, faltante, exceso, pct, completo: colocado >= c.cantidad };
   });
 
+  // Vol. Mar / Vol. Tierra por cuerpo — mismo cálculo, pero agrupado por
+  // destino (cuerpo) + vertido en vez de por material/rango.
+  const colocadoPorVertido = {}; // key = cuerpo|vertido -> ton
+  datos.forEach(r => {
+    if (!esTicketColocacion(r)) return;
+    if (r.destino === 'MURO') return; // Muro no tiene desglose de vertido en catálogo
+    const key = (r.destino||'') + '|' + (r.vertido||'');
+    colocadoPorVertido[key] = (colocadoPorVertido[key] || 0) + tonOf(r);
+  });
+  const filasVertido = CATALOGO_VERTIDO_TOTALES.map(c => {
+    const key = c.cuerpo + '|' + c.vertido;
+    const colocado = colocadoPorVertido[key] || 0;
+    const faltante = Math.max(0, c.cantidad - colocado);
+    const exceso   = Math.max(0, colocado - c.cantidad);
+    const pct = c.cantidad > 0 ? Math.min(999, (colocado / c.cantidad) * 100) : 0;
+    return { ...c, colocado, faltante, exceso, pct, completo: colocado >= c.cantidad };
+  });
+
   const metaTotalCatalogo = CATALOGO_TOTALES.reduce((s,c) => s + c.cantidad, 0);
   const colocadoTotalCatalogo = filas.reduce((s,f) => s + f.colocado, 0);
 
   return {
     filas,
+    filasVertido,
     muro: { cantidad: MURO_META_TOTAL, colocado: colocadoMuro, faltante: Math.max(0, MURO_META_TOTAL - colocadoMuro), pct: Math.min(999,(colocadoMuro/MURO_META_TOTAL)*100) },
     totales: {
       metaTotalCatalogo, colocadoTotalCatalogo,
@@ -3038,6 +3095,18 @@ function toggleSoloBarcaza() {
 }
 window.toggleSoloBarcaza = toggleSoloBarcaza;
 
+// Al tocar la etiqueta 🚢 de un ticket, filtra la Base de datos a esa
+// barcaza (mismo folio_barcaza), que dispara el panel-resumen con el
+// acumulado y deja la lista lista para entrar a editar cada ticket.
+function filtrarPorBarcaza(folio) {
+  const input = document.getElementById('filter-input');
+  if (!input) return;
+  input.value = folio;
+  renderDB();
+  input.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+window.filtrarPorBarcaza = filtrarPorBarcaza;
+
 function renderDB() {
   const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
   const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
@@ -3097,7 +3166,7 @@ function renderDB() {
           ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
           ${r.banco   ? '<span class="badge badge-blue">'+escHtml(r.banco)+'</span>'   : ''}
           ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
-          ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
+          ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);cursor:pointer;" onclick="event.stopPropagation(); filtrarPorBarcaza(\''+escHtml(r.folio_barcaza)+'\')">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
           ${r.concepto === 'TRANSFERENCIA_ACOPIOS' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⚠️ Transferencia</span>' : ''}
         </div>
       </div>
@@ -3490,9 +3559,22 @@ function renderAvances(datos) {
     const filas = av.filas.filter(f => f.cuerpo === cuerpo);
     const metaCuerpo = filas.reduce((s,f)=>s+f.cantidad,0);
     const colocadoCuerpo = filas.reduce((s,f)=>s+f.colocado,0);
+    const filasVertido = av.filasVertido.filter(f => f.cuerpo === cuerpo);
     return `
     <div class="chart-card">
       <h3>${escHtml(cuerpo)} — ${colocadoCuerpo.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${metaCuerpo.toLocaleString('es-MX',{maximumFractionDigits:2})} t (${((colocadoCuerpo/metaCuerpo)*100).toFixed(1)}%)</h3>
+      ${filasVertido.length ? `
+      <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
+        ${filasVertido.map(f => `
+          <div style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;">
+              <span><strong>${f.vertido === 'MARINO' ? '🌊 Vol. Mar' : '🏗️ Vol. Tierra'}</strong></span>
+              <span>${f.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${f.cantidad.toLocaleString('es-MX',{maximumFractionDigits:2})} t ${f.completo ? '✅' : ''}</span>
+            </div>
+            ${barraHtml(f.pct, f.completo)}
+            ${f.exceso > 0 ? `<div style="font-size:11px;color:var(--danger);margin-top:2px;">⚠️ Excedente de ${f.exceso.toLocaleString('es-MX',{maximumFractionDigits:2})} t sobre la meta</div>` : ''}
+          </div>`).join('')}
+      </div>` : ''}
       ${filas.map(f => `
         <div style="margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;font-size:12.5px;">

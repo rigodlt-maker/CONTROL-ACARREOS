@@ -439,6 +439,14 @@ onAuthStateChanged(auth, async (user) => {
     const acopiosBtn = document.getElementById('btn-acopios-tab');
     if (acopiosBtn) acopiosBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
 
+    // FASE 14.1: el botón "🔄 Actualizar" fuerza una relectura completa de
+    // la colección acarreos — se restringe a admin/master. Coordinador y
+    // visor siguen viendo Avances/Acopios, pero con los datos cacheados.
+    const refreshAvancesBtn = document.getElementById('btn-avances-refresh');
+    if (refreshAvancesBtn) refreshAvancesBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+    const refreshAcopiosBtn = document.getElementById('btn-acopios-refresh');
+    if (refreshAcopiosBtn) refreshAcopiosBtn.style.display = esAdminOMaster ? 'flex' : 'none';
+
     const excelBtn = document.getElementById('btn-excel-tab');
     if (excelBtn) excelBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
 
@@ -663,6 +671,117 @@ function mesKeyFromFecha(fecha1) {
   return (fecha1 && /^\d{4}-\d{2}/.test(fecha1)) ? fecha1.slice(0, 7) : null;
 }
 
+// ══════════════════════════════════════════════════════
+// FASE 14.2 — Totales precalculados para Avances/Acopios
+// ══════════════════════════════════════════════════════
+
+// Construye una clave de campo de Firestore a partir de varias partes de
+// texto. IMPORTANTE: los valores de rango contienen puntos literales (ej.
+// "0.02 a 0.20 ton"), y Firestore interpreta los puntos en una ruta de
+// campo como separadores de mapas anidados — por eso se reemplazan junto
+// con espacios y diagonales.
+function claveAgregado(...partes) {
+  return partes
+    .map(p => String(p || 'SD').trim().replace(/[.\s/]+/g, '_'))
+    .join('__');
+}
+window.claveAgregado = claveAgregado;
+
+// Normaliza el texto del rango para que dos registros que se refieren al
+// mismo rango físico (ej. "0.02 a 0.20" y "0.02 a 0.20 ton", con espacios
+// extra o mayúsculas distintas) se agrupen bajo la MISMA clave en el
+// agregado de Acopios. 'PENDIENTE' se conserva tal cual. Se movió a
+// ámbito de módulo (antes vivía dentro de computeAcopios) para poder
+// usarse también al escribir el agregado incremental.
+function normalizarRango(r) {
+  let s = (r || '').trim().replace(/\s+/g, ' ');
+  if (s.toUpperCase() === 'PENDIENTE') return 'PENDIENTE';
+  s = s.replace(/\s*ton\s*$/i, '').trim();
+  return s ? s + ' ton' : '';
+}
+window.normalizarRango = normalizarRango;
+
+// Actualiza resumenes/avance_acopio con increment(), en espejo de
+// aplicarResumen/moverResumen (misma firma, mismo patrón de invocación:
+// signo=+1 al crear, -1 al restar un registro viejo antes de editar o
+// eliminar, +1 al sumar el nuevo tras editar).
+//
+// NOTA sobre acopio_entradas / acopio_salidas: a diferencia de
+// colocado_por_fila/colocado_por_vertido (donde cuerpo/material/rango
+// siempre vienen del catálogo fijo y se pueden re-derivar de
+// CATALOGO_TOTALES/CATALOGO_VERTIDO_TOTALES para renderizar), los pares
+// material+rango de Acopios son datos libres — la clave con guiones
+// bajos no es reversible a texto legible. Por eso cada entrada de esos
+// dos mapas se guarda como { ton, material, rango, acopio } en vez de
+// solo un número, para que Acopios pueda mostrar las etiquetas sin tener
+// que leer los tickets crudos. rango se guarda ya normalizado
+// (normalizarRango) para que coincida con el mismo agrupamiento que ya
+// hacía computeAcopios() sobre los datos crudos.
+async function aplicarAgregadoAvanceAcopio(rec, signo) {
+  if (!rec) return;
+  const t = tonOf(rec);
+  if (t === 0) return; // nada que agregar
+  const c = conceptoEfectivo(rec);
+  const ref = doc(db_f, COL_RESUMEN, 'avance_acopio');
+  const payload = {};
+  const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
+
+  const setMov = (mapa, acopio, material, rango) => {
+    const rangoNorm = normalizarRango(rango);
+    const key = claveAgregado(acopio, material, rangoNorm);
+    payload[mapa + '.' + key + '.ton']      = increment(signo * t);
+    payload[mapa + '.' + key + '.material'] = material || 'SD';
+    payload[mapa + '.' + key + '.rango']    = rangoNorm;
+    payload[mapa + '.' + key + '.acopio']   = acopio;
+  };
+
+  if (c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA') {
+    if (rec.destino === 'MURO') {
+      payload.colocado_muro = increment(signo * t);
+    } else {
+      const keyFila = claveAgregado(rec.destino, rec.material, rec.rango);
+      payload['colocado_por_fila.' + keyFila] = increment(signo * t);
+      const keyVertido = claveAgregado(rec.destino, rec.vertido);
+      payload['colocado_por_vertido.' + keyVertido] = increment(signo * t);
+    }
+    payload.total_colocado = increment(signo * t);
+    if (c === 'COLOCACION_MARINA') {
+      payload.total_marino = increment(signo * t);
+    } else {
+      payload.total_terrestre = increment(signo * t);
+    }
+    if (rec.origen_tipo === 'ACOPIO' && ACOPIOS.includes(rec.banco)) {
+      setMov('acopio_salidas', rec.banco, rec.material, rec.rango);
+    }
+  } else if (c === 'SUMINISTRO') {
+    if (ACOPIOS.includes(rec.destino)) {
+      setMov('acopio_entradas', rec.destino, rec.material, rec.rango);
+    }
+  } else if (c === 'TRANSFERENCIA_ACOPIOS') {
+    if (ACOPIOS.includes(rec.banco)) {
+      setMov('acopio_salidas', rec.banco, rec.material, rec.rango);
+    }
+    if (ACOPIOS.includes(rec.destino)) {
+      setMov('acopio_entradas', rec.destino, rec.material, rec.rango);
+    }
+  }
+
+  if (Object.keys(payload).length === 0) return;
+  payload._actualizado = serverTimestamp();
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (e) {
+    console.error('No se pudo actualizar resumenes/avance_acopio:', e);
+  }
+}
+window.aplicarAgregadoAvanceAcopio = aplicarAgregadoAvanceAcopio;
+
+async function moverAgregadoAvanceAcopio(antes, despues) {
+  if (antes) await aplicarAgregadoAvanceAcopio(antes, -1);
+  if (despues) await aplicarAgregadoAvanceAcopio(despues, +1);
+}
+window.moverAgregadoAvanceAcopio = moverAgregadoAvanceAcopio;
+
 async function aplicarResumen(rec, signo) {
   if (!rec || !rec.fecha1) return;
   const mes = mesKeyFromFecha(rec.fecha1);
@@ -744,6 +863,72 @@ window.recalcularResumen = async function() {
   }
 }
 
+// FASE 14.2 § 4.6 — Reconstrucción manual de resumenes/avance_acopio.
+// Mismo patrón que recalcularResumen(): UNA sola lectura completa de la
+// colección, disparada manualmente por un admin/master, para poblar (o
+// corregir un desfase de) el documento agregado. setDoc SIN merge, para
+// reemplazar cualquier valor previo corrupto/desincronizado.
+window.recalcularAgregadoAvanceAcopio = async function() {
+  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir los totales de Avances/Acopios. ¿Continuar?')) return;
+  const btn = document.getElementById('btn-recalcular-avance-acopio');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo toda la colección…'; }
+  try {
+    const snap = await getDocs(collection(db_f, COL));
+    const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
+    const agregado = {
+      colocado_por_fila: {}, colocado_muro: 0, colocado_por_vertido: {},
+      total_marino: 0, total_terrestre: 0, total_colocado: 0,
+      acopio_entradas: {}, acopio_salidas: {}
+    };
+
+    const sumaMov = (mapa, acopio, material, rangoOriginal, ton) => {
+      const rango = normalizarRango(rangoOriginal);
+      const key = claveAgregado(acopio, material, rango);
+      if (!mapa[key]) mapa[key] = { ton: 0, material: material || 'SD', rango, acopio };
+      mapa[key].ton += ton;
+    };
+
+    snap.forEach(docSnap => {
+      const r = docSnap.data();
+      const t = tonOf(r);
+      if (t === 0) return;
+      const c = conceptoEfectivo(r);
+
+      if (c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA') {
+        agregado.total_colocado += t;
+        if (c === 'COLOCACION_MARINA') agregado.total_marino += t; else agregado.total_terrestre += t;
+        if (r.destino === 'MURO') {
+          agregado.colocado_muro += t;
+        } else {
+          const keyFila = claveAgregado(r.destino, r.material, r.rango);
+          agregado.colocado_por_fila[keyFila] = (agregado.colocado_por_fila[keyFila] || 0) + t;
+          const keyVertido = claveAgregado(r.destino, r.vertido);
+          agregado.colocado_por_vertido[keyVertido] = (agregado.colocado_por_vertido[keyVertido] || 0) + t;
+        }
+        if (r.origen_tipo === 'ACOPIO' && ACOPIOS.includes(r.banco)) {
+          sumaMov(agregado.acopio_salidas, r.banco, r.material, r.rango, t);
+        }
+      } else if (c === 'SUMINISTRO') {
+        if (ACOPIOS.includes(r.destino)) {
+          sumaMov(agregado.acopio_entradas, r.destino, r.material, r.rango, t);
+        }
+      } else if (c === 'TRANSFERENCIA_ACOPIOS') {
+        if (ACOPIOS.includes(r.banco))   sumaMov(agregado.acopio_salidas,  r.banco,   r.material, r.rango, t);
+        if (ACOPIOS.includes(r.destino)) sumaMov(agregado.acopio_entradas, r.destino, r.material, r.rango, t);
+      }
+    });
+
+    agregado._actualizado = serverTimestamp();
+    await setDoc(doc(db_f, COL_RESUMEN, 'avance_acopio'), agregado);
+    window.avancesAcopiosData = null; // fuerza releer en la próxima visita a Avances/Acopios
+    alert('✅ Totales de Avances/Acopios reconstruidos a partir de ' + snap.size + ' registro(s).');
+  } catch (e) {
+    alert('Error al recalcular Avances/Acopios: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Recalcular totales de Avances/Acopios (lee toda la base)'; }
+  }
+}
+
 // ==========================================
 // FASE 2: MOTOR OFFLINE (IndexedDB Outbox)
 // ==========================================
@@ -802,11 +987,13 @@ window.procesarColaOffline = async function() {
         payload.ts = serverTimestamp();
         await addDoc(collection(db_f, COL), payload);
         await aplicarResumen(payload, +1);
+        await aplicarAgregadoAvanceAcopio(payload, +1);
       } else if (reg.type === 'UPDATE') {
         const { fid, original, nuevo } = reg.payload;
         nuevo.ts_updated = serverTimestamp();
         await updateDoc(doc(db_f, COL, fid), nuevo);
         await moverResumen(original, nuevo);
+        await moverAgregadoAvanceAcopio(original, nuevo);
       }
       await window.deleteFromOutbox(reg.localId);
     } catch(e) {
@@ -878,6 +1065,7 @@ window.saveRecord = async function() {
       payload.ts = serverTimestamp();
       await addDoc(collection(db_f, COL), payload);
       await aplicarResumen(data, +1); // Fase 5 (await)
+      await aplicarAgregadoAvanceAcopio(data, +1); // Fase 14.2 (await)
       window.showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
 
     } else {
@@ -893,6 +1081,7 @@ window.saveRecord = async function() {
       payload.ts_updated = serverTimestamp();
       await updateDoc(doc(db_f, COL, window._editFid), payload);
       await moverResumen(original, data); // Fase 5 (await)
+      await moverAgregadoAvanceAcopio(original, data); // Fase 14.2 (await)
       window._editFid = null;
       window._editOriginal = null;
       window.showSyncToast('✅', esPendiente ? 'Pendiente actualizado' : 'Registro actualizado', 'ok');
@@ -958,6 +1147,7 @@ window.deleteRecord = async function() {
     const r = findRecord(window._currentFid);
     await deleteDoc(doc(db_f, COL, window._currentFid));
     await aplicarResumen(r, -1); // FASE 5: Await crítico
+    await aplicarAgregadoAvanceAcopio(r, -1); // Fase 14.2: Await crítico
     closeModalForce();
     window.showSyncToast('✅', 'Registro eliminado', 'ok');
   } catch(err) {
@@ -1006,6 +1196,7 @@ window.completarPendiente = async function(fid) {
     payload.ts_updated = serverTimestamp();
     await updateDoc(doc(db_f, COL, fid), payload);
     await moverResumen(original, actualizado); // FASE 5: Await crítico
+    await moverAgregadoAvanceAcopio(original, actualizado); // Fase 14.2: Await crítico
     window.showSyncToast('✅', 'Destare completado', 'ok');
     if (typeof window.renderPendientes === 'function') window.renderPendientes();
   } catch (e) {
@@ -1295,6 +1486,7 @@ window.migrarLocalStorage = async function() {
       payload.creadoPor = currentUser.uid;
       await addDoc(collection(db_f, COL), payload);
       await aplicarResumen(r, +1);
+      await aplicarAgregadoAvanceAcopio(r, +1);
       ok++;
     } catch(e) { fail++; }
   }
@@ -1832,7 +2024,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 <div class="tab-content" id="tab-avances">
   <div class="slicers-card" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
     <div style="font-size:12px;color:var(--text-muted);" id="avances-estado">Cargando…</div>
-    <button class="btn btn-secondary" style="font-size:12px;" onclick="initAvancesTab(true)">🔄 Actualizar</button>
+    <button id="btn-avances-refresh" class="btn btn-secondary" style="font-size:12px;" onclick="initAvancesTab(true)">🔄 Actualizar</button>
   </div>
   <div id="avances-content"></div>
 </div>
@@ -1840,7 +2032,7 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 <div class="tab-content" id="tab-acopios">
   <div class="slicers-card" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
     <div style="font-size:12px;color:var(--text-muted);" id="acopios-estado">Cargando…</div>
-    <button class="btn btn-secondary" style="font-size:12px;" onclick="initAcopiosTab(true)">🔄 Actualizar</button>
+    <button id="btn-acopios-refresh" class="btn btn-secondary" style="font-size:12px;" onclick="initAcopiosTab(true)">🔄 Actualizar</button>
   </div>
   <div id="acopios-content"></div>
 </div>
@@ -2288,6 +2480,9 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
     <button id="btn-recalcular-resumen" class="btn btn-secondary" onclick="recalcularResumen()" style="width:100%;">
       Recalcular resumen (lee toda la base)
     </button>
+    <button id="btn-recalcular-avance-acopio" class="btn btn-secondary" onclick="recalcularAgregadoAvanceAcopio()" style="width:100%;margin-top:8px;">
+      Recalcular totales de Avances/Acopios (lee toda la base)
+    </button>
   </div>
 </div>
 
@@ -2592,11 +2787,16 @@ function nombreConcepto(c) {
 window.nombreConcepto = nombreConcepto;
 
 // ══════════════════════════════════════════════════════
-// FASE 4/5 — Cálculos de Avances y Acopios
+// FASE 4/5/14.2 — Cálculos de Avances y Acopios
 // Ambas pestañas necesitan el HISTÓRICO COMPLETO (no solo la ventana
-// reciente), porque son totales acumulados de toda la obra. Se reutiliza
-// traerTodoFirestore() (ya usado por el histórico del Dashboard) y se
-// cachea en window.avancesAcopiosData para no repetir la consulta cada
+// reciente), porque son totales acumulados de toda la obra. Desde la
+// Fase 14.2 esto YA NO se obtiene releyendo toda la colección acarreos:
+// se lee el documento único resumenes/avance_acopio (1 lectura), que se
+// mantiene actualizado con increment() en cada alta/edición/baja (ver
+// aplicarAgregadoAvanceAcopio). traerTodoFirestore() y
+// recalcularAgregadoAvanceAcopio() se conservan como red de seguridad
+// manual (botón en Admin), no se usan en la carga normal de la pestaña.
+// Se cachea en window.avancesAcopiosData para no repetir la lectura cada
 // vez que el usuario cambia de pestaña.
 // ══════════════════════════════════════════════════════
 window.avancesAcopiosData = null;
@@ -2608,19 +2808,19 @@ async function asegurarDatosAvancesAcopios(forzar) {
   window.cargandoAvancesAcopios = true;
   ['avances-estado','acopios-estado'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.textContent = '⏳ Cargando histórico completo…';
+    if (el) el.textContent = '⏳ Cargando totales…';
   });
   try {
-    const datos = await traerTodoFirestore(null, null, (n) => {
-      ['avances-estado','acopios-estado'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = '⏳ Cargando histórico… ' + n.toLocaleString('es-MX') + ' registro(s) leídos hasta ahora';
-      });
-    });
+    const snap = await getDoc(doc(db_f, COL_RESUMEN, 'avance_acopio'));
+    const datos = snap.exists() ? snap.data() : {
+      colocado_por_fila: {}, colocado_muro: 0, colocado_por_vertido: {},
+      total_marino: 0, total_terrestre: 0, total_colocado: 0,
+      acopio_entradas: {}, acopio_salidas: {}
+    };
     window.avancesAcopiosData = datos;
     ['avances-estado','acopios-estado'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.textContent = '✅ ' + datos.length.toLocaleString('es-MX') + ' registro(s) considerados (histórico completo).';
+      if (el) el.textContent = '✅ Totales al día' + (snap.exists() ? '' : ' (sin datos todavía)') + '.';
     });
     return datos;
   } catch (e) {
@@ -2628,8 +2828,8 @@ async function asegurarDatosAvancesAcopios(forzar) {
       const el = document.getElementById(id);
       if (el) el.textContent = '';
     });
-    handleFirestoreIndexError(e) || alert('Error al cargar el histórico para Avances/Acopios: ' + e.message);
-    return [];
+    handleFirestoreIndexError(e) || alert('Error al cargar Avances/Acopios: ' + e.message);
+    return null;
   } finally {
     window.cargandoAvancesAcopios = false;
   }
@@ -2647,26 +2847,23 @@ function esTicketColocacion(r) {
   return c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA';
 }
 
-// Calcula, para cada fila del catálogo (Cuerpo+Material+Rango), cuánto se ha
-// colocado. Devuelve también los totales de Muro y los totales globales
-// (marino/terrestre) usados para la validación cruzada de la Fase 9.
-function computeAvances(datos) {
-  const colocadoPorFila = {}; // key = cuerpo|material|rango -> ton
-  let colocadoMuro = 0;
-  let totalMarino = 0, totalTerrestre = 0, totalColocado = 0;
-
-  datos.forEach(r => {
-    if (!esTicketColocacion(r)) return;
-    const t = tonOf(r);
-    totalColocado += t;
-    if (conceptoEfectivo(r) === 'COLOCACION_MARINA') totalMarino += t; else totalTerrestre += t;
-    if (r.destino === 'MURO') { colocadoMuro += t; return; }
-    const key = (r.destino||'') + '|' + (r.material||'') + '|' + (r.rango||'');
-    colocadoPorFila[key] = (colocadoPorFila[key] || 0) + t;
-  });
+// FASE 14.2: computeAvances ya NO recorre el arreglo crudo de tickets —
+// recibe el objeto agregado (resumenes/avance_acopio, ver
+// aplicarAgregadoAvanceAcopio) con los totales ya sumados en Firestore.
+// La lógica de negocio (qué cuenta, qué no) es la MISMA de antes; lo
+// único que cambia es de dónde se leen los números — cuerpo/material/
+// rango siempre vienen del catálogo fijo, así que se pueden re-derivar
+// con claveAgregado(...) sin perder información.
+function computeAvances(agregado) {
+  const colocadoPorFila    = agregado.colocado_por_fila    || {};
+  const colocadoPorVertido = agregado.colocado_por_vertido || {};
+  const colocadoMuro    = agregado.colocado_muro    || 0;
+  const totalMarino     = agregado.total_marino     || 0;
+  const totalTerrestre  = agregado.total_terrestre  || 0;
+  const totalColocado   = agregado.total_colocado   || 0;
 
   const filas = CATALOGO_TOTALES.map(c => {
-    const key = c.cuerpo + '|' + c.material + '|' + c.rango;
+    const key = claveAgregado(c.cuerpo, c.material, c.rango);
     const colocado = colocadoPorFila[key] || 0;
     const faltante = Math.max(0, c.cantidad - colocado);
     const exceso   = Math.max(0, colocado - c.cantidad);
@@ -2676,15 +2873,8 @@ function computeAvances(datos) {
 
   // Vol. Mar / Vol. Tierra por cuerpo — mismo cálculo, pero agrupado por
   // destino (cuerpo) + vertido en vez de por material/rango.
-  const colocadoPorVertido = {}; // key = cuerpo|vertido -> ton
-  datos.forEach(r => {
-    if (!esTicketColocacion(r)) return;
-    if (r.destino === 'MURO') return; // Muro no tiene desglose de vertido en catálogo
-    const key = (r.destino||'') + '|' + (r.vertido||'');
-    colocadoPorVertido[key] = (colocadoPorVertido[key] || 0) + tonOf(r);
-  });
   const filasVertido = CATALOGO_VERTIDO_TOTALES.map(c => {
-    const key = c.cuerpo + '|' + c.vertido;
+    const key = claveAgregado(c.cuerpo, c.vertido);
     const colocado = colocadoPorVertido[key] || 0;
     const faltante = Math.max(0, c.cantidad - colocado);
     const exceso   = Math.max(0, colocado - c.cantidad);
@@ -2709,49 +2899,33 @@ function computeAvances(datos) {
 }
 window.computeAvances = computeAvances;
 
-// Balance de inventario por Acopio (Marino/Terrestre), desglosado por
-// Material+Rango: entradas (Suministro que llegó + transferencias entrantes)
-// menos salidas (Colocación que salió de ese acopio + transferencias salientes).
-function computeAcopios(datos) {
+// FASE 14.2: computeAcopios ya NO recorre el arreglo crudo de tickets —
+// recibe el objeto agregado con acopio_entradas/acopio_salidas, donde
+// cada entrada ya trae { ton, material, rango, acopio } (rango ya
+// normalizado con normalizarRango, ver aplicarAgregadoAvanceAcopio), así
+// que no hace falta reconstruir nada a partir de la clave con guiones
+// bajos. Balance de inventario por Acopio (Marino/Terrestre), desglosado
+// por Material+Rango: entradas (Suministro que llegó + transferencias
+// entrantes) menos salidas (Colocación que salió de ese acopio +
+// transferencias salientes).
+function computeAcopios(agregado) {
   const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
-  const balance = {}; // acopio -> { 'material|rango_normalizado' -> {entradas, salidas} }
+  const balance = {}; // acopio -> { 'material|rango_normalizado' -> {material, rango, entradas, salidas} }
   ACOPIOS.forEach(a => balance[a] = {});
 
-  // Normaliza el texto del rango para que dos registros que se refieren al
-  // mismo rango físico (ej. "0.02 a 0.20" y "0.02 a 0.20 ton", con espacios
-  // extra o mayúsculas distintas) se agrupen bajo la MISMA clave. Esto es lo
-  // que causaba que una salida apareciera como un renglón aparte en vez de
-  // restarse de la entrada correspondiente — el dato histórico no siempre
-  // guardó el rango con el mismo formato exacto. 'PENDIENTE' se conserva tal
-  // cual, sin normalizar, para que quede visualmente separado y detectable.
-  function normalizarRango(r) {
-    let s = (r || '').trim().replace(/\s+/g, ' ');
-    if (s.toUpperCase() === 'PENDIENTE') return 'PENDIENTE';
-    s = s.replace(/\s*ton\s*$/i, '').trim();
-    return s ? s + ' ton' : '';
+  function addFromMapa(mapa, campo) {
+    if (!mapa) return;
+    Object.keys(mapa).forEach(key => {
+      const info = mapa[key];
+      if (!info || !ACOPIOS.includes(info.acopio)) return;
+      if (!balance[info.acopio][key]) {
+        balance[info.acopio][key] = { material: info.material, rango: info.rango, entradas: 0, salidas: 0 };
+      }
+      balance[info.acopio][key][campo] += (info.ton || 0);
+    });
   }
-  window.normalizarRango = normalizarRango;
-
-  function addMov(acopio, material, rangoOriginal, campo, ton) {
-    if (!balance[acopio]) return;
-    const rango = normalizarRango(rangoOriginal);
-    const key = (material||'') + '|' + rango;
-    if (!balance[acopio][key]) balance[acopio][key] = { material, rango, entradas: 0, salidas: 0 };
-    balance[acopio][key][campo] += ton;
-  }
-
-  datos.forEach(r => {
-    const t = tonOf(r);
-    const c = conceptoEfectivo(r); // Fase 8: infiere para registros sin r.concepto (pre-Fase 1)
-    if (c === 'SUMINISTRO' && ACOPIOS.includes(r.destino)) {
-      addMov(r.destino, r.material, r.rango, 'entradas', t);
-    } else if ((c === 'COLOCACION_TERRESTRE' || c === 'COLOCACION_MARINA') && r.origen_tipo === 'ACOPIO' && ACOPIOS.includes(r.banco)) {
-      addMov(r.banco, r.material, r.rango, 'salidas', t);
-    } else if (c === 'TRANSFERENCIA_ACOPIOS') {
-      if (ACOPIOS.includes(r.banco))   addMov(r.banco,   r.material, r.rango, 'salidas', t);
-      if (ACOPIOS.includes(r.destino)) addMov(r.destino, r.material, r.rango, 'entradas', t);
-    }
-  });
+  addFromMapa(agregado.acopio_entradas, 'entradas');
+  addFromMapa(agregado.acopio_salidas, 'salidas');
 
   const resultado = {};
   ACOPIOS.forEach(a => {
@@ -3510,9 +3684,26 @@ function barraHtml(pct, completo) {
   </div>`;
 }
 
+// FASE 14.1 — Enfriamiento (cooldown) compartido para ambos botones
+// "🔄 Actualizar" (Avances y Acopios): ambos leen el mismo documento
+// agregado, así que basta un solo cooldown para los dos.
+let ultimoRefrescoForzado = 0; // timestamp epoch ms, ámbito módulo
+const COOLDOWN_REFRESCO_MS = 5 * 60 * 1000; // 5 minutos
+
 window.initAvancesTab = async function(forzar) {
   const wrap = document.getElementById('avances-content');
   if (!wrap) return;
+  if (forzar) {
+    const ahora = Date.now();
+    const restante = COOLDOWN_REFRESCO_MS - (ahora - ultimoRefrescoForzado);
+    if (restante > 0) {
+      const seg = Math.ceil(restante / 1000);
+      window.showSyncToast('⏳', `Espera ${seg}s antes de volver a actualizar`, 'pending');
+      forzar = false; // degrada a usar caché en vez de bloquear la pestaña
+    } else {
+      ultimoRefrescoForzado = ahora;
+    }
+  }
   const datos = await asegurarDatosAvancesAcopios(forzar);
   if (!datos) return;
   renderAvances(datos);
@@ -3603,6 +3794,17 @@ function nombreMaterialLegible(m) {
 window.initAcopiosTab = async function(forzar) {
   const wrap = document.getElementById('acopios-content');
   if (!wrap) return;
+  if (forzar) {
+    const ahora = Date.now();
+    const restante = COOLDOWN_REFRESCO_MS - (ahora - ultimoRefrescoForzado);
+    if (restante > 0) {
+      const seg = Math.ceil(restante / 1000);
+      window.showSyncToast('⏳', `Espera ${seg}s antes de volver a actualizar`, 'pending');
+      forzar = false; // degrada a usar caché en vez de bloquear la pestaña
+    } else {
+      ultimoRefrescoForzado = ahora;
+    }
+  }
   const datos = await asegurarDatosAvancesAcopios(forzar);
   if (!datos) return;
   renderAcopios(datos);

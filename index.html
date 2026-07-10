@@ -3739,7 +3739,7 @@ function barraHtml(pct, completo) {
 // "🔄 Actualizar" (Avances y Acopios): ambos leen el mismo documento
 // agregado, así que basta un solo cooldown para los dos.
 let ultimoRefrescoForzado = 0; // timestamp epoch ms, ámbito módulo
-const COOLDOWN_REFRESCO_MS = 5 * 60 * 1000; // 5 minutos
+const COOLDOWN_REFRESCO_MS = 15 * 1000; // 15 SEGS
 
 window.initAvancesTab = async function(forzar) {
   const wrap = document.getElementById('avances-content');

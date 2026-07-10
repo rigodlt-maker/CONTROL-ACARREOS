@@ -4999,6 +4999,27 @@ function descargarPdfResumen() {
   body.push(['TOTAL GENERAL', String(totalViajes), fmtTon(totalTon), fmtProm(totalTon, totalViajes)]);
   niveles.push(-1);
 
+  // Fix 10-jul-2026 (v5) — CAUSA REAL DEL ERROR "Maximum call stack size
+  // exceeded": no era un tema de iOS/Android/standalone, era que con
+  // "Ver TODO el histórico" la tabla jerárquica del PDF puede terminar
+  // con cientos/miles de filas (banco > material > destino), y la
+  // librería jspdf-autotable usa recursión interna para paginar que
+  // revienta la pila de llamadas en navegadores móviles bastante antes
+  // que en escritorio. No es algo que podamos parchar sin tocar la
+  // librería (viene de cdnjs, no es archivo propio del repo), así que
+  // se pone un límite razonable de filas y se avisa al usuario que
+  // filtre por periodo en vez de exportar todo el histórico a PDF.
+  const MAX_FILAS_PDF_RESUMEN = 600;
+  if (body.length > MAX_FILAS_PDF_RESUMEN) {
+    alert(
+      `Esta tabla tiene ${body.length} filas (banco/material/destino) — es demasiado grande ` +
+      `para generar un PDF de forma confiable, sobre todo en el celular.\n\n` +
+      `Usa el filtro de "Periodo" (Mes, Semana o Día) para reducir el rango antes de descargar el PDF, ` +
+      `o usa el botón "Excel" si necesitas TODO el histórico completo.`
+    );
+    return;
+  }
+
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
   const marginX = 0.6;
@@ -5365,6 +5386,21 @@ function descargarPdfBancos() {
   const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   body.push(['TOTAL GENERAL', String(totalViajes), fmtTon(totalTon), fmtProm(totalTon, totalViajes)]);
   niveles.push(-1);
+
+  // Fix 10-jul-2026 (v5) — Mismo guard que descargarPdfResumen(): con
+  // "Ver TODO el histórico" la tabla banco/material puede volverse
+  // demasiado grande para que jspdf-autotable la pagine sin reventar la
+  // pila en navegadores móviles ("Maximum call stack size exceeded").
+  const MAX_FILAS_PDF_BANCOS = 600;
+  if (body.length > MAX_FILAS_PDF_BANCOS) {
+    alert(
+      `Esta tabla tiene ${body.length} filas (banco/material) — es demasiado grande ` +
+      `para generar un PDF de forma confiable, sobre todo en el celular.\n\n` +
+      `Usa el filtro de "Periodo" para reducir el rango antes de descargar el PDF, ` +
+      `o usa el botón "Excel" si necesitas TODO el histórico completo.`
+    );
+    return;
+  }
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });

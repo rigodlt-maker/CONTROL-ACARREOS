@@ -31,9 +31,22 @@
   --radius: 10px; --radius-lg: 14px;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 15px; }
-header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; }
-header p { font-size: 11px; opacity: 0.8; }
+header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: padding 0.22s ease; }
+header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; overflow: hidden; transition: font-size 0.22s ease, max-height 0.22s ease, opacity 0.22s ease; }
+header p { font-size: 11px; opacity: 0.8; overflow: hidden; transition: max-height 0.22s ease, opacity 0.22s ease, margin 0.22s ease; }
+
+/* ── Header/tab-bar compactos al hacer scroll hacia abajo (Fase 17) ──
+   .nav-collapsed se agrega/quita por JS (ver scroll listener más abajo).
+   El header se achica (menos padding, subtítulo oculto) y la barra de
+   pestañas de 3 filas se colapsa por completo (max-height animado a 0,
+   medido en JS con scrollHeight — no se transiciona a "auto" directo
+   porque CSS no anima esa propiedad). Al subir el scroll (o estar cerca
+   del top) se restaura todo de inmediato. */
+header.nav-collapsed { padding: 8px 16px; }
+header.nav-collapsed h1 { max-height: 0; opacity: 0; margin: 0; }
+header.nav-collapsed p { max-height: 0; opacity: 0; margin: 0; }
+header.nav-collapsed > svg:first-child { width: 20px; height: 20px; transition: width 0.22s ease, height 0.22s ease; }
+header > svg:first-child { transition: width 0.22s ease, height 0.22s ease; }
 
 /* ── TAB BAR EN TRES FILAS (Fase 16.7) ── */
 .tab-bar-wrap {
@@ -42,6 +55,12 @@ header p { font-size: 11px; opacity: 0.8; }
   position: sticky;
   top: 60px;
   z-index: 99;
+  overflow: hidden;
+  transition: max-height 0.22s ease, border-color 0.22s ease;
+}
+.tab-bar-wrap.collapsed {
+  max-height: 0 !important;
+  border-bottom-color: transparent;
 }
 .tab-bar {
   display: flex;
@@ -471,6 +490,11 @@ onAuthStateChanged(auth, async (user) => {
     if (!tabsPermitidas.includes(tabActivaId) && tabsPermitidas.length) {
       showTab(tabsPermitidas[0]);
     }
+
+    // FASE 17: los botones recién mostrados/ocultados por rol cambian la
+    // altura real del tab-bar-wrap; si estaba expandido, hay que recalcularla
+    // (si no, el colapso/expansión por scroll queda con una altura vieja).
+    if (window.actualizarAlturaTabBar) window.actualizarAlturaTabBar();
 
     startRealtimeSync(rol);
   } catch (e) {
@@ -1623,7 +1647,7 @@ window.leerResumenAvanceAcopio = async function () {
 
 <div id="app-shell" style="display:none">
 
-<header>
+<header id="app-header">
   <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
     <rect x="2" y="6" width="4" height="16" rx="1" fill="white"/>
     <rect x="8" y="2" width="2" height="24" rx="1" fill="white"/>
@@ -1641,7 +1665,7 @@ window.leerResumenAvanceAcopio = async function () {
   </div>
 </header>
 
-<div class="tab-bar-wrap">
+<div class="tab-bar-wrap" id="tab-bar-wrap">
   <div class="tab-bar" id="tab-bar-row1">
     <button class="tab-btn active" onclick="showTab('form')" id="t-form">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
@@ -5626,42 +5650,58 @@ window.descargarExcelDesdeTab = async function() {
 
     if (btn) { btn.innerHTML = '<span class="spin"></span> Generando…'; }
 
-    const parseFecha = window.parseDateForExcel || function(s) { if (!s) return ''; const [y,m,d] = s.split('-'); return new Date(+y,+m-1,+d,0,0,0); };
+    // FASE 17: mismas columnas y mismos NOMBRES de campo que la plantilla de
+    // importación (hoja "Datos"), para que el Excel exportado se pueda volver
+    // a importar tal cual, o comparar renglón a renglón contra lo que
+    // entrega un compañero. Valores crudos (no formateados con "—" ni
+    // separadores de miles) por la misma razón: esto es un formato de
+    // intercambio de datos, no una tabla para leer a simple vista (para eso
+    // ya está la pestaña Reportes).
+    // Mismas columnas y mismos NOMBRES de campo que la plantilla de
+    // importación (hoja "Datos"), para que el Excel exportado se pueda
+    // volver a importar tal cual, o comparar renglón a renglón contra lo
+    // que entrega un compañero. Se incluyen concepto/suministro_y_colocacion/
+    // neto_kg/ton aunque importador.html las recalcula siempre solas (no las
+    // lee del archivo, ver HEADER_MAP) — dejarlas no rompe nada, el
+    // importador simplemente ignora las columnas que no reconoce, y así el
+    // export queda como un respaldo completo y legible por sí mismo.
     const datosFormateados = registros.map((r) => ({
-      "Fecha":              r.fecha1 ? parseFecha(r.fecha1) : "—",
-      "Hora 1er Pesaje":   r.hora1 || "—",
-      "Fecha 2do Pesaje":  r.fecha2 ? parseFecha(r.fecha2) : "—",
-      "Hora 2do Pesaje":   r.hora2 || "—",
-      "Ciclo":             r.ciclo || "—",
-      "Folio":             r.folio || "—",
-      "Boleta":            r.boleta || "S/B",
-      "Placas":            r.placas || "—",
-      "Tipo de Camión":    r.tipo_camion === 'GONDOLA' ? 'Góndola' : (r.tipo_camion === 'VOLTEO' ? 'Volteo' : '—'),
-      "# Economico":       r.economico || "—",
-      "Material":          r.material || "—",
-      "Banco Origen":      r.banco || "—",
-      "Destino (Tiro)":    r.destino || "—",
-      "Rango de Material": r.rango || "—",
-      "Peso Bruto (kg)":   r.bruto_kg ? Number(r.bruto_kg).toLocaleString('es-MX') : "0",
-      "Peso Tara (kg)":    r.tara_kg  ? Number(r.tara_kg).toLocaleString('es-MX')  : "0",
-      "Peso Neto (kg)":    r.neto_kg  ? Number(r.neto_kg).toLocaleString('es-MX')  : "0",
-      "Peso Neto (ton)":   r.ton || "0",
-      "Estatus":           r.status === 'pendiente' ? "Pendiente de destare" : "Completo"
+      fecha1:                   r.fecha1 || '',
+      hora1:                    r.hora1 || '',
+      fecha2:                   r.fecha2 || '',
+      hora2:                    r.hora2 || '',
+      ciclo:                    r.ciclo || '',
+      boleta:                   r.boleta || '',
+      folio:                    r.folio || '',
+      economico:                r.economico || '',
+      placas:                   r.placas || '',
+      material:                 r.material || '',
+      rango:                    r.rango || '',
+      banco:                    r.banco || '',
+      origen_tipo:              r.origen_tipo || 'BANCO',
+      destino:                  r.destino || '',
+      tipo_camion:              r.tipo_camion || '',
+      vertido:                  r.vertido || '',
+      folio_barcaza:            r.folio_barcaza || '',
+      concepto:                 r.concepto || (window.conceptoEfectivo ? window.conceptoEfectivo(r) : ''),
+      suministro_y_colocacion:  !!r.suministro_y_colocacion,
+      bruto_kg:                 r.bruto_kg || 0,
+      tara_kg:                  r.tara_kg || 0,
+      neto_kg:                  r.neto_kg || 0,
+      ton:                      r.ton || 0,
+      status:                   r.status || (r.fecha2 ? 'completo' : 'pendiente')
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(datosFormateados, { cellDates: true });
-    for (let cellAddress in worksheet) {
-      if (cellAddress[0] === '!') continue;
-      if (worksheet[cellAddress].t === 'd') worksheet[cellAddress].z = 'dd/mm/yyyy';
-    }
+    const worksheet = XLSX.utils.json_to_sheet(datosFormateados);
     worksheet['!cols'] = [
-      {wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
-      {wch:12},{wch:12},{wch:15},{wch:13},{wch:14},
-      {wch:18},{wch:16},{wch:16},{wch:20},{wch:15},
-      {wch:14},{wch:15},{wch:14},{wch:18}
+      {wch:12},{wch:9},{wch:12},{wch:9},{wch:10},
+      {wch:10},{wch:10},{wch:12},{wch:12},{wch:16},
+      {wch:18},{wch:16},{wch:12},{wch:16},{wch:13},
+      {wch:11},{wch:15},{wch:20},{wch:14},{wch:12},
+      {wch:12},{wch:12},{wch:10},{wch:12}
     ];
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Acarreos");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Datos");
     XLSX.writeFile(workbook, 'Reporte_Acarreos_' + new Date().toISOString().slice(0,10) + '.xlsx');
   } catch (err) {
     window.handleFirestoreIndexError(err) || alert('Error al generar el Excel: ' + err.message);
@@ -5695,6 +5735,73 @@ if ('serviceWorker' in navigator) {
     .then(() => console.log('SW registered'))
     .catch(err => console.warn('SW error:', err));
 }
+
+// ══════════════════════════════════════════════════════
+// FASE 17 — Header y barra de pestañas se colapsan al bajar el scroll
+// (para no ocupar tanta pantalla en móvil) y se restauran de inmediato al
+// subir, o al estar cerca del top. No depende del <script type="module">
+// de arriba (solo manipula el DOM), así que vive aquí, en el script plano.
+// ══════════════════════════════════════════════════════
+(function () {
+  const header = document.getElementById('app-header');
+  const tabBarWrap = document.getElementById('tab-bar-wrap');
+  if (!header || !tabBarWrap) return;
+
+  const UMBRAL_TOP = 24;      // px: por debajo de esto, siempre expandido
+  const UMBRAL_DELTA = 6;     // px de movimiento mínimo para no reaccionar a "ruido" de scroll
+
+  let ultimoScrollY = window.scrollY;
+  let colapsado = false;
+  let ticking = false;
+
+  function expandir() {
+    if (!colapsado) return;
+    colapsado = false;
+    header.classList.remove('nav-collapsed');
+    tabBarWrap.classList.remove('collapsed');
+    tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
+  }
+
+  function colapsar() {
+    if (colapsado) return;
+    colapsado = true;
+    header.classList.add('nav-collapsed');
+    tabBarWrap.classList.add('collapsed');
+    tabBarWrap.style.maxHeight = '0px';
+  }
+
+  function actualizarAltura() {
+    // Recalcula la altura "abierta" real (cambia según qué pestañas están
+    // visibles por rol). Solo aplica si no está colapsado ahora mismo.
+    if (!colapsado) tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
+  }
+  window.actualizarAlturaTabBar = actualizarAltura; // por si otra parte de la app necesita forzar el recálculo
+
+  // Altura inicial (abierto por defecto)
+  tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
+  window.addEventListener('resize', actualizarAltura);
+
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY;
+      const delta = y - ultimoScrollY;
+
+      if (y <= UMBRAL_TOP) {
+        expandir();
+      } else if (delta > UMBRAL_DELTA) {
+        colapsar(); // deslizando hacia abajo
+      } else if (delta < -UMBRAL_DELTA) {
+        expandir(); // deslizando hacia arriba
+      }
+
+      ultimoScrollY = y;
+      ticking = false;
+    });
+  }, { passive: true });
+})();
+
 </script>
 
 </body>

@@ -2126,6 +2126,44 @@ window.leerResumenAvanceAcopio = async function () {
 
   <div class="slicers-card">
     <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Periodo
+    </h3>
+    <div class="slicers-grid">
+      <div class="full">
+        <label>Ver por</label>
+        <select id="bancos-periodo-tipo" onchange="cambiarPeriodoBancos()">
+          <option value="dia">Día</option>
+          <option value="semana">Semana</option>
+          <option value="mes">Mes</option>
+          <option value="rango" selected>Rango de días</option>
+        </select>
+      </div>
+      <div class="full" id="bancos-periodo-dia-wrap" style="display:none">
+        <label>Fecha</label>
+        <input type="date" id="bancos-fecha-dia" onchange="renderBancos()"/>
+      </div>
+      <div class="full" id="bancos-periodo-semana-wrap" style="display:none">
+        <label>Semana (cualquier día de esa semana)</label>
+        <input type="date" id="bancos-fecha-semana" onchange="renderBancos()"/>
+      </div>
+      <div class="full" id="bancos-periodo-mes-wrap" style="display:none">
+        <label>Mes</label>
+        <input type="month" id="bancos-fecha-mes" onchange="renderBancos()"/>
+      </div>
+      <div id="bancos-periodo-rango-wrap">
+        <label>Desde</label>
+        <input type="date" id="bancos-fecha-desde" onchange="renderBancos()"/>
+      </div>
+      <div id="bancos-periodo-rango-wrap2">
+        <label>Hasta</label>
+        <input type="date" id="bancos-fecha-hasta" onchange="renderBancos()"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
       Filtros
     </h3>
@@ -4814,32 +4852,54 @@ window.renderResumen = renderResumen;
 // pantalla de inicio), sobre todo en iOS/Safari en modo "standalone",
 // el atributo `download` del <a> se ignora silenciosamente: no hay
 // error en consola, pero tampoco se descarga nada.
-// Solución: si detectamos que estamos en modo standalone, en vez de
-// doc.save() abrimos el PDF (como blob URL) en una pestaña nueva del
-// navegador del sistema; desde ahí el usuario sí puede usar
-// Compartir → Guardar en Archivos, o Imprimir. Si algo falla (por
-// ejemplo el pop-up bloqueado), avisamos en vez de fallar en silencio.
+//
+// Fix 10-jul-2026 (v2) — El primer intento de solución (abrir el PDF
+// como blob URL con window.open en una "pestaña nueva") tampoco
+// funcionaba: una PWA en modo standalone de iOS NO tiene pestañas de
+// Safari a las que abrir nada — window.open() no truena ni bloquea
+// nada (no hay alerta de pop-up), simplemente no pasa nada visible.
+// Solución real: usar el Web Share API (navigator.share con un File),
+// que sí opera dentro del contexto de la propia PWA y abre la hoja
+// nativa de "Compartir" de iOS, desde donde el usuario puede elegir
+// "Guardar en Archivos", "Imprimir", enviarlo por WhatsApp/Mail, etc.
+// Es CRÍTICO llamar navigator.share() de forma síncrona respecto al
+// clic del usuario (antes de cualquier await previo), o iOS lo trata
+// como no iniciado por el usuario y lo ignora — por eso esta función
+// hace el share como lo primero que intenta, sin await antes.
 // ══════════════════════════════════════════════════════
 function esPwaStandalone() {
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
       || window.navigator.standalone === true; // Safari/iOS
 }
 
-function guardarPdfDescarga(doc, nombreArchivo) {
+async function guardarPdfDescarga(doc, nombreArchivo) {
   try {
     if (esPwaStandalone()) {
-      const blobUrl = doc.output('bloburl');
-      const ventana = window.open(blobUrl, '_blank');
-      if (!ventana) {
-        alert('El PDF se generó pero no se pudo abrir automáticamente. Revisa que tu navegador no esté bloqueando ventanas emergentes (pop-ups) para esta app y vuelve a intentar.');
+      const blob = doc.output('blob');
+      if (navigator.canShare && navigator.share) {
+        const file = new File([blob], nombreArchivo, { type: 'application/pdf' });
+        if (navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: nombreArchivo });
+            return;
+          } catch (shareErr) {
+            if (shareErr && shareErr.name === 'AbortError') return; // el usuario cerró la hoja de compartir, no es un error
+            console.error('Web Share falló, se intenta el respaldo:', shareErr);
+          }
+        }
       }
+      // Respaldo si el dispositivo no soporta Web Share con archivos:
+      // navegar la propia pestaña al blob (window.open no sirve en standalone).
+      const blobUrl = URL.createObjectURL(blob);
+      window.location.href = blobUrl;
+      alert('Se generó el PDF. Si no se abre automáticamente, usa el botón Compartir de tu navegador para guardarlo.');
       return;
     }
     doc.save(nombreArchivo);
   } catch (err) {
     console.error('Error al descargar PDF:', err);
     try {
-      // Último recurso, por si doc.save() falló también fuera de modo standalone.
+      // Último recurso, por si algo de lo anterior falló también.
       const blobUrl = doc.output('bloburl');
       const ventana = window.open(blobUrl, '_blank');
       if (!ventana) throw err;
@@ -4974,9 +5034,62 @@ function getDatosBaseBancos() {
     : (window.db || []);
 }
 
+// Igual que cambiarPeriodoResumen()/getRangoPeriodoResumen(), pero para la
+// pestaña Bancos (antes sin filtro de fecha — FIX solicitado por el usuario).
+// Por defecto arranca en "rango" sin fechas (= sin filtrar), porque Bancos se
+// usa sobre todo para conciliar folios/boletas contra el histórico completo.
+function cambiarPeriodoBancos() {
+  const tipo = document.getElementById('bancos-periodo-tipo').value;
+  document.getElementById('bancos-periodo-dia-wrap').style.display    = (tipo === 'dia')    ? 'block' : 'none';
+  document.getElementById('bancos-periodo-semana-wrap').style.display = (tipo === 'semana') ? 'block' : 'none';
+  document.getElementById('bancos-periodo-mes-wrap').style.display    = (tipo === 'mes')    ? 'block' : 'none';
+  document.getElementById('bancos-periodo-rango-wrap').style.display  = (tipo === 'rango')  ? 'block' : 'none';
+  document.getElementById('bancos-periodo-rango-wrap2').style.display = (tipo === 'rango')  ? 'block' : 'none';
+  const fDia = document.getElementById('bancos-fecha-dia');
+  if (tipo === 'dia' && !fDia.value) fDia.value = isoHoy();
+  const fSemana = document.getElementById('bancos-fecha-semana');
+  if (tipo === 'semana' && !fSemana.value) fSemana.value = isoHoy();
+  const fMes = document.getElementById('bancos-fecha-mes');
+  if (tipo === 'mes' && !fMes.value) fMes.value = isoHoy().slice(0,7);
+  initDateHints();
+  renderBancos();
+}
+window.cambiarPeriodoBancos = cambiarPeriodoBancos;
+
+function getRangoPeriodoBancos() {
+  const tipo = document.getElementById('bancos-periodo-tipo').value;
+  if (tipo === 'dia') {
+    const f = document.getElementById('bancos-fecha-dia').value || isoHoy();
+    return { desde: f, hasta: f };
+  }
+  if (tipo === 'semana') {
+    const base = document.getElementById('bancos-fecha-semana').value || isoHoy();
+    const [y,m,d] = base.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const diaSemana = dt.getDay();
+    const offsetLunes = (diaSemana === 0) ? 6 : diaSemana - 1;
+    const lunes = new Date(dt); lunes.setDate(dt.getDate() - offsetLunes);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    const toIso = (x) => x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+    return { desde: toIso(lunes), hasta: toIso(domingo) };
+  }
+  if (tipo === 'mes') {
+    const base = document.getElementById('bancos-fecha-mes').value || isoHoy().slice(0,7);
+    const [y,m] = base.split('-').map(Number);
+    const ultimoDia = new Date(y, m, 0).getDate();
+    return { desde: `${base}-01`, hasta: `${base}-${String(ultimoDia).padStart(2,'0')}` };
+  }
+  const desde = document.getElementById('bancos-fecha-desde').value;
+  const hasta = document.getElementById('bancos-fecha-hasta').value;
+  return { desde: desde || null, hasta: hasta || null };
+}
+
 function getBancosFiltradoBase() {
+  const { desde, hasta } = getRangoPeriodoBancos();
   const bancos = getMsSelected('bancos-banco');
   return getDatosBaseBancos().filter(r => {
+    if (desde && (!r.fecha1 || r.fecha1 < desde)) return false;
+    if (hasta && (!r.fecha1 || r.fecha1 > hasta)) return false;
     if (bancos.length && !bancos.includes(r.banco)) return false;
     return true;
   });
@@ -5012,7 +5125,7 @@ window.initBancosTab = function() {
     if (btnVent) btnVent.className = 'btn btn-secondary';
     if (btnHist) btnHist.className = 'btn btn-primary';
   }
-  renderBancos();
+  cambiarPeriodoBancos(); // fija visibilidad del filtro de fecha y ya renderiza Bancos
   renderBancosFolio();
 };
 
@@ -5039,7 +5152,12 @@ function limpiarFiltrosBancos() {
   const dd = document.getElementById('ms-bancos-banco-dd');
   if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
   updateMsBtn('bancos-banco');
-  renderBancos();
+  document.getElementById('bancos-periodo-tipo').value = 'rango';
+  ['bancos-fecha-dia','bancos-fecha-semana','bancos-fecha-mes','bancos-fecha-desde','bancos-fecha-hasta'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  cambiarPeriodoBancos();
   renderBancosFolio();
 }
 window.limpiarFiltrosBancos = limpiarFiltrosBancos;

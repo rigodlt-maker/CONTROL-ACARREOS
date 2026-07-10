@@ -31,36 +31,37 @@
   --radius: 10px; --radius-lg: 14px;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 15px; }
-header { background: var(--accent); color: white; padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: padding 0.22s ease; }
-header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; overflow: hidden; transition: font-size 0.22s ease, max-height 0.22s ease, opacity 0.22s ease; }
-header p { font-size: 11px; opacity: 0.8; overflow: hidden; transition: max-height 0.22s ease, opacity 0.22s ease, margin 0.22s ease; }
 
-/* ── Header/tab-bar compactos al hacer scroll hacia abajo (Fase 17) ──
-   .nav-collapsed se agrega/quita por JS (ver scroll listener más abajo).
-   El header se achica (menos padding, subtítulo oculto) y la barra de
-   pestañas de 3 filas se colapsa por completo (max-height animado a 0,
-   medido en JS con scrollHeight — no se transiciona a "auto" directo
-   porque CSS no anima esa propiedad). Al subir el scroll (o estar cerca
-   del top) se restaura todo de inmediato. */
-header.nav-collapsed { padding: 8px 16px; }
-header.nav-collapsed h1 { max-height: 0; opacity: 0; margin: 0; }
-header.nav-collapsed p { max-height: 0; opacity: 0; margin: 0; }
-header.nav-collapsed > svg:first-child { width: 20px; height: 20px; transition: width 0.22s ease, height 0.22s ease; }
-header > svg:first-child { transition: width 0.22s ease, height 0.22s ease; }
+/* ── FASE 17-fix — Header + tab-bar como una sola pieza "fixed" ──
+   Antes, el colapso funcionaba cambiando max-height/padding (o sea,
+   cambiando el ALTO real de elementos "sticky"). Eso movía el contenido de
+   abajo, lo cual movía el scroll, lo cual volvía a disparar el mismo
+   listener de scroll → bucle de retroalimentación → vibración visible.
+
+   Ahora #top-nav es un solo bloque con position:fixed (fuera del flujo del
+   documento) que se esconde deslizándolo hacia arriba con
+   transform:translateY(-100%). Un transform NUNCA cambia el alto del
+   documento ni dispara scroll — así que no hay forma de que se retroalimente
+   a sí mismo. El contenido de abajo reserva el espacio con un padding-top
+   FIJO (no se anima, se calcula una sola vez por JS), así que no hay salto
+   ni reflow cuando el menú aparece/desaparece. */
+#top-nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  transition: transform 0.25s ease;
+  will-change: transform;
+}
+#top-nav.nav-hidden { transform: translateY(-100%); }
+
+header { background: var(--accent); color: white; padding: 14px 16px 12px; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+header h1 { font-size: 16px; font-weight: 600; line-height: 1.2; }
+header p { font-size: 11px; opacity: 0.8; }
 
 /* ── TAB BAR EN TRES FILAS (Fase 16.7) ── */
 .tab-bar-wrap {
   background: var(--surface);
   border-bottom: 0.5px solid var(--border);
-  position: sticky;
-  top: 60px;
-  z-index: 99;
-  overflow: hidden;
-  transition: max-height 0.22s ease, border-color 0.22s ease;
-}
-.tab-bar-wrap.collapsed {
-  max-height: 0 !important;
-  border-bottom-color: transparent;
 }
 .tab-bar {
   display: flex;
@@ -1647,6 +1648,7 @@ window.leerResumenAvanceAcopio = async function () {
 
 <div id="app-shell" style="display:none">
 
+<div id="top-nav">
 <header id="app-header">
   <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
     <rect x="2" y="6" width="4" height="16" rx="1" fill="white"/>
@@ -1720,6 +1722,7 @@ window.leerResumenAvanceAcopio = async function () {
       Metas
     </button>
   </div>
+</div>
 </div>
 
 <div class="tab-content active" id="tab-form">
@@ -5737,49 +5740,51 @@ if ('serviceWorker' in navigator) {
 }
 
 // ══════════════════════════════════════════════════════
-// FASE 17 — Header y barra de pestañas se colapsan al bajar el scroll
-// (para no ocupar tanta pantalla en móvil) y se restauran de inmediato al
-// subir, o al estar cerca del top. No depende del <script type="module">
-// de arriba (solo manipula el DOM), así que vive aquí, en el script plano.
+// FASE 17-fix — Header + tab-bar se esconden al bajar el scroll, usando
+// transform en vez de cambiar alturas (ver comentario en el CSS de
+// #top-nav para el porqué: cambiar alturas de un elemento sticky mueve el
+// contenido, lo que mueve el scroll, lo que retroalimenta al mismo
+// listener → esa era la causa de la vibración). Con transform:translateY
+// el bloque sale y entra por fuera del flujo del documento sin tocar el
+// alto de nada, así que no hay manera de que se retroalimente.
+// No depende del <script type="module"> de arriba (solo manipula el DOM),
+// así que vive aquí, en el script plano.
 // ══════════════════════════════════════════════════════
 (function () {
-  const header = document.getElementById('app-header');
-  const tabBarWrap = document.getElementById('tab-bar-wrap');
-  if (!header || !tabBarWrap) return;
+  const topNav = document.getElementById('top-nav');
+  if (!topNav) return;
 
-  const UMBRAL_TOP = 24;      // px: por debajo de esto, siempre expandido
+  const UMBRAL_TOP = 24;      // px: por debajo de esto, siempre visible
   const UMBRAL_DELTA = 6;     // px de movimiento mínimo para no reaccionar a "ruido" de scroll
 
   let ultimoScrollY = window.scrollY;
-  let colapsado = false;
+  let escondido = false;
   let ticking = false;
 
-  function expandir() {
-    if (!colapsado) return;
-    colapsado = false;
-    header.classList.remove('nav-collapsed');
-    tabBarWrap.classList.remove('collapsed');
-    tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
+  function mostrar() {
+    if (!escondido) return;
+    escondido = false;
+    topNav.classList.remove('nav-hidden');
   }
 
-  function colapsar() {
-    if (colapsado) return;
-    colapsado = true;
-    header.classList.add('nav-collapsed');
-    tabBarWrap.classList.add('collapsed');
-    tabBarWrap.style.maxHeight = '0px';
+  function esconder() {
+    if (escondido) return;
+    escondido = true;
+    topNav.classList.add('nav-hidden');
   }
 
-  function actualizarAltura() {
-    // Recalcula la altura "abierta" real (cambia según qué pestañas están
-    // visibles por rol). Solo aplica si no está colapsado ahora mismo.
-    if (!colapsado) tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
+  // El contenido reserva SIEMPRE el alto completo de #top-nav con un
+  // padding-top fijo en <body> — fijo de verdad, no se anima ni se
+  // recalcula en cada scroll. Solo cambia si cambia qué botones están
+  // visibles por rol (login) o si gira/cambia el tamaño la pantalla. Así,
+  // esconder/mostrar el menú (el transform) nunca reacomoda el contenido.
+  function actualizarEspacioReservado() {
+    document.body.style.paddingTop = topNav.offsetHeight + 'px';
   }
-  window.actualizarAlturaTabBar = actualizarAltura; // por si otra parte de la app necesita forzar el recálculo
+  window.actualizarAlturaTabBar = actualizarEspacioReservado; // usado tras aplicar visibilidad por rol
 
-  // Altura inicial (abierto por defecto)
-  tabBarWrap.style.maxHeight = tabBarWrap.scrollHeight + 'px';
-  window.addEventListener('resize', actualizarAltura);
+  actualizarEspacioReservado();
+  window.addEventListener('resize', actualizarEspacioReservado);
 
   window.addEventListener('scroll', () => {
     if (ticking) return;
@@ -5789,11 +5794,11 @@ if ('serviceWorker' in navigator) {
       const delta = y - ultimoScrollY;
 
       if (y <= UMBRAL_TOP) {
-        expandir();
+        mostrar();
       } else if (delta > UMBRAL_DELTA) {
-        colapsar(); // deslizando hacia abajo
+        esconder(); // deslizando hacia abajo
       } else if (delta < -UMBRAL_DELTA) {
-        expandir(); // deslizando hacia arriba
+        mostrar(); // deslizando hacia arriba
       }
 
       ultimoScrollY = y;

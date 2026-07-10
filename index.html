@@ -3723,7 +3723,7 @@ function onMsChange(key) {
   if (key.startsWith('excel-')) return;
   if (key.startsWith('resumen-')) { renderResumen(); return; }
   if (key.startsWith('reportes-')) { renderReportes(); return; }
-  if (key.startsWith('bancos-')) { renderBancos(); return; }
+  if (key.startsWith('bancos-')) { renderBancos(); renderBancosFolio(); return; }
   renderDashboard();
 }
 
@@ -4776,6 +4776,51 @@ function renderResumen() {
 window.renderResumen = renderResumen;
 
 // ══════════════════════════════════════════════════════
+// Fix 10-jul-2026 — Los PDF se generaban pero no se descargaban.
+// Causa: doc.save() de jsPDF crea un <a download> y le hace click por
+// código. Eso funciona en escritorio y en el navegador normal de un
+// celular, pero cuando la app corre como PWA instalada (agregada a
+// pantalla de inicio), sobre todo en iOS/Safari en modo "standalone",
+// el atributo `download` del <a> se ignora silenciosamente: no hay
+// error en consola, pero tampoco se descarga nada.
+// Solución: si detectamos que estamos en modo standalone, en vez de
+// doc.save() abrimos el PDF (como blob URL) en una pestaña nueva del
+// navegador del sistema; desde ahí el usuario sí puede usar
+// Compartir → Guardar en Archivos, o Imprimir. Si algo falla (por
+// ejemplo el pop-up bloqueado), avisamos en vez de fallar en silencio.
+// ══════════════════════════════════════════════════════
+function esPwaStandalone() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true; // Safari/iOS
+}
+
+function guardarPdfDescarga(doc, nombreArchivo) {
+  try {
+    if (esPwaStandalone()) {
+      const blobUrl = doc.output('bloburl');
+      const ventana = window.open(blobUrl, '_blank');
+      if (!ventana) {
+        alert('El PDF se generó pero no se pudo abrir automáticamente. Revisa que tu navegador no esté bloqueando ventanas emergentes (pop-ups) para esta app y vuelve a intentar.');
+      }
+      return;
+    }
+    doc.save(nombreArchivo);
+  } catch (err) {
+    console.error('Error al descargar PDF:', err);
+    try {
+      // Último recurso, por si doc.save() falló también fuera de modo standalone.
+      const blobUrl = doc.output('bloburl');
+      const ventana = window.open(blobUrl, '_blank');
+      if (!ventana) throw err;
+    } catch (err2) {
+      console.error('Fallback de descarga de PDF también falló:', err2);
+      alert('No se pudo descargar el PDF. Intenta de nuevo o desde otro navegador.');
+    }
+  }
+}
+window.guardarPdfDescarga = guardarPdfDescarga;
+
+// ══════════════════════════════════════════════════════
 // FASE 16.2 — Exportar PDF de la tabla de "Resumen"
 // ══════════════════════════════════════════════════════
 function descargarPdfResumen() {
@@ -4880,7 +4925,7 @@ function descargarPdfResumen() {
     }
   });
 
-  doc.save(`resumen_acarreos_${isoHoy()}.pdf`);
+  guardarPdfDescarga(doc, `resumen_acarreos_${isoHoy()}.pdf`);
 }
 window.descargarPdfResumen = descargarPdfResumen;
 
@@ -4950,6 +4995,7 @@ function limpiarFiltrosBancos() {
   if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
   updateMsBtn('bancos-banco');
   renderBancos();
+  renderBancosFolio();
 }
 window.limpiarFiltrosBancos = limpiarFiltrosBancos;
 
@@ -5041,20 +5087,23 @@ function renderBancos() {
 }
 window.renderBancos = renderBancos;
 
-// Buscador de folio individual: no se combina con el filtro de banco de la tabla
-// agregada de arriba; siempre busca sobre el conjunto de datos base actual (ventana
-// o histórico según lo que esté activo) para poder conciliar cualquier folio.
+// Buscador de folio individual: SÍ se combina con el filtro de Banco de la tabla
+// agregada de arriba (decisión de Sikot, 10 jul 2026). Busca sobre el mismo
+// conjunto ya filtrado por banco (getBancosFiltradoBase), no sobre todo el
+// histórico/ventana sin filtrar.
 function renderBancosFolio() {
   const cont = document.getElementById('bancos-folio-resultados');
   if (!cont) return;
   const q = (document.getElementById('bancos-folio-input').value || '').trim().toLowerCase();
   if (!q) { cont.innerHTML = ''; return; }
 
-  const datos = getDatosBaseBancos();
+  const datos = getBancosFiltradoBase();
   const encontrados = datos.filter(r => (r.folio || '').toLowerCase().includes(q)).slice(0, 30);
 
   if (!encontrados.length) {
-    cont.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);">Sin resultados para ese folio.</p>';
+    const bancosSel = getMsSelected('bancos-banco').map(nombreBanco);
+    const filtroTxt = bancosSel.length ? ` (con el filtro de banco: ${escHtml(bancosSel.join(', '))})` : '';
+    cont.innerHTML = `<p style="font-size:12.5px;color:var(--text-muted);">Sin resultados para ese folio${filtroTxt}.</p>`;
     return;
   }
 
@@ -5155,7 +5204,7 @@ function descargarPdfBancos() {
     }
   });
 
-  doc.save(`bancos_acarreos_${isoHoy()}.pdf`);
+  guardarPdfDescarga(doc, `bancos_acarreos_${isoHoy()}.pdf`);
 }
 window.descargarPdfBancos = descargarPdfBancos;
 

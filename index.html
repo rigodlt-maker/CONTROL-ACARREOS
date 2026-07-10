@@ -2404,6 +2404,12 @@ window.leerResumenAvanceAcopio = async function () {
       📊 Estatus Operativo de Acarreos
     </h3>
     <div id="reportes-estatus-contenido" style="font-size:13px;line-height:1.75;color:var(--text);"></div>
+    <div style="margin-top:10px;padding-top:10px;border-top:0.5px dashed rgba(133,79,11,0.3);">
+      <button class="btn btn-primary" id="btn-reportes-telegram" onclick="enviarReporteTelegram()" style="font-size:12px;width:100%;">
+        📤 Enviar a Telegram
+      </button>
+      <div id="reportes-telegram-estado" style="font-size:11px;color:var(--text-muted);margin-top:6px;text-align:center;"></div>
+    </div>
   </div>
 
   <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 0;">
@@ -4443,6 +4449,111 @@ function renderReportesEstatus() {
   cont.innerHTML = html;
 }
 window.renderReportesEstatus = renderReportesEstatus;
+
+// ══════════════════════════════════════════════════════
+// FASE 16 — Envío del reporte "Estatus operativo de acarreos" a Telegram
+// vía Cloudflare Worker (el bot token nunca vive en este archivo).
+// ══════════════════════════════════════════════════════
+const TELEGRAM_WORKER_URL = 'https://rompeolas-telegram-proxy.rodrigo-delatorre-indi.workers.dev/';
+
+// Arma el mensaje de texto (con emojis) a partir de los mismos datos y
+// filtros que ya usa renderReportesEstatus(), para que el mensaje de
+// Telegram sea un espejo fiel de lo que se ve en pantalla.
+function generarTextoReporteTelegram() {
+  const todosLosDatos = getReportesFiltradoBase();
+  const ahora = new Date();
+  const fechaStr = ahora.toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' });
+  const horaCorte = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  let texto = `🚧 *ESTATUS OPERATIVO DE ACARREOS*\n`;
+  texto += `📅 ${fechaStr} · ⏱️ Corte: ${horaCorte}\n`;
+  texto += `🔎 Filtros: ${descripcionFiltrosReportes()}\n\n`;
+
+  if (!todosLosDatos.length) {
+    texto += `⚠️ Sin datos para los filtros seleccionados.`;
+    return texto;
+  }
+
+  const completados = todosLosDatos.filter(r => r.status !== 'pendiente');
+  const pendientes  = todosLosDatos.filter(r => r.status === 'pendiente');
+
+  function agruparPorBanco(lista) {
+    const map = {};
+    lista.forEach(r => {
+      const b  = r.banco       || 'SIN BANCO';
+      const m  = r.material    || 'SIN MATERIAL';
+      const d  = r.destino     || 'SIN DESTINO';
+      const tc = r.tipo_camion || 'SIN_TIPO';
+      if (!map[b]) map[b] = { total: 0, grupos: {} };
+      map[b].total += 1;
+      const clave = m + '|||' + d + '|||' + tc;
+      map[b].grupos[clave] = (map[b].grupos[clave] || 0) + 1;
+    });
+    return map;
+  }
+
+  function textoBancos(mapa) {
+    const bancoKeys = Object.keys(mapa).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+    if (!bancoKeys.length) return '   —\n';
+    let t = '';
+    bancoKeys.forEach(b => {
+      const bd = mapa[b];
+      t += `📍 *${nombreBanco(b)}* (${bd.total})\n`;
+      const gruposOrdenados = Object.entries(bd.grupos).sort((a,b2) => a[0].localeCompare(b2[0]));
+      gruposOrdenados.forEach(([clave, count]) => {
+        const [m, d, tc] = clave.split('|||');
+        const matTxt  = nombreMaterial(m);
+        const destTxt = d === 'SIN DESTINO' ? 'Sin destino' : d.charAt(0).toUpperCase() + d.slice(1).toLowerCase();
+        const tcTxt   = tc === 'SIN_TIPO' ? 'sin tipo' : nombreTipoCamion(tc);
+        t += `   ${String(count).padStart(2,'0')} — ${matTxt} (${tcTxt} · ${destTxt})\n`;
+      });
+    });
+    return t;
+  }
+
+  texto += `✅ *VIAJES COMPLETADOS: ${completados.length}*\n`;
+  texto += textoBancos(agruparPorBanco(completados));
+
+  texto += `\n⏳ *PENDIENTES DE DESTARE: ${pendientes.length}*\n`;
+  texto += pendientes.length ? textoBancos(agruparPorBanco(pendientes)) : '   Sin pendientes 🎉\n';
+
+  texto += `\n📦 *TOTAL DE VIAJES: ${todosLosDatos.length}*`;
+
+  return texto;
+}
+
+async function enviarReporteTelegram() {
+  const btn = document.getElementById('btn-reportes-telegram');
+  const estadoEl = document.getElementById('reportes-telegram-estado');
+  if (!btn) return;
+
+  const textoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Enviando…';
+  if (estadoEl) estadoEl.textContent = '';
+
+  try {
+    const texto = generarTextoReporteTelegram();
+    const resp = await fetch(TELEGRAM_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto }),
+    });
+    const data = await resp.json();
+
+    if (data.ok) {
+      if (estadoEl) { estadoEl.textContent = '✅ Reporte enviado al grupo de Telegram'; estadoEl.style.color = 'var(--accent)'; }
+    } else {
+      if (estadoEl) { estadoEl.textContent = '❌ ' + (data.error || 'No se pudo enviar el reporte'); estadoEl.style.color = 'var(--danger)'; }
+    }
+  } catch (err) {
+    if (estadoEl) { estadoEl.textContent = '❌ Error de conexión al intentar enviar'; estadoEl.style.color = 'var(--danger)'; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
+}
+window.enviarReporteTelegram = enviarReporteTelegram;
 
 function renderResumenTitulo() {
   const tipo = document.getElementById('resumen-periodo-tipo').value;

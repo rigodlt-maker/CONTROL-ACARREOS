@@ -769,9 +769,32 @@ async function aplicarAgregadoAvanceAcopio(rec, signo) {
   if (Object.keys(payload).length === 0) return;
   payload._actualizado = serverTimestamp();
   try {
-    await setDoc(ref, payload, { merge: true });
+    // FASE 14.2-fix: updateDoc() (no setDoc+merge) es lo único que Firestore
+    // garantiza que respete la notación de punto para fusionar campos
+    // anidados sin pisar a sus vecinos (colocado_por_fila.X, etc.). Con
+    // setDoc+merge esas rutas con punto no se fusionaban de forma confiable
+    // en el mapa anidado (por eso los totales globales subían pero el
+    // desglose por Cuerpo/Material/Rango se quedaba en cero).
+    await updateDoc(ref, payload);
   } catch (e) {
-    console.error('No se pudo actualizar resumenes/avance_acopio:', e);
+    if (e && e.code === 'not-found') {
+      // El documento resumen aún no existe (nunca se corrió "Recalcular
+      // totales"). Se crea con la estructura base (mapas vacíos) y se
+      // reintenta el updateDoc, para que las claves con punto sí se
+      // fusionen dentro de los mapas anidados desde el primer registro.
+      try {
+        await setDoc(ref, {
+          colocado_por_fila: {}, colocado_muro: 0, colocado_por_vertido: {},
+          total_marino: 0, total_terrestre: 0, total_colocado: 0,
+          acopio_entradas: {}, acopio_salidas: {}
+        });
+        await updateDoc(ref, payload);
+      } catch (e2) {
+        console.error('No se pudo crear/actualizar resumenes/avance_acopio:', e2);
+      }
+    } else {
+      console.error('No se pudo actualizar resumenes/avance_acopio:', e);
+    }
   }
 }
 window.aplicarAgregadoAvanceAcopio = aplicarAgregadoAvanceAcopio;
@@ -808,9 +831,29 @@ async function aplicarResumen(rec, signo) {
   payload['por_combinacion.' + comboKey] = increment(signo * ton);
 
   try {
-    await setDoc(ref, payload, { merge: true });
+    // Mismo arreglo que aplicarAgregadoAvanceAcopio: updateDoc() en vez de
+    // setDoc+merge, para que las claves con punto (por_material.X,
+    // por_banco.X, por_destino.X, por_combinacion.X) sí se fusionen dentro
+    // de su mapa anidado en vez de perderse.
+    await updateDoc(ref, payload);
   } catch (e) {
-    console.error('No se pudo actualizar el resumen de ' + mes + ':', e);
+    if (e && e.code === 'not-found') {
+      // Documento del mes nuevo: aún no existe. Se crea con la estructura
+      // base (mapas vacíos) y se reintenta el updateDoc, para que las
+      // claves con punto se fusionen dentro de los mapas anidados desde
+      // el primer registro del mes en vez de crear campos sueltos.
+      try {
+        await setDoc(ref, {
+          total_viajes: 0, total_ton: 0,
+          por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {}
+        });
+        await updateDoc(ref, payload);
+      } catch (e2) {
+        console.error('No se pudo crear/actualizar el resumen de ' + mes + ':', e2);
+      }
+    } else {
+      console.error('No se pudo actualizar el resumen de ' + mes + ':', e);
+    }
   }
 }
 
@@ -3696,7 +3739,7 @@ function barraHtml(pct, completo) {
 // "🔄 Actualizar" (Avances y Acopios): ambos leen el mismo documento
 // agregado, así que basta un solo cooldown para los dos.
 let ultimoRefrescoForzado = 0; // timestamp epoch ms, ámbito módulo
-const COOLDOWN_REFRESCO_MS = 5 * 60 * 1000; // 5 minutos
+const COOLDOWN_REFRESCO_MS = 15 * 1000; // 15 SEGUNDOS
 
 window.initAvancesTab = async function(forzar) {
   const wrap = document.getElementById('avances-content');

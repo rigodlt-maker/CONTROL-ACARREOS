@@ -2561,6 +2561,21 @@ window.leerResumenAvanceAcopio = async function () {
   </div>
 </div>
 
+<!-- FASE 15 — Modal de detalle/acumulado de Barcaza: composición por
+     material+rango y lista de tickets incluidos, cada uno editable desde
+     aquí (delega en el modal normal de edición, openModal). -->
+<div class="modal-overlay" id="barcaza-modal-overlay" onclick="cerrarBarcazaModalOutside(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="barcaza-modal-title">🚢 Barcaza</h2>
+      <button class="modal-close" onclick="cerrarBarcazaModal()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="barcaza-modal-body"></div>
+  </div>
+</div>
+
 <div id="sync-toast">
   <span id="sync-icon">⏳</span>
   <span id="sync-msg">Sincronizando…</span>
@@ -3339,12 +3354,89 @@ function filtrarPorBarcaza(folio) {
 }
 window.filtrarPorBarcaza = filtrarPorBarcaza;
 
+// FASE 15 — Agrupa una lista de tickets por folio_barcaza y calcula, por
+// cada folio: cantidad de tickets, toneladas totales y desglose de
+// toneladas por material+rango (la "composición" del viaje de barcaza).
+function computeBarcazaGrupos(lista) {
+  const porFolio = {};
+  lista.forEach(r => {
+    if (!r.folio_barcaza) return;
+    if (!porFolio[r.folio_barcaza]) porFolio[r.folio_barcaza] = [];
+    porFolio[r.folio_barcaza].push(r);
+  });
+  return Object.entries(porFolio).map(([folio, tickets]) => {
+    const totalTon = tickets.reduce((s,r)=>s+(r.ton||(r.neto_kg||0)/1000),0);
+    const porMaterial = {};
+    tickets.forEach(r => {
+      const key = (r.material||'Sin material') + (r.rango ? ' · '+r.rango : '');
+      porMaterial[key] = (porMaterial[key]||0) + (r.ton||(r.neto_kg||0)/1000);
+    });
+    return { folio, tickets, totalTon, porMaterial };
+  }).sort((a,b) => b.tickets.length - a.tickets.length || b.totalTon - a.totalTon);
+}
+window.computeBarcazaGrupos = computeBarcazaGrupos;
+
+// FASE 15 — Abre el modal de detalle de una Barcaza: acumulado + composición
+// por material/rango + lista de tickets individuales, cada uno clickeable
+// para entrar a editarlo con el modal normal de edición (openModal).
+window.abrirBarcazaModal = function(folio) {
+  const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
+  const tickets = combinados.filter(r => r.folio_barcaza === folio);
+  if (!tickets.length) { alert('No se encontraron tickets para esta barcaza.'); return; }
+  const totalTon = tickets.reduce((s,r)=>s+(r.ton||(r.neto_kg||0)/1000),0);
+  const porMaterial = {};
+  tickets.forEach(r => {
+    const key = (r.material||'Sin material') + (r.rango ? ' · '+r.rango : '');
+    porMaterial[key] = (porMaterial[key]||0) + (r.ton||(r.neto_kg||0)/1000);
+  });
+  const porDestino = {};
+  tickets.forEach(r => { const k = r.destino||'Sin destino'; porDestino[k] = (porDestino[k]||0) + (r.ton||(r.neto_kg||0)/1000); });
+
+  document.getElementById('barcaza-modal-title').textContent = '🚢 Barcaza ' + folio;
+  document.getElementById('barcaza-modal-body').innerHTML = `
+    <div class="detail-row"><span class="dk">Tickets incluidos</span><span class="dv">${tickets.length}</span></div>
+    <div class="detail-row"><span class="dk">Total</span><span class="dv" style="color:var(--accent);font-weight:700">${totalTon.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span></div>
+    <div class="detail-section" style="margin-top:8px">Composición (material · rango)</div>
+    ${Object.entries(porMaterial).map(([k,tv]) => `<div class="detail-row"><span class="dk">${escHtml(k)}</span><span class="dv">${tv.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span></div>`).join('')}
+    <div class="detail-section" style="margin-top:8px">Destino</div>
+    ${Object.entries(porDestino).map(([d,tv]) => `<div class="detail-row"><span class="dk">${escHtml(d)}</span><span class="dv">${tv.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span></div>`).join('')}
+    <div class="detail-section" style="margin-top:10px">Tickets incluidos (toca uno para editarlo)</div>
+    ${tickets.map(r => `
+      <div class="record" style="cursor:pointer;" onclick="cerrarBarcazaModal(); openModal('${escHtml(r._fid)}')">
+        <div class="rec-main">
+          <div class="rec-boleta">Boleta #${escHtml(r.boleta)}${r.status === 'pendiente' ? ' <span style="font-size:10px;color:var(--warning);font-weight:500;">· pendiente</span>' : ''}</div>
+          <div class="rec-detail">${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
+          </div>
+        </div>
+        <div class="rec-peso">
+          <div class="kg">${r.status === 'pendiente' ? '— t' : ((r.ton||(r.neto_kg||0)/1000)).toLocaleString('es-MX',{maximumFractionDigits:3}) + ' t'}</div>
+          <div class="fecha">${fmtFecha(r.fecha1)}</div>
+        </div>
+      </div>`).join('')}
+  `;
+  document.getElementById('barcaza-modal-overlay').classList.add('open');
+  document.body.classList.add('modal-open');
+}
+
+window.cerrarBarcazaModal = function() {
+  document.getElementById('barcaza-modal-overlay').classList.remove('open');
+  document.body.classList.remove('modal-open');
+}
+
+function cerrarBarcazaModalOutside(e) {
+  if (e.target === document.getElementById('barcaza-modal-overlay')) window.cerrarBarcazaModal();
+}
+window.cerrarBarcazaModalOutside = cerrarBarcazaModalOutside;
+
 function renderDB() {
   const q = (document.getElementById('filter-input') ? document.getElementById('filter-input').value : '').toLowerCase();
   const combinados = (window.db||[]).concat((window.dbHistorial||[]).filter(h => !(window.db||[]).some(d => d._fid === h._fid)));
-  let filtered = combinados.filter(r =>
+  let filteredSearch = combinados.filter(r =>
     ['boleta','folio','economico','placas','material','banco','destino','rango','folio_barcaza'].some(k => (r[k]||'').toLowerCase().includes(q))
   );
+  let filtered = filteredSearch;
   // FASE 10: ya no existe tipo_camion='BARCAZA'. "Tickets de barcaza" ahora
   // son los que tienen folio_barcaza asignado (viajes marinos cargados por
   // camión Articulado y agrupados por folio de barcaza).
@@ -3354,27 +3446,29 @@ function renderDB() {
   document.getElementById('stat-total').textContent     = filtered.length;
   document.getElementById('stat-toneladas').textContent = (totalKg / 1000).toFixed(2) + ' t';
 
-  // FASE 2: si el filtro aísla un único folio_barcaza con 2+ tickets, mostrar
-  // un panel-resumen con el total de toneladas y el desglose por cuerpo/destino.
+  // FASE 15 — Tarjetas de acumulado por Barcaza: agrupa TODOS los tickets que
+  // comparten el mismo folio_barcaza dentro del resultado de búsqueda actual
+  // (independiente del toggle "Ver solo tickets de Barcaza", para que la
+  // tarjeta siga visible aunque no esté activado). Cada tarjeta muestra el
+  // total de viajes/toneladas y el desglose por material+rango; al tocarla
+  // se abre el detalle con la lista de tickets, editables desde ahí mismo.
+  const grupos = computeBarcazaGrupos(filteredSearch);
+  window._ultimosGruposBarcaza = grupos;
   const resumenEl = document.getElementById('barcaza-resumen-panel');
   if (resumenEl) {
-    const folios = [...new Set(filtered.map(r => r.folio_barcaza).filter(Boolean))];
-    if (folios.length === 1 && filtered.filter(r => r.folio_barcaza === folios[0]).length >= 2) {
-      const ticketsFolio = filtered.filter(r => r.folio_barcaza === folios[0]);
-      const totalTon = ticketsFolio.reduce((s,r)=>s+(r.ton||(r.neto_kg||0)/1000),0);
-      const porDestino = {};
-      ticketsFolio.forEach(r => { const k = r.destino||'Sin destino'; porDestino[k] = (porDestino[k]||0) + (r.ton||(r.neto_kg||0)/1000); });
+    if (grupos.length) {
       resumenEl.style.display = 'block';
-      resumenEl.innerHTML = `
-        <div class="slicers-card" style="border-color:var(--accent);">
-          <h3>🚢 Barcaza ${escHtml(folios[0])} — resumen</h3>
+      resumenEl.innerHTML = grupos.map(g => `
+        <div class="slicers-card" style="border-color:var(--accent);cursor:pointer;margin-bottom:8px;" onclick="abrirBarcazaModal('${escHtml(g.folio)}')">
+          <h3>🚢 Barcaza ${escHtml(g.folio)}</h3>
           <div style="font-size:12.5px;">
-            <strong>${ticketsFolio.length}</strong> ticket(s) · <strong>${totalTon.toLocaleString('es-MX',{maximumFractionDigits:2})} t</strong> en total
+            <strong>${g.tickets.length}</strong> ticket(s) · <strong>${g.totalTon.toLocaleString('es-MX',{maximumFractionDigits:2})} t</strong> en total
           </div>
           <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
-            ${Object.entries(porDestino).map(([d,t]) => `<span class="badge badge-green">${escHtml(d)}: ${t.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span>`).join('')}
+            ${Object.entries(g.porMaterial).map(([k,tv]) => `<span class="badge badge-green">${escHtml(k)}: ${tv.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span>`).join('')}
           </div>
-        </div>`;
+          <div style="margin-top:6px;font-size:11px;color:var(--text-muted);">Toca para ver y editar los tickets incluidos →</div>
+        </div>`).join('');
     } else {
       resumenEl.style.display = 'none';
       resumenEl.innerHTML = '';
@@ -3398,7 +3492,7 @@ function renderDB() {
           ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
           ${r.banco   ? '<span class="badge badge-blue">'+escHtml(r.banco)+'</span>'   : ''}
           ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
-          ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);cursor:pointer;" onclick="event.stopPropagation(); filtrarPorBarcaza(\''+escHtml(r.folio_barcaza)+'\')">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
+          ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);cursor:pointer;" onclick="event.stopPropagation(); abrirBarcazaModal(\''+escHtml(r.folio_barcaza)+'\')">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
           ${r.concepto === 'TRANSFERENCIA_ACOPIOS' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⚠️ Transferencia</span>' : ''}
         </div>
       </div>

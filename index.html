@@ -1507,6 +1507,14 @@ function handleFirestoreIndexError(err) {
   return false;
 }
 window.handleFirestoreIndexError = handleFirestoreIndexError;
+
+// Puente hacia el <script> normal (no-módulo) de más abajo: getDoc/doc son
+// imports de este módulo y no existen fuera de él. asegurarDatosAvancesAcopios()
+// (Fase 14.2) necesita leer el documento-resumen, así que se expone aquí
+// una función ya resuelta en vez de exponer getDoc/doc sueltos.
+window.leerResumenAvanceAcopio = async function () {
+  return await getDoc(doc(db_f, COL_RESUMEN, 'avance_acopio'));
+};
 </script>
 </head>
 <body>
@@ -2811,7 +2819,7 @@ async function asegurarDatosAvancesAcopios(forzar) {
     if (el) el.textContent = '⏳ Cargando totales…';
   });
   try {
-    const snap = await getDoc(doc(db_f, COL_RESUMEN, 'avance_acopio'));
+    const snap = await window.leerResumenAvanceAcopio();
     const datos = snap.exists() ? snap.data() : {
       colocado_por_fila: {}, colocado_muro: 0, colocado_por_vertido: {},
       total_marino: 0, total_terrestre: 0, total_colocado: 0,

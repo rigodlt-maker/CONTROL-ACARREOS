@@ -15,6 +15,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -447,6 +449,9 @@ onAuthStateChanged(auth, async (user) => {
     const refreshAcopiosBtn = document.getElementById('btn-acopios-refresh');
     if (refreshAcopiosBtn) refreshAcopiosBtn.style.display = esAdminOMaster ? 'flex' : 'none';
 
+    const bancosBtn = document.getElementById('btn-bancos-tab');
+    if (bancosBtn) bancosBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
+
     const excelBtn = document.getElementById('btn-excel-tab');
     if (excelBtn) excelBtn.style.display = (esAdminOMaster || esCoordinador || esVisor) ? 'flex' : 'none';
 
@@ -456,7 +461,7 @@ onAuthStateChanged(auth, async (user) => {
     const tabsPermitidas = ['resumen', 'reportes'];
     if (esCapturista || esAdminOMaster || esCoordinador) tabsPermitidas.push('form', 'pendientes');
     if (esAdminOMaster || esCoordinador) tabsPermitidas.push('db');
-    if (esAdminOMaster || esCoordinador || esVisor) tabsPermitidas.push('graficos', 'avances', 'acopios', 'excel');
+    if (esAdminOMaster || esCoordinador || esVisor) tabsPermitidas.push('graficos', 'avances', 'acopios', 'excel', 'bancos');
     if (esAdminOMaster) tabsPermitidas.push('admin');
     const tabActivaEl = document.querySelector('.tab-content.active');
     const tabActivaId = tabActivaEl ? tabActivaEl.id.replace('tab-', '') : 'form';
@@ -1669,6 +1674,10 @@ window.leerResumenAvanceAcopio = async function () {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
       Acopios
     </button>
+    <button class="tab-btn" onclick="showTab('bancos'); initBancosTab();" id="btn-bancos-tab" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M5 10V7l7-4 7 4v3"/><line x1="9" y1="14" x2="9" y2="17"/><line x1="15" y1="14" x2="15" y2="17"/></svg>
+      Bancos
+    </button>
     <button class="tab-btn" onclick="showTab('excel'); initExcelTab();" id="btn-excel-tab" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Excel
@@ -2089,6 +2098,81 @@ window.leerResumenAvanceAcopio = async function () {
   <div id="acopios-content"></div>
 </div>
 
+<div class="tab-content" id="tab-bancos">
+  <div class="slicers-card" style="margin-bottom:10px;">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Fuente de datos
+    </h3>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-primary" id="btn-bancos-historico" onclick="cargarHistoricoCompletoBancos()" style="font-size:12px;">
+        📊 Ver TODO el histórico
+      </button>
+      <button class="btn btn-secondary" id="btn-bancos-ventana" onclick="usarVentanaRecienteEnBancos()" style="font-size:12px;">
+        Volver a ventana
+      </button>
+    </div>
+    <div id="bancos-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="slicers-card">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      Filtros
+    </h3>
+    <div class="slicers-grid">
+      <div>
+        <label>Banco</label>
+        <div class="ms-wrap" id="ms-bancos-banco-wrap">
+          <button type="button" class="ms-btn" id="ms-bancos-banco-btn" onclick="toggleMS('bancos-banco')">
+            <span id="ms-bancos-banco-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-bancos-banco-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-TAJO" value="EL TAJO" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-TAJO">El Tajo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-TRITURA" value="TRITURA" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-TRITURA">Tritura</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ1" value="MOZOMBOA1" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ1">Mozomboa GAMI</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ2" value="MOZOMBOA2" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ2">Mozomboa LERMA</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ3" value="MOZOMBOA3" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ3">Mozomboa PORFIRIO</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slicer-actions">
+      <button class="btn btn-secondary" onclick="limpiarFiltrosBancos()" style="margin-top:10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        Limpiar filtros
+      </button>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3 style="margin-bottom:6px;">🔎 Buscar por folio</h3>
+    <input type="text" id="bancos-folio-input" placeholder="Folio exacto o parcial (el que trae el personal del banco/sindicato)" oninput="renderBancosFolio()" style="width:100%;"/>
+    <div id="bancos-folio-resultados" style="margin-top:8px;"></div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="bancos-kpi-viajes">0</div>
+      <div class="lbl">Viajes totales</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="bancos-kpi-toneladas">0 t</div>
+      <div class="lbl">Toneladas totales</div>
+    </div>
+  </div>
+
+  <div style="padding:0 0 10px;">
+    <button class="btn btn-primary" id="btn-bancos-pdf" onclick="descargarPdfBancos()" style="width:100%;font-size:12px;">
+      📄 Descargar PDF
+    </button>
+  </div>
+
+  <div id="bancos-tabla"></div>
+  <div id="bancos-empty-state" class="dash-empty" style="display:none">Sin datos para los filtros seleccionados.</div>
+</div>
+
 <div class="tab-content" id="tab-resumen">
   <div class="slicers-card" style="margin-bottom:10px;">
     <h3>
@@ -2101,6 +2185,9 @@ window.leerResumenAvanceAcopio = async function () {
       </button>
       <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
         Volver a ventana
+      </button>
+      <button class="btn btn-primary" id="btn-resumen-pdf" onclick="descargarPdfResumen()" style="font-size:12px;">
+        📄 Descargar PDF
       </button>
     </div>
     <div id="resumen-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
@@ -3127,7 +3214,8 @@ function showTab(t) {
     resumen: 'btn-resumen-tab',
     reportes: 'btn-reportes-tab',
     excel: 'btn-excel-tab',
-    pendientes: 'btn-pendientes-tab'
+    pendientes: 'btn-pendientes-tab',
+    bancos: 'btn-bancos-tab'
   };
   const tabBtn = tabBtnMap[t] ? document.getElementById(tabBtnMap[t]) : document.getElementById('t-' + t);
   if (tabBtn) tabBtn.classList.add('active');
@@ -3138,6 +3226,7 @@ function showTab(t) {
   if (t === 'pendientes') renderPendientes();
   if (t === 'resumen') initResumenTab();
   if (t === 'reportes') initReportesTab();
+  if (t === 'bancos') initBancosTab();
   initDateHints();
 }
 
@@ -3411,7 +3500,7 @@ window.abrirBarcazaModal = function(folio) {
       <div class="record" style="cursor:pointer;" onclick="cerrarBarcazaModal(); openModal('${escHtml(r._fid)}')">
         <div class="rec-main">
           <div class="rec-boleta">Boleta #${escHtml(r.boleta)}${r.status === 'pendiente' ? ' <span style="font-size:10px;color:var(--warning);font-weight:500;">· pendiente</span>' : ''}</div>
-          <div class="rec-detail">${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
+          <div class="rec-detail" title="${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}">${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap">
             ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
           </div>
@@ -3493,7 +3582,7 @@ function renderDB() {
     <div class="record" onclick="openModal('${escHtml(r._fid)}')">
       <div class="rec-main">
         <div class="rec-boleta">Boleta #${escHtml(r.boleta)}${r._historial ? ' <span style="font-size:10px;color:var(--info);font-weight:500;">· histórico</span>' : ''}</div>
-        <div class="rec-detail">${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
+        <div class="rec-detail" title="${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}">${escHtml(r.placas)||'—'} · ${escHtml(r.material)||'—'}${r.rango ? ' · '+escHtml(r.rango) : ''}</div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${r.status === 'pendiente' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⏳ Pendiente</span>' : ''}
           ${r.banco   ? '<span class="badge badge-blue">'+escHtml(r.banco)+'</span>'   : ''}
@@ -3634,6 +3723,7 @@ function onMsChange(key) {
   if (key.startsWith('excel-')) return;
   if (key.startsWith('resumen-')) { renderResumen(); return; }
   if (key.startsWith('reportes-')) { renderReportes(); return; }
+  if (key.startsWith('bancos-')) { renderBancos(); return; }
   renderDashboard();
 }
 
@@ -3865,8 +3955,6 @@ function renderAvances(datos) {
   const wrap = document.getElementById('avances-content');
   if (!wrap) return;
   const av = computeAvances(datos);
-  const ac = computeAcopios(datos);
-  const alertas = computeAlertasAvanceAcopio(av, ac);
   const t = av.totales;
 
   const avanceGlobalPct = (t.colocadoGeneral / t.totalGeneral) * 100;
@@ -3889,15 +3977,6 @@ function renderAvances(datos) {
     <div class="kpi-row">
       <div class="kpi-card kpi-card-wide"><div class="val">${av.muro.colocado.toLocaleString('es-MX',{maximumFractionDigits:2})} / ${av.muro.cantidad.toLocaleString('es-MX')} t</div><div class="lbl">Muro (${av.muro.pct.toFixed(1)}%)</div></div>
     </div>`;
-
-  const alertasHtml = alertas.length ? `
-    <div class="chart-card">
-      <h3>⚠️ Alertas de suministro vs. colocación</h3>
-      ${alertas.map(a => `
-        <div style="border-left:3px solid ${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'};background:${a.alerta.tipo==='sobre-envio'?'var(--danger-light)':'var(--warning-light)'};padding:8px 10px;border-radius:6px;margin-bottom:8px;font-size:12.5px;color:${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'}">
-          ${escHtml(a.alerta.msg)}
-        </div>`).join('')}
-    </div>` : `<div class="chart-card"><h3>✅ Sin alertas</h3><p style="font-size:12.5px;color:var(--text-muted)">No hay descuadres detectados entre lo suministrado a acopio y lo colocado en rompeolas.</p></div>`;
 
   const cuerpos = [...new Set(av.filas.map(f => f.cuerpo))];
   const tablasHtml = cuerpos.map(cuerpo => {
@@ -3932,7 +4011,7 @@ function renderAvances(datos) {
     </div>`;
   }).join('');
 
-  wrap.innerHTML = kpiHtml + alertasHtml + tablasHtml;
+  wrap.innerHTML = kpiHtml + tablasHtml;
 }
 window.renderAvances = renderAvances;
 
@@ -3965,7 +4044,18 @@ window.initAcopiosTab = async function(forzar) {
 function renderAcopios(datos) {
   const wrap = document.getElementById('acopios-content');
   if (!wrap) return;
+  const av = computeAvances(datos);
   const ac = computeAcopios(datos);
+  const alertas = computeAlertasAvanceAcopio(av, ac);
+
+  const alertasHtml = alertas.length ? `
+    <div class="chart-card">
+      <h3>⚠️ Alertas de suministro vs. colocación</h3>
+      ${alertas.map(a => `
+        <div style="border-left:3px solid ${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'};background:${a.alerta.tipo==='sobre-envio'?'var(--danger-light)':'var(--warning-light)'};padding:8px 10px;border-radius:6px;margin-bottom:8px;font-size:12.5px;color:${a.alerta.tipo==='sobre-envio'?'var(--danger)':'var(--warning)'}">
+          ${escHtml(a.alerta.msg)}
+        </div>`).join('')}
+    </div>` : `<div class="chart-card"><h3>✅ Sin alertas</h3><p style="font-size:12.5px;color:var(--text-muted)">No hay descuadres detectados entre lo suministrado a acopio y lo colocado en rompeolas.</p></div>`;
 
   const nombreAcopio = { 'ACOPIO MARINO': '🌊 Acopio Marino', 'ACOPIO TERRESTRE': '🚚 Acopio Terrestre' };
 
@@ -3989,7 +4079,7 @@ function renderAcopios(datos) {
     </div>`;
   }).join('');
 
-  wrap.innerHTML = html;
+  wrap.innerHTML = alertasHtml + html;
 }
 window.renderAcopios = renderAcopios;
 
@@ -4574,11 +4664,9 @@ function renderResumenTitulo() {
   }
 }
 
-function renderResumenTablaJerarquica(filtered) {
-  const wrap = document.getElementById('resumen-tabla-jerarquica');
-  if (!filtered.length) { wrap.innerHTML = ''; return; }
-
-  // Estructura: banco -> material -> destino -> { viajes, ton }
+// Estructura: banco -> material -> destino -> { viajes, ton }
+// Compartida entre la tabla en pantalla (renderResumenTablaJerarquica) y el PDF (descargarPdfResumen).
+function construirJerarquiaResumen(filtered) {
   const porBanco = {};
   filtered.forEach(r => {
     const ton = r.ton || (r.neto_kg || 0) / 1000;
@@ -4593,7 +4681,14 @@ function renderResumenTablaJerarquica(filtered) {
     porBanco[b].materiales[m].destinos[d].viajes += 1;
     porBanco[b].materiales[m].destinos[d].ton += ton;
   });
+  return porBanco;
+}
 
+function renderResumenTablaJerarquica(filtered) {
+  const wrap = document.getElementById('resumen-tabla-jerarquica');
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  const porBanco = construirJerarquiaResumen(filtered);
   const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
   const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
@@ -4620,7 +4715,7 @@ function renderResumenTablaJerarquica(filtered) {
     const bd = porBanco[b];
     html += `
       <div style="${row('var(--accent-light)','10px 12px','700','13px')}">
-        <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nombreBanco(b)}</div>
+        <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(nombreBanco(b))}">${nombreBanco(b)}</div>
         <div style="${NUM}">${bd.viajes}</div>
         <div style="${NUM}">${fmtTon(bd.ton)}</div>
         <div style="${NUM}">${fmtProm(bd.ton, bd.viajes)}</div>
@@ -4631,7 +4726,7 @@ function renderResumenTablaJerarquica(filtered) {
       const md = bd.materiales[m];
       html += `
         <div style="${row('var(--surface)','8px 12px 8px 20px','600','12.5px')}">
-          <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nombreMaterial(m)}</div>
+          <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(nombreMaterial(m))}">${nombreMaterial(m)}</div>
           <div style="${NUM}">${md.viajes}</div>
           <div style="${NUM}">${fmtTon(md.ton)}</div>
           <div style="${NUM}">${fmtProm(md.ton, md.viajes)}</div>
@@ -4642,7 +4737,7 @@ function renderResumenTablaJerarquica(filtered) {
         const dd = md.destinos[d];
         html += `
           <div style="${row('var(--surface)','7px 12px 7px 32px','400','12px','var(--text-muted)')}">
-            <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${d === 'SIN DESTINO' ? '— sin destino —' : d}</div>
+            <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(d === 'SIN DESTINO' ? '— sin destino —' : d)}">${d === 'SIN DESTINO' ? '— sin destino —' : d}</div>
             <div style="${NUM}">${dd.viajes}</div>
             <div style="${NUM}">${fmtTon(dd.ton)}</div>
             <div style="${NUM}">${fmtProm(dd.ton, dd.viajes)}</div>
@@ -4679,6 +4774,390 @@ function renderResumen() {
   renderResumenTablaJerarquica(filtered);
 }
 window.renderResumen = renderResumen;
+
+// ══════════════════════════════════════════════════════
+// FASE 16.2 — Exportar PDF de la tabla de "Resumen"
+// ══════════════════════════════════════════════════════
+function descargarPdfResumen() {
+  const filtered = getResumenFiltradoBase();
+  if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
+
+  const porBanco = construirJerarquiaResumen(filtered);
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+
+  // body plano + arreglo paralelo de "nivel" (0=banco,1=material,2=destino,-1=total) para estilizar filas
+  const body = [];
+  const niveles = [];
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    body.push([nombreBanco(b), String(bd.viajes), fmtTon(bd.ton), fmtProm(bd.ton, bd.viajes)]);
+    niveles.push(0);
+    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
+    materiales.forEach(m => {
+      const md = bd.materiales[m];
+      body.push(['   ' + nombreMaterial(m), String(md.viajes), fmtTon(md.ton), fmtProm(md.ton, md.viajes)]);
+      niveles.push(1);
+      const destinos = Object.keys(md.destinos).sort();
+      destinos.forEach(d => {
+        const dd = md.destinos[d];
+        body.push(['      ' + (d === 'SIN DESTINO' ? '— sin destino —' : d), String(dd.viajes), fmtTon(dd.ton), fmtProm(dd.ton, dd.viajes)]);
+        niveles.push(2);
+      });
+    });
+  });
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  body.push(['TOTAL GENERAL', String(totalViajes), fmtTon(totalTon), fmtProm(totalTon, totalViajes)]);
+  niveles.push(-1);
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const marginX = 0.6;
+  const anchoUtil = 8.5 - marginX * 2;
+  let y = 0.7;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', 8.5 / 2, y, { align: 'center' });
+  y += 0.3;
+
+  const periodoTexto = document.getElementById('resumen-subtitulo-fecha')?.textContent || 'Todas las fechas';
+  const ahora = new Date();
+  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX');
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Periodo: ${periodoTexto}`, marginX, y);
+  y += 0.18;
+  doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);
+  y += 0.2;
+
+  const bancosSel      = getMsSelected('resumen-banco').map(nombreBanco);
+  const materialesSel  = getMsSelected('resumen-material').map(nombreMaterial);
+  const cuerposSel     = getMsSelected('resumen-cuerpo');
+  const tiposCamionSel = getMsSelected('resumen-tipocamion').map(nombreTipoCamion);
+  const filtrosPartes = [];
+  if (bancosSel.length)      filtrosPartes.push('Banco: ' + bancosSel.join(', '));
+  if (materialesSel.length)  filtrosPartes.push('Material: ' + materialesSel.join(', '));
+  if (cuerposSel.length)     filtrosPartes.push('Cuerpo: ' + cuerposSel.join(', '));
+  if (tiposCamionSel.length) filtrosPartes.push('Tipo de camión: ' + tiposCamionSel.join(', '));
+  if (filtrosPartes.length) {
+    doc.setFont('helvetica', 'italic');
+    const lineas = doc.splitTextToSize('Filtros activos: ' + filtrosPartes.join(' · '), anchoUtil);
+    doc.text(lineas, marginX, y);
+    y += 0.15 * lineas.length + 0.05;
+    doc.setFont('helvetica', 'normal');
+  }
+
+  y += 0.05;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(`Viajes totales: ${totalViajes}   ·   Toneladas totales: ${fmtTon(totalTon)} t`, marginX, y);
+  y += 0.2;
+
+  doc.autoTable({
+    startY: y,
+    head: [['BANCO / MATERIAL / DESTINO', 'VIAJES', 'TON.', 'PROM.']],
+    body: body,
+    styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: anchoUtil - 2.1 },
+      1: { halign: 'right', cellWidth: 0.7 },
+      2: { halign: 'right', cellWidth: 0.75 },
+      3: { halign: 'right', cellWidth: 0.65 }
+    },
+    margin: { left: marginX, right: marginX },
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      const nivel = niveles[data.row.index];
+      if (nivel === 0) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [225, 235, 245]; }
+      else if (nivel === 1) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 7.5; }
+      else if (nivel === 2) { data.cell.styles.textColor = [90, 90, 90]; data.cell.styles.fontSize = 7.5; }
+      else if (nivel === -1) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [40, 40, 40]; data.cell.styles.textColor = 255; }
+    }
+  });
+
+  doc.save(`resumen_acarreos_${isoHoy()}.pdf`);
+}
+window.descargarPdfResumen = descargarPdfResumen;
+
+// ══════════════════════════════════════════════════════
+// FASE 16.4 — Pestaña "BANCOS" (conciliación con bancos de material / sindicato)
+// Fusión de "Base de datos" + "Resumen": filtro por Banco, buscador por Folio,
+// tabla Banco → Material (viajes / toneladas / t por viaje). Comparte la misma
+// caché de histórico completo que la pestaña Resumen (window.resumenHistoricoCompleto)
+// para no duplicar descargas de Firestore.
+// ══════════════════════════════════════════════════════
+
+function getDatosBaseBancos() {
+  return (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+    ? window.resumenHistoricoCompleto
+    : (window.db || []);
+}
+
+function getBancosFiltradoBase() {
+  const bancos = getMsSelected('bancos-banco');
+  return getDatosBaseBancos().filter(r => {
+    if (bancos.length && !bancos.includes(r.banco)) return false;
+    return true;
+  });
+}
+
+window.initBancosTab = function() {
+  const nota    = document.getElementById('bancos-historico-nota');
+  const btnHist = document.getElementById('btn-bancos-historico');
+  const btnVent = document.getElementById('btn-bancos-ventana');
+  if (nota) {
+    nota.textContent = (window.usandoHistoricoResumen && window.resumenHistoricoCompleto)
+      ? '📊 Usando TODO el histórico: ' + window.resumenHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total'
+      : '🕐 Usando la ventana reciente cargada (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
+  }
+  if (window.usandoHistoricoResumen && window.resumenHistoricoCompleto) {
+    if (btnVent) btnVent.className = 'btn btn-primary';
+    if (btnHist) btnHist.className = 'btn btn-secondary';
+  } else {
+    if (btnVent) btnVent.className = 'btn btn-secondary';
+    if (btnHist) btnHist.className = 'btn btn-primary';
+  }
+  renderBancos();
+  renderBancosFolio();
+};
+
+window.usarVentanaRecienteEnBancos = function() {
+  window.usarVentanaRecienteEnResumenFn();
+  initBancosTab();
+};
+
+window.cargarHistoricoCompletoBancos = async function() {
+  const btn = document.getElementById('btn-bancos-historico');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
+  try {
+    await window.cargarHistoricoCompletoResumenFn(false);
+  } catch (e) {
+    handleFirestoreIndexError(e) || alert('Error al cargar el histórico completo: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+    initBancosTab();
+  }
+};
+
+function limpiarFiltrosBancos() {
+  const dd = document.getElementById('ms-bancos-banco-dd');
+  if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+  updateMsBtn('bancos-banco');
+  renderBancos();
+}
+window.limpiarFiltrosBancos = limpiarFiltrosBancos;
+
+// Estructura: banco -> material -> { viajes, ton }  (sin nivel de destino, a diferencia de Resumen)
+function construirJerarquiaBancos(filtered) {
+  const porBanco = {};
+  filtered.forEach(r => {
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    const b = r.banco || 'SIN BANCO';
+    const m = r.material || 'SIN MATERIAL';
+    if (!porBanco[b]) porBanco[b] = { viajes: 0, ton: 0, materiales: {} };
+    porBanco[b].viajes += 1; porBanco[b].ton += ton;
+    if (!porBanco[b].materiales[m]) porBanco[b].materiales[m] = { viajes: 0, ton: 0 };
+    porBanco[b].materiales[m].viajes += 1;
+    porBanco[b].materiales[m].ton += ton;
+  });
+  return porBanco;
+}
+
+function renderBancosTabla(filtered) {
+  const wrap = document.getElementById('bancos-tabla');
+  if (!wrap) return;
+  if (!filtered.length) { wrap.innerHTML = ''; return; }
+
+  const porBanco = construirJerarquiaBancos(filtered);
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+
+  // Nombres completos sin truncar (white-space normal + word-break), con title como respaldo
+  const COL = 'grid-template-columns: 1fr 52px 80px 80px;';
+  const NUM = 'text-align:right; white-space:nowrap; padding-left:6px;';
+  const NOMBRE = 'min-width:0; white-space:normal; word-break:break-word;';
+  const row = (bg, pad, fw, fs, color='') =>
+    `display:grid;${COL}padding:${pad};background:${bg};border-bottom:0.5px solid var(--border);font-weight:${fw};font-size:${fs};${color ? 'color:'+color+';' : ''}`;
+
+  let html = '<div class="chart-card" style="padding:0;overflow:hidden;">';
+  html += `
+    <div style="${row('var(--accent)','10px 12px','700','11px','white')}">
+      <div>BANCO / MATERIAL</div>
+      <div style="${NUM}">VIAJES</div>
+      <div style="${NUM}">TON.</div>
+      <div style="${NUM}">T/VIAJE</div>
+    </div>`;
+
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    html += `
+      <div style="${row('var(--accent-light)','10px 12px','700','13px')}">
+        <div style="${NOMBRE}" title="${escHtml(nombreBanco(b))}">${escHtml(nombreBanco(b))}</div>
+        <div style="${NUM}">${bd.viajes}</div>
+        <div style="${NUM}">${fmtTon(bd.ton)}</div>
+        <div style="${NUM}">${fmtProm(bd.ton, bd.viajes)}</div>
+      </div>`;
+    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
+    materiales.forEach(m => {
+      const md = bd.materiales[m];
+      html += `
+        <div style="${row('var(--surface)','8px 12px 8px 20px','500','12.5px')}">
+          <div style="${NOMBRE}" title="${escHtml(nombreMaterial(m))}">${escHtml(nombreMaterial(m))}</div>
+          <div style="${NUM}">${md.viajes}</div>
+          <div style="${NUM}">${fmtTon(md.ton)}</div>
+          <div style="${NUM}">${fmtProm(md.ton, md.viajes)}</div>
+        </div>`;
+    });
+  });
+
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  html += `
+    <div style="${row('var(--text)','11px 12px','700','13px','white')}">
+      <div>TOTAL GENERAL</div>
+      <div style="${NUM}">${totalViajes}</div>
+      <div style="${NUM}">${fmtTon(totalTon)}</div>
+      <div style="${NUM}">${fmtProm(totalTon, totalViajes)}</div>
+    </div>`;
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function renderBancos() {
+  const filtered = getBancosFiltradoBase();
+  const emptyState = document.getElementById('bancos-empty-state');
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  document.getElementById('bancos-kpi-viajes').textContent    = filtered.length;
+  document.getElementById('bancos-kpi-toneladas').textContent = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+  if (emptyState) emptyState.style.display = filtered.length ? 'none' : 'block';
+  renderBancosTabla(filtered);
+}
+window.renderBancos = renderBancos;
+
+// Buscador de folio individual: no se combina con el filtro de banco de la tabla
+// agregada de arriba; siempre busca sobre el conjunto de datos base actual (ventana
+// o histórico según lo que esté activo) para poder conciliar cualquier folio.
+function renderBancosFolio() {
+  const cont = document.getElementById('bancos-folio-resultados');
+  if (!cont) return;
+  const q = (document.getElementById('bancos-folio-input').value || '').trim().toLowerCase();
+  if (!q) { cont.innerHTML = ''; return; }
+
+  const datos = getDatosBaseBancos();
+  const encontrados = datos.filter(r => (r.folio || '').toLowerCase().includes(q)).slice(0, 30);
+
+  if (!encontrados.length) {
+    cont.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);">Sin resultados para ese folio.</p>';
+    return;
+  }
+
+  cont.innerHTML = encontrados.map(r => `
+    <div style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
+      <div style="font-weight:700;color:var(--accent);margin-bottom:3px;">Folio ${escHtml(r.folio || '—')} &nbsp;·&nbsp; Boleta #${escHtml(r.boleta || '—')}</div>
+      <div>Fecha: ${fmtFechaCorta(r.fecha1)} &nbsp;·&nbsp; Banco: ${escHtml(nombreBanco(r.banco))}</div>
+      <div>Material: ${escHtml(nombreMaterial(r.material))}${r.rango ? ' · ' + escHtml(r.rango) : ''} &nbsp;·&nbsp; Destino: ${escHtml(r.destino || '—')}</div>
+      <div>Camión: ${escHtml(nombreTipoCamion(r.tipo_camion))} ${r.placas ? '· ' + escHtml(r.placas) : ''} ${r.economico ? '· # ' + escHtml(r.economico) : ''}</div>
+      <div>Toneladas: <strong>${(r.ton || (r.neto_kg||0)/1000).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} t</strong></div>
+    </div>`).join('');
+}
+window.renderBancosFolio = renderBancosFolio;
+
+// FASE 16.4.1 — Exportar PDF de la tabla de Bancos, mismo estándar que 16.2
+function descargarPdfBancos() {
+  const filtered = getBancosFiltradoBase();
+  if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
+
+  const porBanco = construirJerarquiaBancos(filtered);
+  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
+  const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+
+  const body = [];
+  const niveles = [];
+  ordenBancos.forEach(b => {
+    const bd = porBanco[b];
+    body.push([nombreBanco(b), String(bd.viajes), fmtTon(bd.ton), fmtProm(bd.ton, bd.viajes)]);
+    niveles.push(0);
+    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
+    materiales.forEach(m => {
+      const md = bd.materiales[m];
+      body.push(['   ' + nombreMaterial(m), String(md.viajes), fmtTon(md.ton), fmtProm(md.ton, md.viajes)]);
+      niveles.push(1);
+    });
+  });
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  body.push(['TOTAL GENERAL', String(totalViajes), fmtTon(totalTon), fmtProm(totalTon, totalViajes)]);
+  niveles.push(-1);
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const marginX = 0.6;
+  const anchoUtil = 8.5 - marginX * 2;
+  let y = 0.7;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', 8.5 / 2, y, { align: 'center' });
+  y += 0.25;
+  doc.setFontSize(11);
+  doc.text('Conciliación por banco', 8.5 / 2, y, { align: 'center' });
+  y += 0.3;
+
+  const ahora = new Date();
+  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);
+  y += 0.2;
+
+  const bancosSel = getMsSelected('bancos-banco').map(nombreBanco);
+  if (bancosSel.length) {
+    doc.setFont('helvetica', 'italic');
+    const lineas = doc.splitTextToSize('Filtros activos: Banco: ' + bancosSel.join(', '), anchoUtil);
+    doc.text(lineas, marginX, y);
+    y += 0.15 * lineas.length + 0.05;
+    doc.setFont('helvetica', 'normal');
+  }
+
+  y += 0.05;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(`Viajes totales: ${totalViajes}   ·   Toneladas totales: ${fmtTon(totalTon)} t`, marginX, y);
+  y += 0.2;
+
+  doc.autoTable({
+    startY: y,
+    head: [['BANCO / MATERIAL', 'VIAJES', 'TON.', 'T/VIAJE']],
+    body: body,
+    styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: anchoUtil - 2.1 },
+      1: { halign: 'right', cellWidth: 0.7 },
+      2: { halign: 'right', cellWidth: 0.75 },
+      3: { halign: 'right', cellWidth: 0.65 }
+    },
+    margin: { left: marginX, right: marginX },
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      const nivel = niveles[data.row.index];
+      if (nivel === 0) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [225, 235, 245]; }
+      else if (nivel === 1) { data.cell.styles.fontSize = 7.5; }
+      else if (nivel === -1) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [40, 40, 40]; data.cell.styles.textColor = 255; }
+    }
+  });
+
+  doc.save(`bancos_acarreos_${isoHoy()}.pdf`);
+}
+window.descargarPdfBancos = descargarPdfBancos;
 
 // ══════════════════════════════════════════════════════
 // PESTAÑA REPORTES

@@ -4867,50 +4867,33 @@ window.renderResumen = renderResumen;
 // como no iniciado por el usuario y lo ignora — por eso esta función
 // hace el share como lo primero que intenta, sin await antes.
 // ══════════════════════════════════════════════════════
-// Fix 10-jul-2026 (v3) — El fix v2 forzaba el flujo de Web Share/blob
-// para CUALQUIER plataforma en modo standalone (esPwaStandalone() no
-// distingue iOS de Android/Windows). El problema real de "el <a download>
-// se ignora en silencio" es específico de iOS/Safari en standalone;
-// en Android (Chrome/PWA instalada) y en Windows (Chrome/Edge, tanto
-// pestaña normal como PWA instalada de escritorio) doc.save() SÍ
-// descarga con normalidad. Forzar Web Share ahí de todos modos es peor:
-// - En Android agrega un paso extra innecesario (hoja de compartir en
-//   vez de ir directo a Descargas).
-// - En Windows el soporte de navigator.share con archivos es limitado
-//   o inexistente en muchas versiones de Edge/Chrome de escritorio,
-//   así que ni siquiera es una alternativa confiable ahí.
-// Ahora la rama de Web Share/blob queda reservada para iOS standalone
-// (donde es la única forma de "guardar" que sí funciona) y como
-// respaldo genérico si doc.save() llega a fallar en cualquier otra
-// plataforma.
+// Fix 10-jul-2026 (v4) — La v3 asumía que en Android (PWA instalada vía
+// WebAPK) doc.save() funciona igual que en Chrome normal. Prueba real en
+// dispositivo: NO es así — al tocar "Descargar PDF" en la app instalada
+// en Android solo aparecía un pequeño destello gris en el botón (el
+// tap-highlight) y no pasaba nada más, ni error ni descarga. Es el mismo
+// síntoma que el bug original de iOS: el atributo `download` del <a> se
+// ignora en silencio cuando la app corre en modo standalone/WebAPK.
+// Conclusión: el problema no es "iOS vs. el resto", es "modo standalone
+// vs. pestaña normal de navegador", en cualquier plataforma. Por eso
+// ahora la rama de Web Share/blob aplica a CUALQUIER PWA instalada
+// (iOS, Android o Windows), y doc.save() directo se reserva solo para
+// cuando la app corre en una pestaña normal de navegador (donde sí es
+// confiable en las tres plataformas).
 function esPwaStandalone() {
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
       || window.navigator.standalone === true; // Safari/iOS
 }
 
-// Detecta la plataforma (no el modo standalone) para decidir qué rama
-// de guardarPdfDescarga usar. Solo nos interesa distinguir iOS del
-// resto: Android y Windows comparten la misma estrategia (doc.save()
-// primero).
-function detectarPlataformaPdf() {
-  const ua = (navigator.userAgent || navigator.vendor || '');
-  // iPadOS con "Solicitar sitio de escritorio" se reporta como Mac,
-  // por eso se suma la detección por puntos de contacto múltiples.
-  const esIOS = /iPad|iPhone|iPod/.test(ua)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  return { esIOS };
-}
-
 async function guardarPdfDescarga(doc, nombreArchivo) {
-  const standalone = esPwaStandalone();
-  const { esIOS } = detectarPlataformaPdf();
-
-  // ── RAMA 1: iOS en modo PWA standalone (agregada a pantalla de inicio) ──
-  // Aquí el <a download> de doc.save() se ignora en silencio. Es
-  // OBLIGATORIO llamar navigator.share() de forma síncrona respecto al
-  // clic del usuario (antes de cualquier otro await), porque iOS lo
-  // trata como no iniciado por el usuario si no. No tocar esta rama.
-  if (standalone && esIOS) {
+  // ── RAMA 1: PWA instalada / modo standalone (iOS, Android o Windows) ──
+  // El <a download> de doc.save() se ignora en silencio en standalone,
+  // sin importar la plataforma. Es OBLIGATORIO llamar navigator.share()
+  // de forma síncrona respecto al clic del usuario (antes de cualquier
+  // await previo), o el navegador lo trata como no iniciado por el
+  // usuario y lo ignora — por eso doc.output('blob') se hace primero
+  // (es síncrono) y el share es el primer await de la función.
+  if (esPwaStandalone()) {
     try {
       const blob = doc.output('blob');
       if (navigator.canShare && navigator.share) {
@@ -4921,29 +4904,29 @@ async function guardarPdfDescarga(doc, nombreArchivo) {
             return;
           } catch (shareErr) {
             if (shareErr && shareErr.name === 'AbortError') return; // el usuario cerró la hoja de compartir, no es un error
-            console.error('Web Share falló en iOS, se intenta el respaldo:', shareErr);
+            console.error('Web Share falló en PWA standalone, se intenta el respaldo:', shareErr);
           }
         }
       }
-      // Respaldo si el dispositivo no soporta Web Share con archivos:
-      // navegar la propia pestaña al blob (window.open no sirve en standalone).
+      // Respaldo si el dispositivo no soporta Web Share con archivos
+      // (típico en Windows/Edge de escritorio): navegar la propia
+      // pestaña al blob URL, que abre el visor de PDF integrado del
+      // navegador (window.open no sirve en standalone).
       const blobUrl = URL.createObjectURL(blob);
       window.location.href = blobUrl;
-      alert('Se generó el PDF. Si no se abre automáticamente, usa el botón Compartir de tu navegador para guardarlo.');
+      alert('Se generó el PDF. Si no se abre automáticamente, usa el botón Compartir/Guardar de tu navegador.');
       return;
     } catch (err) {
-      console.error('Error al descargar PDF en iOS standalone:', err);
+      console.error('Error al descargar PDF en modo standalone:', err);
       alert('No se pudo descargar el PDF. Intenta de nuevo o desde otro navegador.');
       return;
     }
   }
 
-  // ── RAMA 2: TODO LO DEMÁS ──
-  // - Android en Chrome normal O agregada a pantalla de inicio/PWA instalada.
-  // - Windows en Chrome/Edge normal O como PWA instalada de escritorio.
-  // - iOS en Safari normal (no standalone): doc.save() también funciona bien ahí.
-  // En estos casos doc.save() (el <a download> de jsPDF) descarga con
-  // normalidad, así que se intenta primero y de forma directa.
+  // ── RAMA 2: pestaña normal de navegador (no instalada) ──
+  // Android Chrome, Windows Chrome/Edge, iOS Safari, todos normales
+  // (no standalone): aquí doc.save() (el <a download> de jsPDF) sí
+  // descarga con normalidad, así que se usa directo.
   try {
     doc.save(nombreArchivo);
     return;
@@ -4953,27 +4936,7 @@ async function guardarPdfDescarga(doc, nombreArchivo) {
 
   // Respaldo solo si doc.save() lanzó una excepción arriba (caso raro).
   try {
-    const blob = doc.output('blob');
-    // En Android hay buen soporte de Web Share con archivos como segundo
-    // intento. En Windows (Edge/Chrome de escritorio) el soporte es
-    // inconsistente o inexistente, así que no se asume que funcione: si
-    // no está disponible o falla, se cae directo al respaldo universal.
-    if (navigator.canShare && navigator.share) {
-      const file = new File([blob], nombreArchivo, { type: 'application/pdf' });
-      if (navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({ files: [file], title: nombreArchivo });
-          return;
-        } catch (shareErr) {
-          if (shareErr && shareErr.name === 'AbortError') return;
-          console.error('Web Share de respaldo también falló:', shareErr);
-        }
-      }
-    }
-    // Respaldo universal (funciona en Windows y como último recurso en
-    // Android): navegar la pestaña actual al blob URL, lo que abre el
-    // visor de PDF integrado del navegador desde donde se puede guardar.
-    const blobUrl = URL.createObjectURL(blob);
+    const blobUrl = doc.output('bloburl');
     window.location.href = blobUrl;
     alert('Se generó el PDF. Si no se abre automáticamente, usa el botón Compartir/Guardar de tu navegador.');
   } catch (err2) {

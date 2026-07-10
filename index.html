@@ -776,6 +776,7 @@ async function aplicarAgregadoAvanceAcopio(rec, signo) {
     // en el mapa anidado (por eso los totales globales subían pero el
     // desglose por Cuerpo/Material/Rango se quedaba en cero).
     await updateDoc(ref, payload);
+    window.avancesAcopiosData = null; // invalida caché: el próximo Actualizar trae el dato fresco
   } catch (e) {
     if (e && e.code === 'not-found') {
       // El documento resumen aún no existe (nunca se corrió "Recalcular

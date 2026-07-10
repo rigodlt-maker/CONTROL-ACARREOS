@@ -4881,8 +4881,17 @@ window.renderResumen = renderResumen;
 // cuando la app corre en una pestaña normal de navegador (donde sí es
 // confiable en las tres plataformas).
 function esPwaStandalone() {
-  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
-      || window.navigator.standalone === true; // Safari/iOS
+  // Se revisan varios "display-mode" y no solo 'standalone': si el
+  // manifest.json usara 'fullscreen', 'minimal-ui' o
+  // 'window-controls-overlay', matchMedia('(display-mode: standalone)')
+  // por sí solo daría false y la app se trataría por error como pestaña
+  // normal de navegador (yendo a doc.save() directo, que es justo lo que
+  // falla en silencio). Cualquiera de estos modos significa "no es una
+  // pestaña normal de navegador con su barra de direcciones visible".
+  const modos = ['standalone', 'fullscreen', 'minimal-ui', 'window-controls-overlay'];
+  const esAlgunModoApp = window.matchMedia &&
+    modos.some((m) => window.matchMedia(`(display-mode: ${m})`).matches);
+  return esAlgunModoApp || window.navigator.standalone === true; // Safari/iOS
 }
 
 async function guardarPdfDescarga(doc, nombreArchivo) {
@@ -4950,6 +4959,13 @@ window.guardarPdfDescarga = guardarPdfDescarga;
 // FASE 16.2 — Exportar PDF de la tabla de "Resumen"
 // ══════════════════════════════════════════════════════
 function descargarPdfResumen() {
+ // Fix 10-jul-2026 (v4) — Toda la función se envuelve en try/catch. Antes,
+ // si algo tronaba generando el PDF (autoTable, datos, etc.) el error solo
+ // se veía en la consola del navegador — en el celular eso es invisible
+ // para el usuario, así que el botón "no hacía nada" (parecía que ni
+ // reaccionaba) aunque en realidad sí truena. Con este try/catch, cualquier
+ // error se muestra en un alert() para poder diagnosticarlo sin devtools.
+ try {
   const filtered = getResumenFiltradoBase();
   if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
 
@@ -5052,6 +5068,10 @@ function descargarPdfResumen() {
   });
 
   guardarPdfDescarga(doc, `resumen_acarreos_${isoHoy()}.pdf`);
+ } catch (err) {
+  console.error('Error generando el PDF de Resumen:', err);
+  alert('Error generando el PDF: ' + (err && err.message ? err.message : err));
+ }
 }
 window.descargarPdfResumen = descargarPdfResumen;
 
@@ -5318,6 +5338,8 @@ window.renderBancosFolio = renderBancosFolio;
 
 // FASE 16.4.1 — Exportar PDF de la tabla de Bancos, mismo estándar que 16.2
 function descargarPdfBancos() {
+ // Fix 10-jul-2026 (v4) — Mismo try/catch de diagnóstico que descargarPdfResumen().
+ try {
   const filtered = getBancosFiltradoBase();
   if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
 
@@ -5403,6 +5425,10 @@ function descargarPdfBancos() {
   });
 
   guardarPdfDescarga(doc, `bancos_acarreos_${isoHoy()}.pdf`);
+ } catch (err) {
+  console.error('Error generando el PDF de Bancos:', err);
+  alert('Error generando el PDF: ' + (err && err.message ? err.message : err));
+ }
 }
 window.descargarPdfBancos = descargarPdfBancos;
 

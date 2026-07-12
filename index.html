@@ -907,6 +907,25 @@ async function aplicarResumen(rec, signo) {
   
   payload['por_combinacion.' + comboKey] = increment(signo * ton);
 
+  // FASE — Resumen de ACARREOS para el bot de Telegram (12/07/2026, ver
+  // BOT.MD sección 17). El bot necesitaba viajes+ton desglosados por
+  // Banco/Material/Rango, dato que NO tenían por_material/por_banco (solo
+  // toneladas, sin rango ni conteo de viajes). En vez de que el bot siga
+  // leyendo la colección `acarreos` completa (carísimo en lecturas — ver
+  // sección 14), se agrega aquí ese desglose al mismo resumen mensual que
+  // ya se mantiene con increment(), mismo patrón que
+  // aplicarAgregadoAvanceAcopio(). Solo se registra si el ticket tiene
+  // banco (los que no, no le sirven a un reporte de "viajes por banco").
+  if (rec.banco) {
+    const rangoNorm = normalizarRango(rec.rango);
+    const keyBMR = claveAgregado(rec.banco, rec.material, rangoNorm);
+    payload['por_banco_material_rango.' + keyBMR + '.viajes']   = increment(signo);
+    payload['por_banco_material_rango.' + keyBMR + '.ton']      = increment(signo * ton);
+    payload['por_banco_material_rango.' + keyBMR + '.banco']    = rec.banco;
+    payload['por_banco_material_rango.' + keyBMR + '.material'] = rec.material || 'SD';
+    payload['por_banco_material_rango.' + keyBMR + '.rango']    = rangoNorm;
+  }
+
   try {
     // Mismo arreglo que aplicarAgregadoAvanceAcopio: updateDoc() en vez de
     // setDoc+merge, para que las claves con punto (por_material.X,
@@ -922,7 +941,8 @@ async function aplicarResumen(rec, signo) {
       try {
         await setDoc(ref, {
           total_viajes: 0, total_ton: 0,
-          por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {}
+          por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {},
+          por_banco_material_rango: {}
         });
         await updateDoc(ref, payload);
       } catch (e2) {
@@ -953,7 +973,7 @@ window.recalcularResumen = async function() {
       const mes = mesKeyFromFecha(r.fecha1);
       if (!mes) return;
       const ton = r.ton || ((r.neto_kg || 0) / 1000);
-      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {} };
+      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {}, por_banco_material_rango: {} };
       const m = porMes[mes];
       m.total_viajes += 1;
       m.total_ton    += ton;
@@ -966,6 +986,16 @@ window.recalcularResumen = async function() {
       const camStr   = (r.tipo_camion || 'SD').replace(/\s+/g, '_');
       const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
       m.por_combinacion[comboKey] = (m.por_combinacion[comboKey] || 0) + ton;
+      // Mismo desglose que aplicarResumen() en vivo — ver FASE 12/07/2026.
+      if (r.banco) {
+        const rangoNorm = normalizarRango(r.rango);
+        const keyBMR = claveAgregado(r.banco, r.material, rangoNorm);
+        if (!m.por_banco_material_rango[keyBMR]) {
+          m.por_banco_material_rango[keyBMR] = { viajes: 0, ton: 0, banco: r.banco, material: r.material || 'SD', rango: rangoNorm };
+        }
+        m.por_banco_material_rango[keyBMR].viajes += 1;
+        m.por_banco_material_rango[keyBMR].ton    += ton;
+      }
     });
     const meses = Object.keys(porMes);
     for (let i = 0; i < meses.length; i += 450) {

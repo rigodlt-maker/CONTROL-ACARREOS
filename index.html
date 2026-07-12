@@ -286,7 +286,8 @@ body.modal-open { position: fixed; inset: 0; overflow: hidden; width: 100%; }
 
 <script type="module">
 import { initializeApp, getApps }                 from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, addDoc,
+import { getFirestore, initializeFirestore, persistentLocalCache,
+         persistentMultipleTabManager, collection, addDoc,
          getDoc, getDocs, doc, updateDoc, deleteDoc,
          query, orderBy, onSnapshot, where, limit, startAfter,
          serverTimestamp, setDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -304,7 +305,20 @@ const firebaseConfig = {
   appId:             "1:217225530978:web:f742aa093a972401ce4b3b"
 };
 const app        = initializeApp(firebaseConfig);
-const db_f       = getFirestore(app);
+// FASE — Reducción de lecturas de Firestore (11/07/2026): antes se usaba
+// getFirestore(app) sin caché persistente, así que CADA vez que alguien
+// abría la app o el celular reconectaba en obra, el listener de
+// startRealtimeSync() volvía a cobrar 1 lectura POR CADA documento de la
+// ventana (hasta 9,500), reventando el cupo gratis de 50,000
+// lecturas/día de Firestore Spark. Con localCache: persistentLocalCache
+// los datos quedan guardados en IndexedDB del dispositivo — en la
+// siguiente apertura, Firestore sirve del caché local y solo cobra
+// lectura por los documentos que de verdad cambiaron, no por los 9,500
+// de siempre. persistentMultipleTabManager evita que truene si alguien
+// tiene la app abierta en dos pestañas/ventanas a la vez.
+const db_f       = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 const auth       = getAuth(app);
 const COL        = "acarreos";
 const COL_USERS  = "usuarios";
@@ -2075,8 +2089,6 @@ window.leerResumenAvanceAcopio = async function () {
             <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ1" value="MOZOMBOA GAMI" onchange="onMsChange('banco')"><label for="cb-banco-MOZ1">Mozomboa GAMI</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ2" value="MOZOMBOA LERMA" onchange="onMsChange('banco')"><label for="cb-banco-MOZ2">Mozomboa LERMA</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-banco-MOZ3" value="MOZOMBOA PORFIRIO" onchange="onMsChange('banco')"><label for="cb-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-banco-NUEVO1" value="BANCO NUEVO 1" onchange="onMsChange('banco')"><label for="cb-banco-NUEVO1">Banco Nuevo 1</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-banco-NUEVO2" value="BANCO NUEVO 2" onchange="onMsChange('banco')"><label for="cb-banco-NUEVO2">Banco Nuevo 2</label></div>
           </div>
         </div>
       </div>
@@ -2255,8 +2267,6 @@ window.leerResumenAvanceAcopio = async function () {
             <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ1" value="MOZOMBOA GAMI" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ1">Mozomboa GAMI</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ2" value="MOZOMBOA LERMA" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ2">Mozomboa LERMA</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-MOZ3" value="MOZOMBOA PORFIRIO" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-NUEVO1" value="BANCO NUEVO 1" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-NUEVO1">Banco Nuevo 1</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-bancos-banco-NUEVO2" value="BANCO NUEVO 2" onchange="onMsChange('bancos-banco')"><label for="cb-bancos-banco-NUEVO2">Banco Nuevo 2</label></div>
           </div>
         </div>
       </div>
@@ -2390,8 +2400,6 @@ window.leerResumenAvanceAcopio = async function () {
             <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ1" value="MOZOMBOA GAMI" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ1">Mozomboa GAMI</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ2" value="MOZOMBOA LERMA" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ2">Mozomboa LERMA</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-MOZ3" value="MOZOMBOA PORFIRIO" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-NUEVO1" value="BANCO NUEVO 1" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-NUEVO1">Banco Nuevo 1</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-resumen-banco-NUEVO2" value="BANCO NUEVO 2" onchange="onMsChange('resumen-banco')"><label for="cb-resumen-banco-NUEVO2">Banco Nuevo 2</label></div>
           </div>
         </div>
       </div>
@@ -2563,8 +2571,6 @@ window.leerResumenAvanceAcopio = async function () {
             <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ1" value="MOZOMBOA GAMI" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ1">Mozomboa GAMI</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ2" value="MOZOMBOA LERMA" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ2">Mozomboa LERMA</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-MOZ3" value="MOZOMBOA PORFIRIO" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-NUEVO1" value="BANCO NUEVO 1" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-NUEVO1">Banco Nuevo 1</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-reportes-banco-NUEVO2" value="BANCO NUEVO 2" onchange="onMsChange('reportes-banco')"><label for="cb-reportes-banco-NUEVO2">Banco Nuevo 2</label></div>
           </div>
         </div>
       </div>
@@ -2676,8 +2682,6 @@ window.leerResumenAvanceAcopio = async function () {
             <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ1" value="MOZOMBOA GAMI" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ1">Mozomboa GAMI</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ2" value="MOZOMBOA LERMA" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ2">Mozomboa LERMA</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-banco-MOZ3" value="MOZOMBOA PORFIRIO" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-MOZ3">Mozomboa PORFIRIO</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-NUEVO1" value="BANCO NUEVO 1" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-NUEVO1">Banco Nuevo 1</label></div>
-            <div class="ms-option"><input type="checkbox" id="cb-excel-banco-NUEVO2" value="BANCO NUEVO 2" onchange="onMsChange('excel-banco')"><label for="cb-excel-banco-NUEVO2">Banco Nuevo 2</label></div>
           </div>
         </div>
       </div>
@@ -2967,14 +2971,7 @@ const ORIGEN_BANCOS = [
   { value: 'TRITURA',     label: 'Tritura' },
   { value: 'MOZOMBOA GAMI',   label: 'Mozomboa GAMI' },
   { value: 'MOZOMBOA LERMA',   label: 'Mozomboa LERMA' },
-  { value: 'MOZOMBOA PORFIRIO',   label: 'Mozomboa PORFIRIO' },
-  // Espacio reservado para hasta 2 bancos futuros (agregado 11/07/2026,
-  // ver BOT.MD sección "Bancos — espacio reservado"). Renombrar el
-  // `value` y el `label` cuando se sepa el nombre real del banco nuevo;
-  // NO agregar entradas nuevas al arreglo si ya existe un placeholder
-  // libre, para no tener que tocar los 5 bloques de checkboxes de nuevo.
-  { value: 'BANCO NUEVO 1',   label: 'Banco Nuevo 1' },
-  { value: 'BANCO NUEVO 2',   label: 'Banco Nuevo 2' }
+  { value: 'MOZOMBOA PORFIRIO',   label: 'Mozomboa PORFIRIO' }
 ];
 const ORIGEN_ACOPIOS = [
   { value: 'ACOPIO MARINO',    label: 'Acopio Marino' },
@@ -4484,9 +4481,7 @@ const NOMBRES_BANCO = {
   // Nombres nuevos (valor real usado desde ahora):
   'MOZOMBOA GAMI': 'MOZOMBOA GAMI', 'MOZOMBOA LERMA': 'MOZOMBOA LERMA', 'MOZOMBOA PORFIRIO': 'MOZOMBOA PORFIRIO',
   // Compatibilidad con tickets viejos aún no migrados en Firestore:
-  'MOZOMBOA1': 'MOZOMBOA GAMI', 'MOZOMBOA2': 'MOZOMBOA LERMA', 'MOZOMBOA3': 'MOZOMBOA PORFIRIO',
-  // Placeholders reservados para bancos futuros (ver BOT.MD):
-  'BANCO NUEVO 1': 'BANCO NUEVO 1', 'BANCO NUEVO 2': 'BANCO NUEVO 2'
+  'MOZOMBOA1': 'MOZOMBOA GAMI', 'MOZOMBOA2': 'MOZOMBOA LERMA', 'MOZOMBOA3': 'MOZOMBOA PORFIRIO'
 };
 const NOMBRES_MATERIAL = {
   'NUCLEO': 'NÚCLEO', 'BERMA': 'BERMA', 'BERMA DE APOYO': 'BERMA DE APOYO',

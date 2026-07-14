@@ -690,9 +690,24 @@ function cutoffFecha(dias) {
 function startRealtimeSync(rol) {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
 
-  // Los roles de solo lectura (visor) no necesitan el listener en tiempo real
-  // con ventana grande — les cargamos los últimos 30 días como máximo una vez.
-  // capturista, coordinador, admin y master sí necesitan sincronización activa.
+  // FASE — Pendiente 19.2 de BOT.MD (13/07/2026): el rol `visor` es de
+  // solo lectura, así que ya NO usa el listener en tiempo real con ventana
+  // de días (ese listener es el que antes obligaba a refrescar/dar clic
+  // para ver datos nuevos). En vez de eso, carga TODO el histórico de los
+  // últimos 365 días con UNA sola lectura puntual (getDocs, no onSnapshot),
+  // automáticamente al entrar — sin botón, sin refresco manual — que es
+  // justo lo que pidió el Director. Se deja acotado a 365 días (no la
+  // colección completa sin límite) para no repetir el incidente de cupo
+  // de lecturas agotado documentado en BOT.MD sección 14: cada apertura de
+  // sesión de un visor cuesta 1 lectura por documento de esa ventana. Si en
+  // el futuro un visor necesita algo de hace más de un año, puede pedir que
+  // se le active manualmente (mismo patrón que ya existe para Resumen/
+  // Reportes/Gráficos con "Ver TODO el histórico").
+  if (rol === 'visor') {
+    cargarHistoricoParaVisor();
+    return;
+  }
+
   const rolesConSync = ['capturista', 'coordinador', 'admin', 'master'];
   const necesitaSync = rolesConSync.includes(rol || 'capturista');
 
@@ -732,6 +747,37 @@ function startRealtimeSync(rol) {
     }
   );
 }
+
+// Carga única y automática de TODO el histórico (últimos 365 días) para el
+// rol `visor`. Reutiliza traerTodoFirestore(), ya probado para esto mismo
+// en los botones "Ver TODO el histórico" de Gráficos/Resumen/Reportes.
+// traerTodoFirestore() siempre ordena ascendente; el resto de la app espera
+// `db` en orden descendente (más reciente primero), por eso el reverse().
+async function cargarHistoricoParaVisor() {
+  try {
+    const registros = await traerTodoFirestore(cutoffFecha(365), null, (n) => {
+      if (!isInitialized) {
+        const el = document.getElementById('app-loading-msg');
+        if (el) el.textContent = 'Cargando historial (' + n.toLocaleString('es-MX') + ' registros)…';
+      }
+    });
+    db = registros.slice().reverse();
+    window.db = db;
+    if (!isInitialized) {
+      isInitialized = true;
+      appReady();
+    }
+    renderDB();
+    if (document.getElementById('tab-db') && document.getElementById('tab-db').classList.contains('active')) {
+      updateSyncNote('✅ ' + db.length.toLocaleString('es-MX') + ' registro(s) cargados (últimos 365 días, acceso de solo lectura) · ');
+    }
+  } catch (e) {
+    console.error('Firestore error (visor):', e);
+    if (!isInitialized) appError('No se pudo conectar a la base de datos.\n' + e.message);
+    else window.showSyncToast('⚠️', 'Error de conexión.', 'err');
+  }
+}
+window.cargarHistoricoParaVisor = cargarHistoricoParaVisor;
 
 window.cambiarVentana = function() {
   const sel = document.getElementById('db-ventana');
@@ -1175,9 +1221,12 @@ window.saveRecord = async function() {
   if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
-  { // FASE 10: vertido y folio de barcaza son obligatorios solo cuando el destino es colocación (Cuerpo/Muro/Morro)
+  { // FASE 10: vertido y folio de barcaza son obligatorios solo cuando el destino es colocación (Cuerpo/Muro/Morro).
+    // Área de Prefabricados NO es colocación en el rompeolas (es un suministro externo, ver BOT.MD/SIXSIGMA
+    // pendientes de julio-2026), así que tampoco pide vertido — mismo trato que un Acopio.
     const destinoEsAcopio = data.destino === 'ACOPIO MARINO' || data.destino === 'ACOPIO TERRESTRE';
-    if (!!data.destino && !destinoEsAcopio && !data.vertido) { alert('Selecciona el vertido (Marino o Terrestre).'); return; }
+    const destinoEsPrefabricados = data.destino === 'AREA DE PREFABRICADOS';
+    if (!!data.destino && !destinoEsAcopio && !destinoEsPrefabricados && !data.vertido) { alert('Selecciona el vertido (Marino o Terrestre).'); return; }
     if (data.vertido === 'MARINO' && !data.folio_barcaza) { alert('Ingresa el folio de barcaza.'); return; }
   }
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
@@ -1358,7 +1407,30 @@ window.completarPendiente = async function(fid) {
   }
 } // ← cierre de window.completarPendiente
 
+// Pendiente 19.1 de BOT.MD (13/07/2026) — Ojito para mostrar/ocultar
+// contraseña, pedido por el Director tras equivocarse al escribirla en su
+// celular. Reutilizable: recibe el id del <input> y el botón que lo disparó,
+// para poder aplicarse a cualquier campo de contraseña de la app.
+window.togglePasswordVisibility = function(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const mostrando = input.type === 'text';
+  input.type = mostrando ? 'password' : 'text';
+  btn.title = mostrando ? 'Mostrar contraseña' : 'Ocultar contraseña';
+  btn.setAttribute('aria-label', btn.title);
+  btn.innerHTML = mostrando
+    ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+    : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a19.75 19.75 0 015.06-5.94M9.9 4.24A10.4 10.4 0 0112 4c7 0 11 8 11 8a19.72 19.72 0 01-3.16 4.44M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+};
+
 window.manualSync = function() {
+  if (window._currentUserRol === 'visor') {
+    window.showSyncToast('⏳', 'Actualizando…', 'pending');
+    cargarHistoricoParaVisor().then(() => {
+      window.showSyncToast('✅', 'Datos actualizados', 'ok', 2000);
+    });
+    return;
+  }
   updateSyncNote('✅ Sincronizado · ' + db.length + ' registro(s) en la ventana cargada');
   window.showSyncToast('✅', 'Datos al día', 'ok', 2000);
 }
@@ -1705,7 +1777,12 @@ window.leerResumenAvanceAcopio = async function () {
       </div>
       <div class="field-row">
         <label>Contraseña</label>
-        <input type="password" id="login-pass" placeholder="••••••" autocomplete="current-password"/>
+        <div style="position:relative;">
+          <input type="password" id="login-pass" placeholder="••••••" autocomplete="current-password" style="padding-right:40px;"/>
+          <button type="button" class="pass-toggle-btn" onclick="togglePasswordVisibility('login-pass', this)" aria-label="Mostrar contraseña" title="Mostrar contraseña" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;color:var(--text-muted);">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
       </div>
       <button id="btn-login" class="btn btn-primary" style="width:100%;margin-top:4px" onclick="loginUsuario()">Entrar</button>
       <p style="font-size:12px;color:var(--text-muted);margin-top:10px;text-align:center;line-height:1.5">
@@ -1904,6 +1981,7 @@ window.leerResumenAvanceAcopio = async function () {
           <option value="">— Seleccionar —</option>
           <option value="ACOPIO MARINO">Acopio Marino</option>
           <option value="ACOPIO TERRESTRE">Acopio Terrestre</option>
+          <option value="AREA DE PREFABRICADOS">Área de Prefabricados</option>
           <option value="MURO">Muro</option>
           <option value="MORRO">Morro</option>
           <option value="CUERPO 1">Cuerpo 1</option>
@@ -2154,6 +2232,7 @@ window.leerResumenAvanceAcopio = async function () {
           <div class="ms-dropdown" id="ms-cuerpo-dd">
             <div class="ms-option"><input type="checkbox" id="cb-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('cuerpo')"><label for="cb-dest-AM">Acopio Marino</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('cuerpo')"><label for="cb-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dest-PF" value="AREA DE PREFABRICADOS" onchange="onMsChange('cuerpo')"><label for="cb-dest-PF">Área de Prefabricados</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-dest-MU" value="MURO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MU">Muro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-dest-MO" value="MORRO" onchange="onMsChange('cuerpo')"><label for="cb-dest-MO">Morro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-dest-C1" value="CUERPO 1" onchange="onMsChange('cuerpo')"><label for="cb-dest-C1">Cuerpo 1</label></div>
@@ -2465,6 +2544,7 @@ window.leerResumenAvanceAcopio = async function () {
           <div class="ms-dropdown" id="ms-resumen-cuerpo-dd">
             <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AM">Acopio Marino</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-PF" value="AREA DE PREFABRICADOS" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-PF">Área de Prefabricados</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MU" value="MURO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MU">Muro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-MO" value="MORRO" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-MO">Morro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-dest-C1" value="CUERPO 1" onchange="onMsChange('resumen-cuerpo')"><label for="cb-resumen-dest-C1">Cuerpo 1</label></div>
@@ -2636,6 +2716,7 @@ window.leerResumenAvanceAcopio = async function () {
           <div class="ms-dropdown" id="ms-reportes-cuerpo-dd">
             <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-AM">Acopio Marino</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-PF" value="AREA DE PREFABRICADOS" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-PF">Área de Prefabricados</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-MU" value="MURO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-MU">Muro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-MO" value="MORRO" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-MO">Morro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-dest-C1" value="CUERPO 1" onchange="onMsChange('reportes-cuerpo')"><label for="cb-reportes-dest-C1">Cuerpo 1</label></div>
@@ -2747,6 +2828,7 @@ window.leerResumenAvanceAcopio = async function () {
           <div class="ms-dropdown" id="ms-excel-cuerpo-dd">
             <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AM" value="ACOPIO MARINO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AM">Acopio Marino</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-dest-AT" value="ACOPIO TERRESTRE" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-AT">Acopio Terrestre</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-dest-PF" value="AREA DE PREFABRICADOS" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-PF">Área de Prefabricados</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MU" value="MURO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MU">Muro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-dest-MO" value="MORRO" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-MO">Morro</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-dest-C1" value="CUERPO 1" onchange="onMsChange('excel-cuerpo')"><label for="cb-excel-dest-C1">Cuerpo 1</label></div>
@@ -2789,7 +2871,12 @@ window.leerResumenAvanceAcopio = async function () {
     </div>
     <div class="field-row">
       <label>Contraseña (mín. 6 caracteres)</label>
-      <input type="password" id="nc-pass" placeholder="••••••" autocomplete="new-password"/>
+      <div style="position:relative;">
+        <input type="password" id="nc-pass" placeholder="••••••" autocomplete="new-password" style="padding-right:40px;"/>
+        <button type="button" class="pass-toggle-btn" onclick="togglePasswordVisibility('nc-pass', this)" aria-label="Mostrar contraseña" title="Mostrar contraseña" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;color:var(--text-muted);">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
     </div>
     <button id="btn-crear-cuenta" class="btn btn-primary" style="width:100%;margin-top:4px" onclick="crearCuentaMaster()">Crear cuenta</button>
     <p style="font-size:12px;color:var(--text-muted);margin-top:10px;text-align:center;line-height:1.5">
@@ -3060,7 +3147,8 @@ window.toggleFolioBarcaza = toggleFolioBarcaza;
 function toggleVertido() {
   const destino = document.getElementById('f-destino').value;
   const destinoEsAcopio = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
-  const destinoEsRompeolas = !!destino && !destinoEsAcopio;
+  const destinoEsPrefabricados = destino === 'AREA DE PREFABRICADOS';
+  const destinoEsRompeolas = !!destino && !destinoEsAcopio && !destinoEsPrefabricados;
   document.getElementById('wrap-vertido').style.display = destinoEsRompeolas ? 'block' : 'none';
   if (!destinoEsRompeolas) document.getElementById('f-vertido').value = '';
   toggleFolioBarcaza();
@@ -3090,10 +3178,23 @@ window.checkTransferenciaAcopios = checkTransferenciaAcopios;
 // formulario. Ya no existe el tipo de camión "Barcaza": las barcazas se
 // cargan con camiones "Articulado", y el medio se declara aparte.
 function computeConcepto(origenTipo, destino, vertido) {
-  const destinoEsAcopio     = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
-  const destinoEsRompeolas  = !!destino && !destinoEsAcopio; // MURO, MORRO, CUERPO 1‑5
-  const esMedioMarino       = vertido === 'MARINO';
+  const destinoEsAcopio         = destino === 'ACOPIO MARINO' || destino === 'ACOPIO TERRESTRE';
+  // Área de Prefabricados (agregado jul-2026): zona donde se descarga la rezaga
+  // como suministro extra para arreglo de terreno. NO es parte de la obra del
+  // rompeolas, así que se excluye explícitamente de destinoEsRompeolas para que
+  // nunca cuente como colocación ni sume a las metas de avance (ver
+  // aplicarAgregadoAvanceAcopio: cualquier concepto que no sea COLOCACION_*/
+  // SUMINISTRO/TRANSFERENCIA_ACOPIOS simplemente no toca ese agregado).
+  const destinoEsPrefabricados  = destino === 'AREA DE PREFABRICADOS';
+  const destinoEsRompeolas      = !!destino && !destinoEsAcopio && !destinoEsPrefabricados; // MURO, MORRO, CUERPO 1‑5
+  const esMedioMarino           = vertido === 'MARINO';
 
+  if (destinoEsPrefabricados) {
+    // Se registra igual como viaje real (Base de Datos, Reportes, Excel, resumen
+    // mensual general), pero con un concepto propio que NO alimenta el agregado
+    // de avance de obra (resumenes/avance_acopio) ni requiere vertido.
+    return { concepto: 'SUMINISTRO_PREFABRICADOS', suministro_y_colocacion: false };
+  }
   if (origenTipo === 'ACOPIO' && destinoEsAcopio) {
     return { concepto: 'TRANSFERENCIA_ACOPIOS', suministro_y_colocacion: false };
   }
@@ -3144,7 +3245,8 @@ function nombreConcepto(c) {
     'SUMINISTRO': 'Suministro',
     'COLOCACION_TERRESTRE': 'Colocación (medios terrestres)',
     'COLOCACION_MARINA': 'Colocación (medios marinos)',
-    'TRANSFERENCIA_ACOPIOS': 'Transferencia entre acopios'
+    'TRANSFERENCIA_ACOPIOS': 'Transferencia entre acopios',
+    'SUMINISTRO_PREFABRICADOS': 'Suministro a Área de Prefabricados (no es obra)'
   }[c] || '—';
 }
 window.nombreConcepto = nombreConcepto;

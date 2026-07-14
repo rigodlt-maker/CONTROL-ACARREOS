@@ -290,7 +290,8 @@ import { getFirestore, initializeFirestore, persistentLocalCache,
          persistentMultipleTabManager, collection, addDoc,
          getDoc, getDocs, doc, updateDoc, deleteDoc,
          query, orderBy, onSnapshot, where, limit, startAfter,
-         serverTimestamp, setDoc, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+         serverTimestamp, setDoc, increment, writeBatch,
+         getCountFromServer } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, onAuthStateChanged,
          createUserWithEmailAndPassword,
          signInWithEmailAndPassword,
@@ -690,19 +691,20 @@ function cutoffFecha(dias) {
 function startRealtimeSync(rol) {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
 
-  // FASE — Pendiente 19.2 de BOT.MD (13/07/2026): el rol `visor` es de
-  // solo lectura, así que ya NO usa el listener en tiempo real con ventana
-  // de días (ese listener es el que antes obligaba a refrescar/dar clic
-  // para ver datos nuevos). En vez de eso, carga TODO el histórico de los
-  // últimos 365 días con UNA sola lectura puntual (getDocs, no onSnapshot),
-  // automáticamente al entrar — sin botón, sin refresco manual — que es
-  // justo lo que pidió el Director. Se deja acotado a 365 días (no la
-  // colección completa sin límite) para no repetir el incidente de cupo
-  // de lecturas agotado documentado en BOT.MD sección 14: cada apertura de
-  // sesión de un visor cuesta 1 lectura por documento de esa ventana. Si en
-  // el futuro un visor necesita algo de hace más de un año, puede pedir que
-  // se le active manualmente (mismo patrón que ya existe para Resumen/
-  // Reportes/Gráficos con "Ver TODO el histórico").
+  // FASE — Pendiente 19.2 de BOT.MD (13/07/2026, ajustado el mismo día en la
+  // auditoría de lecturas, sección 20): el rol `visor` es de solo lectura,
+  // así que ya NO usa el listener en tiempo real con ventana de días (ese
+  // listener es el que antes obligaba a refrescar/dar clic para ver datos
+  // nuevos). En vez de eso, carga automáticamente los últimos 90 días con
+  // UNA sola lectura puntual (getDocs, no onSnapshot) — sin botón, sin
+  // refresco manual. Se bajó de 365 a 90 días tras confirmar que puede haber
+  // varios visores a la vez (ej. 4 directores) y que el cupo de 50,000
+  // lecturas/día es COMPARTIDO con el bot de Telegram: a 90 días, cada
+  // sesión de visor cuesta unos cuantos miles de lecturas en vez de
+  // 30,000-55,000. Para conciliaciones de más de 90 días (poco frecuentes,
+  // según Jesús casi siempre son mensuales), el botón "Ver TODO el
+  // histórico" de Resumen/Reportes/Gráficos ya está disponible para ese
+  // rol y ahora avisa cuántos documentos va a leer antes de hacerlo.
   if (rol === 'visor') {
     cargarHistoricoParaVisor();
     return;
@@ -748,14 +750,14 @@ function startRealtimeSync(rol) {
   );
 }
 
-// Carga única y automática de TODO el histórico (últimos 365 días) para el
-// rol `visor`. Reutiliza traerTodoFirestore(), ya probado para esto mismo
-// en los botones "Ver TODO el histórico" de Gráficos/Resumen/Reportes.
-// traerTodoFirestore() siempre ordena ascendente; el resto de la app espera
-// `db` en orden descendente (más reciente primero), por eso el reverse().
+// Carga única y automática de los últimos 90 días para el rol `visor`.
+// Reutiliza traerTodoFirestore(), ya probado para esto mismo en los botones
+// "Ver TODO el histórico" de Gráficos/Resumen/Reportes. traerTodoFirestore()
+// siempre ordena ascendente; el resto de la app espera `db` en orden
+// descendente (más reciente primero), por eso el reverse().
 async function cargarHistoricoParaVisor() {
   try {
-    const registros = await traerTodoFirestore(cutoffFecha(365), null, (n) => {
+    const registros = await traerTodoFirestore(cutoffFecha(90), null, (n) => {
       if (!isInitialized) {
         const el = document.getElementById('app-loading-msg');
         if (el) el.textContent = 'Cargando historial (' + n.toLocaleString('es-MX') + ' registros)…';
@@ -769,7 +771,7 @@ async function cargarHistoricoParaVisor() {
     }
     renderDB();
     if (document.getElementById('tab-db') && document.getElementById('tab-db').classList.contains('active')) {
-      updateSyncNote('✅ ' + db.length.toLocaleString('es-MX') + ' registro(s) cargados (últimos 365 días, acceso de solo lectura) · ');
+      updateSyncNote('✅ ' + db.length.toLocaleString('es-MX') + ' registro(s) cargados (últimos 90 días, acceso de solo lectura) · ');
     }
   } catch (e) {
     console.error('Firestore error (visor):', e);
@@ -1504,6 +1506,34 @@ async function traerTodoFirestore(desde, hasta, onProgreso) {
 }
 window.traerTodoFirestore = traerTodoFirestore;
 
+// Pendiente de auditoría de lecturas de Firestore (13/07/2026, ver BOT.MD
+// sección 20): antes de disparar cualquier lectura sin filtro de fecha
+// (potencialmente TODA la colección), esta función pregunta primero
+// cuántos documentos son de verdad, con getCountFromServer() — una
+// consulta de agregación que cuesta 1 sola lectura como mínimo (mucho más
+// barata que traer los documentos completos), y muestra ese número real en
+// el confirm() para que quien le da clic sepa exactamente cuánto de su
+// cupo diario (50,000 lecturas gratis, COMPARTIDO con el bot de Telegram)
+// está a punto de gastar. Si falla el conteo por cualquier motivo, se deja
+// pasar con una advertencia genérica en vez de bloquear al usuario.
+async function confirmarLecturaCompleta(desde, hasta) {
+  let mensaje = '¿Seguro que quieres leer todo el histórico? Esto puede tardar y consume tu cupo diario de lecturas de Firestore (compartido con el bot de Telegram).';
+  try {
+    const constraints = [];
+    if (desde) constraints.push(where('fecha1', '>=', desde));
+    if (hasta) constraints.push(where('fecha1', '<=', hasta));
+    const snap = await getCountFromServer(query(collection(db_f, COL), ...constraints));
+    const total = snap.data().count;
+    mensaje = 'Esto va a leer aproximadamente ' + total.toLocaleString('es-MX') + ' documento(s) de Firestore '
+      + '(de tu cupo diario de 50,000 lecturas gratis, que comparte esta app con el bot de Telegram). '
+      + '¿Continuar?';
+  } catch (e) {
+    console.warn('No se pudo estimar el conteo antes de leer todo:', e);
+  }
+  return confirm(mensaje);
+}
+window.confirmarLecturaCompleta = confirmarLecturaCompleta;
+
 // ── Estado de "histórico completo" SEPARADO por pestaña ──
 // Cada pestaña (Gráficos, Resumen) maneja su propio estado de forma
 // independiente: cambiar la fuente en una no afecta a las demás.
@@ -1527,6 +1557,7 @@ window.cargarHistoricoCompletoDash = async function(forzar) {
     renderDashboard();
     return;
   }
+  if (!(await confirmarLecturaCompleta(null, null))) return;
   cargandoHistoricoDash = true;
   const nota = document.getElementById('dash-historico-nota');
   if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
@@ -1674,6 +1705,7 @@ window.buscarHistorial = async function() {
 let cargandoHistorialDBCompleto = false;
 window.verTodoElHistorialDB = async function() {
   if (cargandoHistorialDBCompleto) return;
+  if (!(await confirmarLecturaCompleta(null, null))) return;
   cargandoHistorialDBCompleto = true;
   const btn = document.getElementById('btn-ver-todo-db');
   const btnHtmlOriginal = btn ? btn.innerHTML : '';
@@ -4507,6 +4539,7 @@ window.usarVentanaRecienteEnResumen = function() {
 };
 
 window.cargarHistoricoCompletoResumen = async function() {
+  if (!resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
   const btn = document.getElementById('btn-resumen-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -5433,6 +5466,7 @@ window.usarVentanaRecienteEnBancos = function() {
 };
 
 window.cargarHistoricoCompletoBancos = async function() {
+  if (!resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
   const btn = document.getElementById('btn-bancos-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -5712,6 +5746,7 @@ window.usarVentanaRecienteEnReportes = function() {
 };
 
 window.cargarHistoricoCompletoReportes = async function() {
+  if (!reportesHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
   const btn = document.getElementById('btn-reportes-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -5832,6 +5867,16 @@ window.descargarExcelDesdeTab = async function() {
   const bancos     = getMsSelected('excel-banco');
   const materiales = getMsSelected('excel-material');
   const cuerpos    = getMsSelected('excel-cuerpo');
+
+  // Pendiente de auditoría de lecturas (13/07/2026, BOT.MD sección 20): antes,
+  // si no se llenaban fechas, esto leía TODA la colección sin avisar nada —
+  // el bug más peligroso de los encontrados, porque además esta pestaña
+  // resetea las fechas a vacío cada vez que se abre. Ahora, si no hay rango
+  // de fechas, se pide confirmación mostrando cuántos documentos son de
+  // verdad antes de leer nada.
+  if (!desde && !hasta) {
+    if (!(await confirmarLecturaCompleta(null, null))) return;
+  }
 
   const btn = document.getElementById('btn-descargar-excel');
   const btnHtml = btn ? btn.innerHTML : '';

@@ -2453,20 +2453,16 @@ window.leerResumenAvanceAcopio = async function () {
 </div>
 
 <div class="tab-content" id="tab-metas">
-  <div class="chart-card" style="text-align:center;padding:36px 20px;">
-    <div style="font-size:34px;margin-bottom:10px;">🚧</div>
-    <h3 style="margin-bottom:8px;">En construcción</h3>
-    <p style="font-size:13px;color:var(--text-muted);max-width:420px;margin:0 auto;">
-      Esta pestaña mostrará el avance contra la <strong>meta programada del
-      mes en curso</strong> (además de la meta total de obra que ya ves en
-      Avances), con un semáforo de qué tan bien vamos a mitad de mes.
-    </p>
-    <p style="font-size:13px;color:var(--text-muted);max-width:420px;margin:10px auto 0;">
-      Está en espera de que se carguen los valores del <strong>programa
-      mensual 2026</strong>. En cuanto estén disponibles, se activa la
-      lógica real de esta pestaña.
-    </p>
+  <div class="chart-card" style="margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        <h3 style="margin:0;">Metas — Programa 2026</h3>
+        <p id="metas-estado" style="font-size:12px;color:var(--text-muted);margin-top:4px;">⏳ Cargando…</p>
+      </div>
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="initMetasTab(true)">🔄 Actualizar</button>
+    </div>
   </div>
+  <div id="metas-contenido"></div>
 </div>
 
 <div class="tab-content" id="tab-resumen">
@@ -5436,8 +5432,113 @@ function getBancosFiltradoBase() {
 // un init consistente con el resto de pestañas y sea fácil enchufar la
 // lógica real más adelante sin tocar la barra de tabs.
 // ══════════════════════════════════════════════════════
-window.initMetasTab = function() {
-  // Placeholder — pendiente de programa 2026 (ver PROYECTO.MD §2).
+window.initMetasTab = async function(forzar) {
+  const estadoEl = document.getElementById('metas-estado');
+  const contEl   = document.getElementById('metas-contenido');
+  if (estadoEl) estadoEl.textContent = '⏳ Cargando…';
+  try {
+    // 1) Programa 2026 — 1 lectura, cacheada en memoria (documento estático,
+    // solo cambia cuando alguien vuelve a subir el CSV con la herramienta).
+    if (!window.programa2026Data || forzar) {
+      const snap = await getDoc(doc(db_f, COL_RESUMEN, 'programa_2026'));
+      window.programa2026Data = snap.exists() ? snap.data() : null;
+    }
+    const programa = window.programa2026Data;
+    if (!programa || !programa.cuerpos) {
+      if (estadoEl) estadoEl.textContent = '⚠️ Todavía no se ha subido el programa 2026 (usa la herramienta SUBIR_PROGRAMA_2026.html).';
+      if (contEl) contEl.innerHTML = '';
+      return;
+    }
+
+    // 2) Avance acumulado real: reutiliza el mismo caché/lectura que ya usa
+    // la pestaña Avances/Acopios (resumenes/avance_acopio, 1 documento).
+    const avance = await asegurarDatosAvancesAcopios(forzar);
+
+    // 3) Avance real del mes en curso: resumenes/{YYYY-MM}, 1 lectura,
+    // cacheada por mes (no se repite si ya se cargó ese mismo mes).
+    const hoy = new Date();
+    const mesActual = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0');
+    if (!window.metasResumenMes || window.metasResumenMesKey !== mesActual || forzar) {
+      const snapMes = await getDoc(doc(db_f, COL_RESUMEN, mesActual));
+      window.metasResumenMes = snapMes.exists() ? snapMes.data() : { por_combinacion: {} };
+      window.metasResumenMesKey = mesActual;
+    }
+    const resumenMes = window.metasResumenMes;
+
+    // Real del mes por CUERPO+MATERIAL: por_combinacion trae claves
+    // banco__material__destino__tipo_camion — se suma por destino+material,
+    // sin importar banco ni tipo de camión.
+    const realMesPorCM = {};
+    Object.entries(resumenMes.por_combinacion || {}).forEach(([key, ton]) => {
+      const p = key.split('__');
+      if (p.length < 4) return;
+      const material = p[1].replace(/_/g, ' ');
+      const destino   = p[2].replace(/_/g, ' ');
+      const k = destino + '||' + material;
+      realMesPorCM[k] = (realMesPorCM[k] || 0) + ton;
+    });
+
+    // Real acumulado por CUERPO+MATERIAL: colocado_por_fila trae claves
+    // destino__material__rango — se suma sin importar rango.
+    const realAcumPorCM = {};
+    Object.entries((avance && avance.colocado_por_fila) || {}).forEach(([key, val]) => {
+      const p = key.split('__');
+      if (p.length < 2) return;
+      const destino  = p[0].replace(/_/g, ' ');
+      const material = p[1].replace(/_/g, ' ');
+      const k = destino + '||' + material;
+      const ton = typeof val === 'object' ? (val.ton || 0) : (val || 0);
+      realAcumPorCM[k] = (realAcumPorCM[k] || 0) + ton;
+    });
+
+    const fmtTon = n => (n || 0).toLocaleString('es-MX', { maximumFractionDigits: 0 });
+    let html = '';
+    Object.keys(programa.cuerpos).sort().forEach(cuerpo => {
+      const mats = programa.cuerpos[cuerpo];
+      html += `<div class="chart-card" style="margin-bottom:12px;">
+        <h4 style="margin:0 0 10px;">${cuerpo}</h4>
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap;">
+        <thead><tr style="text-align:left;color:var(--text-muted);">
+          <th style="padding:4px 6px;">Material</th>
+          <th style="padding:4px 6px;text-align:right;">Meta mes</th>
+          <th style="padding:4px 6px;text-align:right;">Real mes</th>
+          <th style="padding:4px 6px;text-align:right;">% mes</th>
+          <th style="padding:4px 6px;text-align:right;">Meta total</th>
+          <th style="padding:4px 6px;text-align:right;">Real acum.</th>
+          <th style="padding:4px 6px;text-align:right;">% acum.</th>
+        </tr></thead><tbody>`;
+      Object.entries(mats).forEach(([material, datos]) => {
+        const k = cuerpo + '||' + material;
+        const metaMes  = (datos.meses || {})[mesActual] || 0;
+        const realMes  = realMesPorCM[k] || 0;
+        const pctMes   = metaMes > 0 ? (realMes / metaMes * 100) : (realMes > 0 ? 100 : null);
+        const metaTot  = datos.cantidad_total || 0;
+        const realAcum = realAcumPorCM[k] || 0;
+        const pctAcum  = metaTot > 0 ? (realAcum / metaTot * 100) : null;
+        const semaforo = pctMes === null ? '⚪' : pctMes >= 90 ? '🟢' : pctMes >= 60 ? '🟡' : '🔴';
+        html += `<tr style="border-top:0.5px solid var(--border);">
+          <td style="padding:4px 6px;">${semaforo} ${nombreMaterial(material)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaMes)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(realMes)}</td>
+          <td style="padding:4px 6px;text-align:right;">${pctMes === null ? '—' : pctMes.toFixed(0) + '%'}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaTot)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(realAcum)}</td>
+          <td style="padding:4px 6px;text-align:right;">${pctAcum === null ? '—' : pctAcum.toFixed(0) + '%'}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div></div>`;
+    });
+    if (contEl) contEl.innerHTML = html;
+    if (estadoEl) {
+      estadoEl.textContent = '✅ Mes en curso: ' + mesActual +
+        (programa.actualizado ? ' · programa actualizado el ' + new Date(programa.actualizado).toLocaleDateString('es-MX') : '') +
+        ' · 🟢 ≥90% del mes · 🟡 60-89% · 🔴 <60%';
+    }
+  } catch (e) {
+    if (estadoEl) estadoEl.textContent = '';
+    handleFirestoreIndexError(e) || alert('Error al cargar Metas: ' + e.message);
+  }
 };
 
 window.initBancosTab = function() {

@@ -1774,6 +1774,15 @@ window.handleFirestoreIndexError = handleFirestoreIndexError;
 window.leerResumenAvanceAcopio = async function () {
   return await getDoc(doc(db_f, COL_RESUMEN, 'avance_acopio'));
 };
+
+// Puente genérico (FASE — Metas): initMetasTab() vive en el <script> normal
+// y necesita leer CUALQUIER documento de resumenes/{id} (programa_2026,
+// y el mes en curso YYYY-MM), no solo avance_acopio. Se agrega esta versión
+// parametrizada en vez de exponer getDoc/doc sueltos, mismo criterio que
+// leerResumenAvanceAcopio de arriba.
+window.leerDocResumen = async function (docId) {
+  return await getDoc(doc(db_f, COL_RESUMEN, docId));
+};
 </script>
 </head>
 <body>
@@ -5440,7 +5449,7 @@ window.initMetasTab = async function(forzar) {
     // 1) Programa 2026 — 1 lectura, cacheada en memoria (documento estático,
     // solo cambia cuando alguien vuelve a subir el CSV con la herramienta).
     if (!window.programa2026Data || forzar) {
-      const snap = await getDoc(doc(db_f, COL_RESUMEN, 'programa_2026'));
+      const snap = await window.leerDocResumen('programa_2026');
       window.programa2026Data = snap.exists() ? snap.data() : null;
     }
     const programa = window.programa2026Data;
@@ -5459,7 +5468,7 @@ window.initMetasTab = async function(forzar) {
     const hoy = new Date();
     const mesActual = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0');
     if (!window.metasResumenMes || window.metasResumenMesKey !== mesActual || forzar) {
-      const snapMes = await getDoc(doc(db_f, COL_RESUMEN, mesActual));
+      const snapMes = await window.leerDocResumen(mesActual);
       window.metasResumenMes = snapMes.exists() ? snapMes.data() : { por_combinacion: {} };
       window.metasResumenMesKey = mesActual;
     }

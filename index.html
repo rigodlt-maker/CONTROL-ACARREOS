@@ -607,6 +607,7 @@ onAuthStateChanged(auth, async (user) => {
     if (ndRole) ndRole.textContent = etiquetaRol + ' · Rompeolas Oriente';
 
     window._currentUserRol = rol;
+    window._currentUserUid = user.uid;
 
     // ── Visibilidad por rol: qué opciones del menú lateral ve cada quien. ──
     const visibilidadPorTab = {
@@ -622,6 +623,7 @@ onAuthStateChanged(auth, async (user) => {
       bancos:     esAdminOMaster || esCoordinador || esVisor,
       metas:      esAdminOMaster || esCoordinador || esVisor,
       excel:      esAdminOMaster || esCoordinador || esVisor,
+      sixsigma:   esMaster, // Six Sigma Bloque B.1: único rol con acceso, ver SIXSIGMA.md sección 1
       admin:      esAdminOMaster
     };
     Object.entries(visibilidadPorTab).forEach(([t, cond]) => {
@@ -1397,6 +1399,7 @@ window.procesarColaOffline = async function() {
         nuevo.ts_updated = serverTimestamp();
         nuevo.ediciones_contador = increment(1); // Six Sigma Bloque B.3: First Pass Yield
         await updateDoc(doc(db_f, COL, fid), nuevo);
+        await incrementarStatsResumen({ capturas_editadas_eventos: 1 }); // Six Sigma Bloque B.1
         await moverResumen(original, nuevo);
         await moverAgregadoAvanceAcopio(original, nuevo);
       }
@@ -1497,6 +1500,7 @@ window.saveRecord = async function() {
       payload.ts_updated = serverTimestamp();
       payload.ediciones_contador = increment(1); // Six Sigma Bloque B.3: First Pass Yield
       await updateDoc(doc(db_f, COL, window._editFid), payload);
+      incrementarStatsResumen({ capturas_editadas_eventos: 1 }); // Six Sigma Bloque B.1 (sin await)
       if (!esPendiente) window.intentarCerrarFilaBascula(data, window._editFid); // Six Sigma Bloque B.2 (sin await): caso típico, se completa el 2do pesaje al editar un pendiente
       await moverResumen(original, data); // Fase 5 (await)
       await moverAgregadoAvanceAcopio(original, data); // Fase 14.2 (await)
@@ -1756,6 +1760,26 @@ window.marcarInicioCaptura = function() {
   if (!window.tiempoInicioCaptura) window.tiempoInicioCaptura = Date.now();
 };
 
+// Six Sigma Bloque B.1: agregado con increment() para el panel "6 Sigma"
+// (rol master). Mismo criterio que aplicarResumen()/aplicarAgregadoAvanceAcopio():
+// nunca se hace getDocs() sobre toda stats_analisis para pintar KPIs en
+// pantalla, solo se lee/escribe este documento único. setDoc+merge crea el
+// doc la primera vez sin necesitar el patrón try/catch de "not-found".
+// Recibe DELTAS NUMÉRICOS PLANOS (no increment() ya armado): increment()
+// es un import de este módulo y no existe en el <script> normal de más
+// abajo, así que envolverlo aquí adentro es lo que permite llamar esta
+// función también desde ahí (p.ej. intentarCerrarFilaBascula).
+async function incrementarStatsResumen(deltas) {
+  try {
+    const campos = {};
+    for (const clave in deltas) campos[clave] = increment(deltas[clave]);
+    await setDoc(doc(db_f, COL_RESUMEN, 'stats_analisis'), campos, { merge: true });
+  } catch (e) {
+    console.warn('Six Sigma Bloque B.1: no se pudo actualizar resumenes/stats_analisis:', e);
+  }
+}
+window.incrementarStatsResumen = incrementarStatsResumen;
+
 // Escribe en paralelo a stats_analisis, sin bloquear ni poder tronar el
 // guardado del ticket real (todo va en su propio try/catch). `boleta` se
 // incluye además de id_ticket como campo extra de conveniencia, para poder
@@ -1764,14 +1788,21 @@ window.registrarStatsCaptura = async function(idTicket, boleta) {
   try {
     const inicio = window.tiempoInicioCaptura;
     const fin = Date.now();
+    const uid = auth.currentUser ? auth.currentUser.uid : 'desconocido';
+    const duracion = inicio ? Math.floor((fin - inicio) / 1000) : null;
     await addDoc(collection(db_f, 'stats_analisis'), {
       id_ticket: idTicket || null,
       boleta: boleta || null,
-      capturista_id: auth.currentUser ? auth.currentUser.uid : '',
+      capturista_id: uid,
       captura_inicio_ts: inicio || null,
       captura_fin_ts: fin,
-      duracion_captura_seg: inicio ? Math.floor((fin - inicio) / 1000) : null,
+      duracion_captura_seg: duracion,
       ediciones_contador: 0
+    });
+    await incrementarStatsResumen({
+      total_capturas: 1,
+      suma_duracion_seg: duracion || 0,
+      [`por_capturista.${uid}`]: 1
     });
   } catch (e) {
     console.warn('Six Sigma: no se pudo registrar stats_analisis:', e);
@@ -2064,6 +2095,28 @@ window.dbStatsAnalisisBuscarPorTicket = async function (ticketId) {
 window.dbStatsAnalisisActualizar = async function (docId, campos) {
   await updateDoc(doc(db_f, 'stats_analisis', docId), campos);
 };
+
+// Six Sigma Bloque B.1: lectura ÚNICA y acotada de 'usuarios' (colección
+// chica, solo para traducir uid -> nombre en la tabla "tickets por
+// capturista"; no es un listener y no se repite en cada render).
+window.dbUsuariosListar = async function () {
+  const snap = await getDocs(collection(db_f, COL_USERS));
+  const mapa = {};
+  snap.forEach(d => { mapa[d.id] = (d.data().nombre || d.id); });
+  return mapa;
+};
+
+// Six Sigma Bloque B.1: ÚNICA consulta permitida sobre toda la colección
+// stats_analisis, y solo acotada por rango de fecha (captura_fin_ts, que
+// siempre existe) — se dispara nada más con el botón de descarga, nunca
+// como listener ni para pintar los KPIs en pantalla (ver SIXSIGMA.md
+// sección 2, lección de BOT.MD sección 14).
+window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
+  const snap = await getDocs(query(collection(db_f, 'stats_analisis'),
+    where('captura_fin_ts', '>=', desdeTs),
+    where('captura_fin_ts', '<=', hastaTs)));
+  return snap.docs.map(d => d.data());
+};
 </script>
 </head>
 <body>
@@ -2304,6 +2357,10 @@ window.dbStatsAnalisisActualizar = async function (docId, campos) {
     <button class="nav-item" id="nd-excel" style="display:none" onclick="showTab('excel'); initExcelTab();">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Excel
+    </button>
+    <button class="nav-item" id="nd-sixsigma" style="display:none" onclick="showTab('sixsigma'); initSixSigmaTab();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 14l4-6 4 3 5-8"/></svg>
+      6 Sigma
     </button>
 
     <div class="nav-group-title">Administración</div>
@@ -3295,6 +3352,77 @@ window.dbStatsAnalisisActualizar = async function (docId, campos) {
     Descargar excel
   </button>
 
+</div>
+
+<!-- Six Sigma Bloque B.1: panel restringido a esMaster (ver visibilidadPorTab
+     y SIXSIGMA.md sección "Bloque B.1"). Los indicadores en pantalla salen
+     SIEMPRE de resumenes/stats_analisis (agregado con increment()), nunca de
+     una consulta a toda la colección stats_analisis — esa consulta completa
+     solo ocurre en la descarga puntual a Excel, acotada por rango de fecha. -->
+<div class="tab-content" id="tab-sixsigma">
+  <div class="chart-card" style="margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        <h3 style="margin:0;">6 Sigma — Indicadores</h3>
+        <p id="sixsigma-estado" style="font-size:12px;color:var(--text-muted);margin-top:4px;">⏳ Cargando…</p>
+      </div>
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="initSixSigmaTab()">🔄 Actualizar</button>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="ss-kpi-duracion">—</div>
+      <div class="lbl">Tiempo promedio de captura</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="ss-kpi-fpy">—</div>
+      <div class="lbl">First Pass Yield (aprox.)</div>
+    </div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="val" id="ss-kpi-total">—</div>
+      <div class="lbl">Total de capturas</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="ss-kpi-editadas">—</div>
+      <div class="lbl">Eventos de edición</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Tickets por capturista</h3>
+    <div id="ss-tabla-capturistas" style="font-size:13px;">Cargando…</div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Ciclo de báscula (Bloque B.2)</h3>
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="val" id="ss-kpi-espera-fila">—</div>
+        <div class="lbl">Espera prom. en fila</div>
+      </div>
+      <div class="kpi-card">
+        <div class="val" id="ss-kpi-tiempo-frente">—</div>
+        <div class="lbl">Tiempo prom. en frente</div>
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:center;" id="ss-ciclos-cerrados"></p>
+  </div>
+
+  <div class="chart-card">
+    <h3>Descarga para Minitab</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Consulta puntual acotada por rango de fecha (no es un listener, no lee toda la colección).</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <input type="date" id="ss-fecha-desde" style="flex:1;min-width:130px;">
+      <input type="date" id="ss-fecha-hasta" style="flex:1;min-width:130px;">
+    </div>
+    <button id="btn-descargar-sixsigma" onclick="descargarExcelSixSigma()" style="width:100%;background-color:#107c41;color:white;border-radius:var(--radius);border:0.5px solid #107c41;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Descargar Excel (stats_analisis)
+    </button>
+  </div>
 </div>
 
 <div class="tab-content" id="tab-admin">
@@ -5910,7 +6038,7 @@ window.registrarEntradaFila = async function() {
       id_ticket: null,
       boleta: null,
       cerrado: false,
-      creadoPor: auth.currentUser ? auth.currentUser.uid : ''
+      creadoPor: window._currentUserUid || ''
     });
     document.getElementById('fb-placas').value = '';
     document.getElementById('fb-economico').value = '';
@@ -5987,8 +6115,124 @@ window.intentarCerrarFilaBascula = async function(data, ticketId) {
       });
     }
     await window.dbFilaBasculaActualizar(conT3.id, { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
+
+    // Six Sigma Bloque B.1: acumular tiempos de báscula en el agregado, mismo
+    // patrón de increment() que el resto — nada de leer la colección completa.
+    if (fila.t1_fila_ts && t2) {
+      const camposBascula = {
+        ciclos_bascula_cerrados: 1,
+        suma_espera_fila_seg: Math.max(0, Math.floor((t2 - fila.t1_fila_ts) / 1000))
+      };
+      if (fila.t3_salida_ts && t4) {
+        camposBascula.suma_tiempo_frente_seg = Math.max(0, Math.floor((t4 - fila.t3_salida_ts) / 1000));
+      }
+      window.incrementarStatsResumen(camposBascula);
+    }
   } catch (e) {
     console.warn('Six Sigma Bloque B.2: no se pudo cerrar fila_bascula:', e);
+  }
+};
+
+function formatearDuracionSeg(seg) {
+  if (seg == null || isNaN(seg)) return '—';
+  const m = Math.floor(seg / 60);
+  const s = Math.round(seg % 60);
+  return m > 0 ? `${m} min ${s}s` : `${s}s`;
+}
+
+// Six Sigma Bloque B.1: pinta los KPIs desde resumenes/stats_analisis
+// (UNA sola lectura de un documento, nunca un getDocs() sobre toda la
+// colección stats_analisis — ver el comentario en dbStatsAnalisisPorRango).
+window.initSixSigmaTab = async function() {
+  const estadoEl = document.getElementById('sixsigma-estado');
+  if (estadoEl) estadoEl.textContent = '⏳ Cargando…';
+  try {
+    const snap = await window.leerDocResumen('stats_analisis');
+    const r = snap.exists() ? snap.data() : {};
+    const total          = r.total_capturas || 0;
+    const sumaDuracion    = r.suma_duracion_seg || 0;
+    const editadas        = r.capturas_editadas_eventos || 0;
+    const ciclos           = r.ciclos_bascula_cerrados || 0;
+    const sumaEspera       = r.suma_espera_fila_seg || 0;
+    const sumaFrente       = r.suma_tiempo_frente_seg || 0;
+    const porCapturista    = r.por_capturista || {};
+
+    document.getElementById('ss-kpi-total').textContent = total.toLocaleString('es-MX');
+    document.getElementById('ss-kpi-duracion').textContent = total ? formatearDuracionSeg(sumaDuracion / total) : '—';
+    document.getElementById('ss-kpi-editadas').textContent = editadas.toLocaleString('es-MX');
+    // First Pass Yield aproximado: 1 - (eventos de edición / total capturado).
+    // Es una aproximación (cuenta EVENTOS de edición, no tickets únicos
+    // editados), documentado así en SIXSIGMA.md — evita tener que leer la
+    // colección completa para saber si un ticket en particular ya se editó.
+    const fpy = total ? Math.max(0, 1 - (editadas / total)) : null;
+    document.getElementById('ss-kpi-fpy').textContent = fpy !== null ? (fpy * 100).toFixed(1) + '%' : '—';
+
+    document.getElementById('ss-kpi-espera-fila').textContent = ciclos ? formatearDuracionSeg(sumaEspera / ciclos) : '—';
+    document.getElementById('ss-kpi-tiempo-frente').textContent = ciclos ? formatearDuracionSeg(sumaFrente / ciclos) : '—';
+    document.getElementById('ss-ciclos-cerrados').textContent = ciclos
+      ? `${ciclos} ciclo(s) de báscula cerrados`
+      : 'Todavía no se cierra ningún ciclo completo de báscula (ver Fila Báscula).';
+
+    const tablaEl = document.getElementById('ss-tabla-capturistas');
+    const uids = Object.keys(porCapturista);
+    if (!uids.length) {
+      tablaEl.innerHTML = '<p style="color:var(--text-muted);">Sin datos todavía.</p>';
+    } else {
+      const nombres = await window.dbUsuariosListar();
+      const filas = uids
+        .map(uid => ({ nombre: nombres[uid] || uid, n: porCapturista[uid] || 0 }))
+        .sort((a, b) => b.n - a.n);
+      tablaEl.innerHTML = filas.map(f =>
+        `<div style="display:flex;justify-content:space-between;border-top:0.5px solid var(--border);padding:6px 0;">
+          <span>${f.nombre}</span><strong>${f.n}</strong>
+        </div>`
+      ).join('');
+    }
+
+    if (estadoEl) estadoEl.textContent = '✅ Actualizado ' + new Date().toLocaleTimeString('es-MX');
+  } catch (e) {
+    if (estadoEl) estadoEl.textContent = '❌ Error al cargar: ' + e.message;
+    console.warn('Six Sigma Bloque B.1: error al cargar panel:', e);
+  }
+};
+
+// Six Sigma Bloque B.1: descarga puntual a Excel, acotada por rango de
+// fecha (obligatorio), pensada para pegar en Minitab (columnas numéricas,
+// timestamps en milisegundos, sin texto que requiera limpieza).
+window.descargarExcelSixSigma = async function() {
+  const desdeStr = document.getElementById('ss-fecha-desde').value;
+  const hastaStr = document.getElementById('ss-fecha-hasta').value;
+  if (!desdeStr || !hastaStr) { alert('Selecciona el rango de fechas (desde y hasta).'); return; }
+  const desdeTs = new Date(desdeStr + 'T00:00:00').getTime();
+  const hastaTs = new Date(hastaStr + 'T23:59:59').getTime();
+  if (hastaTs < desdeTs) { alert('La fecha "hasta" no puede ser antes que "desde".'); return; }
+
+  const btn = document.getElementById('btn-descargar-sixsigma');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
+  try {
+    const docs = await window.dbStatsAnalisisPorRango(desdeTs, hastaTs);
+    if (!docs.length) { alert('No hay capturas en ese rango de fechas.'); return; }
+    const filas = docs.map(d => ({
+      id_ticket: d.id_ticket || '',
+      boleta: d.boleta || '',
+      capturista_id: d.capturista_id || '',
+      captura_inicio_ts: d.captura_inicio_ts || '',
+      captura_fin_ts: d.captura_fin_ts || '',
+      duracion_captura_seg: d.duracion_captura_seg ?? '',
+      ediciones_contador: d.ediciones_contador ?? 0,
+      t1_fila_ts: d.t1_fila_ts || '',
+      t2_bruto_ts: d.t2_bruto_ts || '',
+      t3_salida_ts: d.t3_salida_ts || '',
+      t4_destare_ts: d.t4_destare_ts || ''
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(filas);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'stats_analisis');
+    XLSX.writeFile(workbook, `SixSigma_${desdeStr}_a_${hastaStr}.xlsx`);
+  } catch (e) {
+    alert('Error al generar el Excel: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Descargar Excel (stats_analisis)'; }
   }
 };
 

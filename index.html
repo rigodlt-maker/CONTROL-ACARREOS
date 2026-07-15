@@ -2029,6 +2029,41 @@ window.leerResumenAvanceAcopio = async function () {
 window.leerDocResumen = async function (docId) {
   return await getDoc(doc(db_f, COL_RESUMEN, docId));
 };
+
+// Puente Six Sigma Bloque B.2 (Fila Báscula): el bloque de "Fila Báscula"
+// (registrarEntradaFila, initFilaBasculaTab, intentarCerrarFilaBascula, etc.)
+// vive en el <script> normal de más abajo y usa addDoc/collection/query/
+// where/orderBy/limit/onSnapshot/getDocs/updateDoc/doc, que son imports de
+// este módulo y no existen fuera de él. Mismo criterio que los puentes de
+// arriba: se exponen funciones ya resueltas en vez de exponer los imports
+// sueltos.
+window.dbFilaBasculaAgregar = async function (payload) {
+  const ref = await addDoc(collection(db_f, 'fila_bascula'), payload);
+  return ref.id;
+};
+
+window.dbFilaBasculaActualizar = async function (filaId, campos) {
+  await updateDoc(doc(db_f, 'fila_bascula', filaId), campos);
+};
+
+window.dbFilaBasculaSuscribir = function (onData, onError) {
+  const q = query(collection(db_f, 'fila_bascula'), where('cerrado', '==', false), orderBy('t1_fila_ts', 'desc'), limit(50));
+  return onSnapshot(q, onData, onError);
+};
+
+window.dbFilaBasculaBuscarAbiertas = async function (campo, valor) {
+  const snap = await getDocs(query(collection(db_f, 'fila_bascula'), where('cerrado', '==', false), where(campo, '==', valor), limit(5)));
+  return snap.docs.map(d => ({ id: d.id, data: d.data() }));
+};
+
+window.dbStatsAnalisisBuscarPorTicket = async function (ticketId) {
+  const snap = await getDocs(query(collection(db_f, 'stats_analisis'), where('id_ticket', '==', ticketId), limit(1)));
+  return snap.docs.map(d => ({ id: d.id, data: d.data() }));
+};
+
+window.dbStatsAnalisisActualizar = async function (docId, campos) {
+  await updateDoc(doc(db_f, 'stats_analisis', docId), campos);
+};
 </script>
 </head>
 <body>
@@ -5868,7 +5903,7 @@ window.registrarEntradaFila = async function() {
   const economico = document.getElementById('fb-economico').value.trim().toUpperCase();
   if (!placas && !economico) { alert('Captura placas o económico para registrar la entrada.'); return; }
   try {
-    await addDoc(collection(db_f, COL_FILA_BASCULA), {
+    await window.dbFilaBasculaAgregar({
       placas, economico,
       t1_fila_ts: Date.now(),
       t3_salida_ts: null,
@@ -5887,7 +5922,7 @@ window.registrarEntradaFila = async function() {
 
 window.registrarSalidaFrente = async function(filaId) {
   try {
-    await updateDoc(doc(db_f, COL_FILA_BASCULA, filaId), { t3_salida_ts: Date.now() });
+    await window.dbFilaBasculaActualizar(filaId, { t3_salida_ts: Date.now() });
     window.showSyncToast('✅', 'Salida hacia frente registrada', 'ok');
   } catch (e) {
     alert('Error al registrar salida: ' + e.message);
@@ -5897,8 +5932,7 @@ window.registrarSalidaFrente = async function(filaId) {
 window.initFilaBasculaTab = function() {
   if (unsubscribeFilaBascula) { unsubscribeFilaBascula(); unsubscribeFilaBascula = null; }
   const lista = document.getElementById('fb-lista');
-  const q = query(collection(db_f, COL_FILA_BASCULA), where('cerrado', '==', false), orderBy('t1_fila_ts', 'desc'), limit(50));
-  unsubscribeFilaBascula = onSnapshot(q, (snap) => {
+  unsubscribeFilaBascula = window.dbFilaBasculaSuscribir((snap) => {
     if (snap.empty) { lista.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No hay vehículos en báscula ahora mismo.</p>'; return; }
     let html = '';
     snap.forEach(d => {
@@ -5931,30 +5965,28 @@ window.intentarCerrarFilaBascula = async function(data, ticketId) {
     if (!data.placas && !data.economico) return;
     let candidatos = [];
     if (data.placas) {
-      const snap = await getDocs(query(collection(db_f, COL_FILA_BASCULA), where('cerrado', '==', false), where('placas', '==', data.placas), limit(5)));
-      candidatos = candidatos.concat(snap.docs);
+      candidatos = candidatos.concat(await window.dbFilaBasculaBuscarAbiertas('placas', data.placas));
     }
     if (data.economico) {
-      const snap = await getDocs(query(collection(db_f, COL_FILA_BASCULA), where('cerrado', '==', false), where('economico', '==', data.economico), limit(5)));
-      candidatos = candidatos.concat(snap.docs);
+      candidatos = candidatos.concat(await window.dbFilaBasculaBuscarAbiertas('economico', data.economico));
     }
-    const conT3 = candidatos.find(d => d.data().t3_salida_ts);
+    const conT3 = candidatos.find(c => c.data.t3_salida_ts);
     if (!conT3) return; // no hay vehículo con los 4 tiempos disponibles todavía
 
-    const fila = conT3.data();
+    const fila = conT3.data;
     const t2 = combinarFechaHora(data.fecha1, data.hora1);
     const t4 = combinarFechaHora(data.fecha2, data.hora2);
 
-    const statsSnap = await getDocs(query(collection(db_f, 'stats_analisis'), where('id_ticket', '==', ticketId), limit(1)));
-    if (!statsSnap.empty) {
-      await updateDoc(doc(db_f, 'stats_analisis', statsSnap.docs[0].id), {
+    const statsDocs = await window.dbStatsAnalisisBuscarPorTicket(ticketId);
+    if (statsDocs.length) {
+      await window.dbStatsAnalisisActualizar(statsDocs[0].id, {
         t1_fila_ts: fila.t1_fila_ts || null,
         t2_bruto_ts: t2,
         t3_salida_ts: fila.t3_salida_ts || null,
         t4_destare_ts: t4
       });
     }
-    await updateDoc(doc(db_f, COL_FILA_BASCULA, conT3.id), { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
+    await window.dbFilaBasculaActualizar(conT3.id, { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
   } catch (e) {
     console.warn('Six Sigma Bloque B.2: no se pudo cerrar fila_bascula:', e);
   }

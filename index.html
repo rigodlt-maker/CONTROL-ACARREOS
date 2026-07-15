@@ -460,6 +460,10 @@ let isInitialized  = false;
 let currentUser    = null;
 let currentUserDoc = null;
 let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10);
+// Six Sigma Bloque A (ver SIXSIGMA.md §5): arranca en el primer focus sobre
+// f-fecha1 y se limpia en clearForm() para que cada ticket tenga su propio
+// tiempo de captura, sin arrastrar el del ticket anterior.
+window.tiempoInicioCaptura = null;
 let dashboardToken = 0;
 
 function findRecord(fid) {
@@ -1378,6 +1382,11 @@ window.saveRecord = async function() {
     if (!window._editFid) {
       if (!navigator.onLine) {
         await window.saveToOutbox(payload, 'CREATE');
+        // Six Sigma Bloque A: el reloj ya corrió en el dispositivo, así que
+        // la duración se calcula y se guarda YA (no hasta que sincronice),
+        // para no incluir las horas sin señal. id_ticket queda null porque
+        // el ID real de Firestore todavía no existe (se asigna al sincronizar).
+        window.registrarStatsCaptura(null, data.boleta);
         window.showSyncToast('⏳', 'Sin señal. Guardado en cola offline', 'pending');
         clearForm(); showTab(esPendiente ? 'pendientes' : 'db');
         return;
@@ -1392,7 +1401,8 @@ window.saveRecord = async function() {
       
       payload.ts = serverTimestamp();
       payload.ediciones_contador = 0; // Six Sigma Bloque B.3: First Pass Yield
-      await addDoc(collection(db_f, COL), payload);
+      const nuevoRef = await addDoc(collection(db_f, COL), payload);
+      window.registrarStatsCaptura(nuevoRef.id, data.boleta); // Six Sigma Bloque A (sin await: no bloquea el guardado real)
       await aplicarResumen(data, +1); // Fase 5 (await)
       await aplicarAgregadoAvanceAcopio(data, +1); // Fase 14.2 (await)
       window.showSyncToast('✅', esPendiente ? 'Guardado como pendiente' : 'Registro guardado en la nube', 'ok');
@@ -1658,6 +1668,39 @@ async function confirmarLecturaCompleta(desde, hasta) {
   return confirm(mensaje);
 }
 window.confirmarLecturaCompleta = confirmarLecturaCompleta;
+
+// ── Six Sigma Bloque A: reloj de captura no invasivo (ver SIXSIGMA.md §5) ──
+// Se dispara con el primer focus en f-fecha1 (decidido con Jesús el
+// 13/07/2026). Solo marca la primera vez — si el capturista vuelve a tocar
+// el campo no se reinicia, para que el tiempo sea desde que empezó de
+// verdad a llenar el ticket.
+window.marcarInicioCaptura = function() {
+  if (!window.tiempoInicioCaptura) window.tiempoInicioCaptura = Date.now();
+};
+
+// Escribe en paralelo a stats_analisis, sin bloquear ni poder tronar el
+// guardado del ticket real (todo va en su propio try/catch). `boleta` se
+// incluye además de id_ticket como campo extra de conveniencia, para poder
+// cruzar el registro aunque id_ticket no se conozca todavía (caso offline).
+window.registrarStatsCaptura = async function(idTicket, boleta) {
+  try {
+    const inicio = window.tiempoInicioCaptura;
+    const fin = Date.now();
+    await addDoc(collection(db_f, 'stats_analisis'), {
+      id_ticket: idTicket || null,
+      boleta: boleta || null,
+      capturista_id: auth.currentUser ? auth.currentUser.uid : '',
+      captura_inicio_ts: inicio || null,
+      captura_fin_ts: fin,
+      duracion_captura_seg: inicio ? Math.floor((fin - inicio) / 1000) : null,
+      ediciones_contador: 0
+    });
+  } catch (e) {
+    console.warn('Six Sigma: no se pudo registrar stats_analisis:', e);
+  } finally {
+    window.tiempoInicioCaptura = null;
+  }
+};
 
 // ── Estado de "histórico completo" SEPARADO por pestaña ──
 // Cada pestaña (Gráficos, Resumen) maneja su propio estado de forma
@@ -2167,7 +2210,7 @@ window.leerDocResumen = async function (docId) {
     <div class="field-row two-col">
       <div>
         <label>Fecha 1er pesaje *</label>
-        <input type="date" id="f-fecha1" oninput="calcCiclo()"/>
+        <input type="date" id="f-fecha1" oninput="calcCiclo()" onfocus="marcarInicioCaptura()"/>
       </div>
       <div>
         <label>Hora 1er pesaje *</label>
@@ -3927,6 +3970,7 @@ function getFormData() {
 }
 
 function clearForm() {
+  window.tiempoInicioCaptura = null; // Six Sigma Bloque A: cada ticket arranca su propio reloj
   ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-placas','f-bruto','f-tara'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });

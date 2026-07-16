@@ -1431,6 +1431,9 @@ window.saveRecord = async function() {
   if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
   if (!data.destino)      { alert('Selecciona el destino.'); return; }
   if (!data.tipo_camion)  { alert('Selecciona el tipo de camión.'); return; }
+  if (data.tipo_camion === 'GONDOLA' && !document.getElementById('f-placas-trasera').value.trim()) {
+    alert('La góndola trae 2 placas — ingresa también la placa trasera.'); return;
+  }
   { // FASE 10: vertido y folio de barcaza son obligatorios solo cuando el destino es colocación (Cuerpo/Muro/Morro).
     // Área de Prefabricados NO es colocación en el rompeolas (es un suministro externo, ver BOT.MD/SIXSIGMA
     // pendientes de julio-2026), así que tampoco pide vertido — mismo trato que un Acopio.
@@ -1542,6 +1545,12 @@ window.editRecord = function() {
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
   document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
+  toggleSegundaPlaca();
+  if (r.tipo_camion === 'GONDOLA' && r.placas && r.placas.includes(' / ')) {
+    const [frontal, trasera] = r.placas.split(' / ');
+    document.getElementById('f-placas').value = frontal || '';
+    document.getElementById('f-placas-trasera').value = trasera || '';
+  }
   toggleVertido(); // FASE 10: muestra/oculta el campo según destino, y resetea vertido
   document.getElementById('f-vertido').value = r.vertido || '';
   toggleFolioBarcaza();
@@ -2519,12 +2528,16 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </div>
     <div class="field-row">
       <label>Tipo de camión *</label>
-      <select id="f-tipo-camion">
+      <select id="f-tipo-camion" onchange="toggleSegundaPlaca()">
         <option value="">— Seleccionar —</option>
         <option value="VOLTEO">Volteo</option>
         <option value="GONDOLA">Góndola</option>
         <option value="ARTICULADO">Articulado</option>
       </select>
+    </div>
+    <div class="field-row" id="wrap-placas-trasera" style="display:none;">
+      <label>Placas trasera * <span style="font-weight:400;color:var(--text-muted);">(góndola: trae 2 placas)</span></label>
+      <input type="text" id="f-placas-trasera" placeholder="Ej: 9ZDF22B"/>
     </div>
   </div>
 
@@ -3400,14 +3413,21 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 
   <div class="chart-card">
     <h3>Ciclo de báscula (Bloque B.2)</h3>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:-4px;margin-bottom:10px;">El camión pasa 2 veces por báscula por viaje: pesaje bruto (cargado) y, ya de regreso, pesaje tara/destare (vacío).</p>
     <div class="kpi-row">
       <div class="kpi-card">
-        <div class="val" id="ss-kpi-espera-fila">—</div>
-        <div class="lbl">Espera prom. en fila</div>
+        <div class="val" id="ss-kpi-espera-fila-bruto">—</div>
+        <div class="lbl">Espera en fila (bruto)</div>
       </div>
       <div class="kpi-card">
         <div class="val" id="ss-kpi-tiempo-frente">—</div>
-        <div class="lbl">Tiempo prom. en frente</div>
+        <div class="lbl">Tiempo en frente (viaje)</div>
+      </div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="val" id="ss-kpi-espera-fila-tara">—</div>
+        <div class="lbl">Espera en fila (tara)</div>
       </div>
     </div>
     <p style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:center;" id="ss-ciclos-cerrados"></p>
@@ -3750,6 +3770,18 @@ function toggleFolioBarcaza() {
   if (!esMarino) document.getElementById('f-folio-barcaza').value = '';
 }
 window.toggleFolioBarcaza = toggleFolioBarcaza;
+
+// Góndola trae 2 placas (frontal y trasera). Se capturan en 2 campos
+// separados para que cada uno se pueda editar bien, pero se guardan
+// combinadas en el MISMO campo 'placas' de siempre, separadas por " / "
+// (ej. "5XDC16A / 9ZDF22B") — así el Excel y el resto de la app no
+// necesitan ningún campo nuevo, la columna "Placas" ya las trae juntas.
+function toggleSegundaPlaca() {
+  const esGondola = document.getElementById('f-tipo-camion').value === 'GONDOLA';
+  document.getElementById('wrap-placas-trasera').style.display = esGondola ? 'block' : 'none';
+  if (!esGondola) document.getElementById('f-placas-trasera').value = '';
+}
+window.toggleSegundaPlaca = toggleSegundaPlaca;
 
 // FASE 10 — Muestra el campo "Vertido" (Marino/Terrestre) solo cuando el
 // destino es una colocación (Cuerpo/Muro/Morro), que es el único caso donde
@@ -4289,7 +4321,11 @@ function getFormData() {
     boleta:   document.getElementById('f-boleta').value.trim(),
     folio:    document.getElementById('f-folio').value.trim(),
     economico:document.getElementById('f-economico').value.trim().toUpperCase(),
-    placas:   document.getElementById('f-placas').value.trim().toUpperCase(),
+    placas:   (function() {
+      const frontal = document.getElementById('f-placas').value.trim().toUpperCase();
+      const trasera = document.getElementById('f-placas-trasera').value.trim().toUpperCase();
+      return (tipoCamion === 'GONDOLA' && trasera) ? (frontal + ' / ' + trasera) : frontal;
+    })(),
     material: document.getElementById('f-material').value,
     rango:    document.getElementById('f-rango-pendiente').checked
                 ? 'PENDIENTE'
@@ -4313,7 +4349,7 @@ function getFormData() {
 
 function clearForm() {
   window.tiempoInicioCaptura = null; // Six Sigma Bloque A: cada ticket arranca su propio reloj
-  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-placas','f-bruto','f-tara'].forEach(id => {
+  ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-placas','f-placas-trasera','f-bruto','f-tara'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('f-material').selectedIndex = 0;
@@ -4321,6 +4357,7 @@ function clearForm() {
   updateOrigenOptions();
   document.getElementById('f-destino').selectedIndex  = 0;
   document.getElementById('f-tipo-camion').selectedIndex = 0;
+  toggleSegundaPlaca();
   toggleFolioBarcaza();
   checkTransferenciaAcopios();
   document.getElementById('f-ciclo').value = '';
@@ -6126,6 +6163,14 @@ window.initFilaBasculaTab = function() {
 // tiene t3 todavía, no se cierra: puede que el operador no le haya dado
 // "Salida hacia frente" todavía). Si lo encuentra, copia los 4 tiempos al
 // documento de stats_analisis de este ticket y cierra el de fila_bascula.
+// Six Sigma Bloque B.2 (rediseño 16-jul-2026): el camión pasa DOS veces por
+// la fila de báscula por cada viaje completo — una vez cargado (se pesa el
+// BRUTO, sale hacia el frente a descargar) y otra, totalmente aparte, ya de
+// regreso y vacío (se forma en la fila de nuevo, se pesa el TARA/destare).
+// Son 2 documentos DISTINTOS en fila_bascula para el mismo camión, no uno
+// solo — se distinguen por antigüedad: el más viejo abierto con salida ya
+// registrada es el ciclo bruto; el siguiente que se abre después es el
+// ciclo tara. Se cierran los DOS al completar el ticket.
 window.intentarCerrarFilaBascula = async function(data, ticketId) {
   try {
     if (!data.placas && !data.economico) return;
@@ -6136,36 +6181,59 @@ window.intentarCerrarFilaBascula = async function(data, ticketId) {
     if (data.economico) {
       candidatos = candidatos.concat(await window.dbFilaBasculaBuscarAbiertas('economico', data.economico));
     }
-    const conT3 = candidatos.find(c => c.data.t3_salida_ts);
-    if (!conT3) return; // no hay vehículo con los 4 tiempos disponibles todavía
+    // Puede repetirse el mismo doc si coincide por placas Y por económico.
+    const vistos = new Set();
+    candidatos = candidatos.filter(c => (vistos.has(c.id) ? false : (vistos.add(c.id), true)));
+    // Ignorar registros de más de 12h: evita que un dangling de una prueba
+    // vieja o de otro día se cuele como "ciclo bruto" de un viaje de hoy.
+    const LIMITE_MS = 12 * 60 * 60 * 1000;
+    candidatos = candidatos.filter(c => (Date.now() - (c.data.t1_fila_ts || 0)) < LIMITE_MS);
+    if (!candidatos.length) return; // el camión no pasó por Fila Báscula, nada que cerrar
 
-    const fila = conT3.data;
-    const t2 = combinarFechaHora(data.fecha1, data.hora1);
-    const t4 = combinarFechaHora(data.fecha2, data.hora2);
+    candidatos.sort((a, b) => (a.data.t1_fila_ts || 0) - (b.data.t1_fila_ts || 0));
+    const cicloBruto = candidatos.find(c => c.data.t3_salida_ts); // el más viejo que ya salió hacia el frente
+    if (!cicloBruto) return; // todavía no completa ni el primer paso por báscula
+    const cicloTara = candidatos.find(c => c.id !== cicloBruto.id && (c.data.t1_fila_ts || 0) > (cicloBruto.data.t1_fila_ts || 0));
+
+    const t1  = cicloBruto.data.t1_fila_ts || null;
+    const t3  = cicloBruto.data.t3_salida_ts || null;
+    const t1b = cicloTara ? (cicloTara.data.t1_fila_ts || null) : null;
+    const t2  = combinarFechaHora(data.fecha1, data.hora1);
+    const t4  = combinarFechaHora(data.fecha2, data.hora2);
 
     const statsDocs = await window.dbStatsAnalisisBuscarPorTicket(ticketId);
     if (statsDocs.length) {
       await window.dbStatsAnalisisActualizar(statsDocs[0].id, {
-        t1_fila_ts: fila.t1_fila_ts || null,
+        t1_fila_ts: t1,
         t2_bruto_ts: t2,
-        t3_salida_ts: fila.t3_salida_ts || null,
+        t3_salida_ts: t3,
+        t1b_fila_ts: t1b,
         t4_destare_ts: t4
       });
     }
-    await window.dbFilaBasculaActualizar(conT3.id, { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
-
-    // Six Sigma Bloque B.1: acumular tiempos de báscula en el agregado, mismo
-    // patrón de increment() que el resto — nada de leer la colección completa.
-    if (fila.t1_fila_ts && t2) {
-      const camposBascula = {
-        ciclos_bascula_cerrados: 1,
-        suma_espera_fila_seg: Math.max(0, Math.floor((t2 - fila.t1_fila_ts) / 1000))
-      };
-      if (fila.t3_salida_ts && t4) {
-        camposBascula.suma_tiempo_frente_seg = Math.max(0, Math.floor((t4 - fila.t3_salida_ts) / 1000));
-      }
-      window.incrementarStatsResumen(camposBascula);
+    await window.dbFilaBasculaActualizar(cicloBruto.id, { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
+    if (cicloTara) {
+      await window.dbFilaBasculaActualizar(cicloTara.id, { cerrado: true, id_ticket: ticketId, boleta: data.boleta || null });
     }
+
+    // Six Sigma Bloque B.1: acumular tiempos de báscula en el agregado, con
+    // su propio contador por métrica (no todas están disponibles siempre,
+    // p.ej. si todavía no se registra la 2da entrada a fila) para que cada
+    // promedio se calcule sobre el denominador correcto.
+    const campos = { ciclos_bascula_cerrados: 1 };
+    if (t1 && t2) {
+      campos.suma_espera_fila_bruto_seg = Math.max(0, Math.floor((t2 - t1) / 1000));
+      campos.conteo_espera_fila_bruto = 1;
+    }
+    if (t3 && t1b) {
+      campos.suma_tiempo_frente_seg = Math.max(0, Math.floor((t1b - t3) / 1000));
+      campos.conteo_tiempo_frente = 1;
+    }
+    if (t1b && t4) {
+      campos.suma_espera_fila_tara_seg = Math.max(0, Math.floor((t4 - t1b) / 1000));
+      campos.conteo_espera_fila_tara = 1;
+    }
+    window.incrementarStatsResumen(campos);
   } catch (e) {
     console.warn('Six Sigma Bloque B.2: no se pudo cerrar fila_bascula:', e);
   }
@@ -6191,8 +6259,12 @@ window.initSixSigmaTab = async function() {
     const sumaDuracion    = r.suma_duracion_seg || 0;
     const editadas        = r.capturas_editadas_eventos || 0;
     const ciclos           = r.ciclos_bascula_cerrados || 0;
-    const sumaEspera       = r.suma_espera_fila_seg || 0;
-    const sumaFrente       = r.suma_tiempo_frente_seg || 0;
+    const sumaEsperaBruto  = r.suma_espera_fila_bruto_seg || 0;
+    const conteoEsperaBruto = r.conteo_espera_fila_bruto || 0;
+    const sumaFrente        = r.suma_tiempo_frente_seg || 0;
+    const conteoFrente       = r.conteo_tiempo_frente || 0;
+    const sumaEsperaTara     = r.suma_espera_fila_tara_seg || 0;
+    const conteoEsperaTara    = r.conteo_espera_fila_tara || 0;
     const porCapturista    = r.por_capturista || {};
 
     document.getElementById('ss-kpi-total').textContent = total.toLocaleString('es-MX');
@@ -6205,10 +6277,11 @@ window.initSixSigmaTab = async function() {
     const fpy = total ? Math.max(0, 1 - (editadas / total)) : null;
     document.getElementById('ss-kpi-fpy').textContent = fpy !== null ? (fpy * 100).toFixed(1) + '%' : '—';
 
-    document.getElementById('ss-kpi-espera-fila').textContent = ciclos ? formatearDuracionSeg(sumaEspera / ciclos) : '—';
-    document.getElementById('ss-kpi-tiempo-frente').textContent = ciclos ? formatearDuracionSeg(sumaFrente / ciclos) : '—';
+    document.getElementById('ss-kpi-espera-fila-bruto').textContent = conteoEsperaBruto ? formatearDuracionSeg(sumaEsperaBruto / conteoEsperaBruto) : '—';
+    document.getElementById('ss-kpi-tiempo-frente').textContent = conteoFrente ? formatearDuracionSeg(sumaFrente / conteoFrente) : '—';
+    document.getElementById('ss-kpi-espera-fila-tara').textContent = conteoEsperaTara ? formatearDuracionSeg(sumaEsperaTara / conteoEsperaTara) : '—';
     document.getElementById('ss-ciclos-cerrados').textContent = ciclos
-      ? `${ciclos} ciclo(s) de báscula cerrados`
+      ? `${ciclos} viaje(s) con datos de báscula registrados`
       : 'Todavía no se cierra ningún ciclo completo de báscula (ver Fila Báscula).';
 
     const tablaEl = document.getElementById('ss-tabla-capturistas');
@@ -6265,8 +6338,9 @@ window.descargarExcelSixSigma = async function() {
     // se usan para pegar en Minitab (duración, espera en fila, tiempo en
     // frente). NaN/vacío se deja como celda en blanco, no como texto "NaN".
     const filas = docs.map(d => {
-      const esperaFilaSeg = (d.t1_fila_ts && d.t2_bruto_ts) ? Math.max(0, Math.round((d.t2_bruto_ts - d.t1_fila_ts) / 1000)) : '';
-      const tiempoFrenteSeg = (d.t3_salida_ts && d.t4_destare_ts) ? Math.max(0, Math.round((d.t4_destare_ts - d.t3_salida_ts) / 1000)) : '';
+      const esperaBrutoSeg  = (d.t1_fila_ts && d.t2_bruto_ts) ? Math.max(0, Math.round((d.t2_bruto_ts - d.t1_fila_ts) / 1000)) : '';
+      const tiempoFrenteSeg = (d.t3_salida_ts && d.t1b_fila_ts) ? Math.max(0, Math.round((d.t1b_fila_ts - d.t3_salida_ts) / 1000)) : '';
+      const esperaTaraSeg   = (d.t1b_fila_ts && d.t4_destare_ts) ? Math.max(0, Math.round((d.t4_destare_ts - d.t1b_fila_ts) / 1000)) : '';
       return {
         'Boleta': d.boleta || '',
         'Capturista': nombres[d.capturista_id] || d.capturista_id || '',
@@ -6274,23 +6348,26 @@ window.descargarExcelSixSigma = async function() {
         'Fin de captura': window.formatearFechaHoraTs(d.captura_fin_ts),
         'Duración de captura': d.duracion_captura_seg != null ? formatearDuracionSeg(d.duracion_captura_seg) : '',
         'Veces editado': d.ediciones_contador ?? 0,
-        'Entrada a fila (báscula)': window.formatearFechaHoraTs(d.t1_fila_ts),
-        'Pesaje bruto (báscula)': window.formatearFechaHoraTs(d.t2_bruto_ts),
-        'Salida a frente (báscula)': window.formatearFechaHoraTs(d.t3_salida_ts),
-        'Pesaje tara/destare (báscula)': window.formatearFechaHoraTs(d.t4_destare_ts),
-        'Espera en fila (mm:ss)': esperaFilaSeg !== '' ? formatearDuracionSeg(esperaFilaSeg) : '',
-        'Tiempo en frente (mm:ss)': tiempoFrenteSeg !== '' ? formatearDuracionSeg(tiempoFrenteSeg) : '',
+        '1a entrada a fila (cargado)': window.formatearFechaHoraTs(d.t1_fila_ts),
+        'Pesaje bruto': window.formatearFechaHoraTs(d.t2_bruto_ts),
+        'Salida hacia el frente': window.formatearFechaHoraTs(d.t3_salida_ts),
+        '2a entrada a fila (vacío, de regreso)': window.formatearFechaHoraTs(d.t1b_fila_ts),
+        'Pesaje tara/destare': window.formatearFechaHoraTs(d.t4_destare_ts),
+        'Espera en fila - bruto (mm:ss)': esperaBrutoSeg !== '' ? formatearDuracionSeg(esperaBrutoSeg) : '',
+        'Tiempo en el viaje/frente (mm:ss)': tiempoFrenteSeg !== '' ? formatearDuracionSeg(tiempoFrenteSeg) : '',
+        'Espera en fila - tara (mm:ss)': esperaTaraSeg !== '' ? formatearDuracionSeg(esperaTaraSeg) : '',
         'Duración captura (seg)': d.duracion_captura_seg ?? '',
-        'Espera en fila (seg)': esperaFilaSeg,
-        'Tiempo en frente (seg)': tiempoFrenteSeg,
+        'Espera en fila bruto (seg)': esperaBrutoSeg,
+        'Tiempo en viaje/frente (seg)': tiempoFrenteSeg,
+        'Espera en fila tara (seg)': esperaTaraSeg,
         'ID interno (referencia)': d.id_ticket || ''
       };
     });
     const worksheet = XLSX.utils.json_to_sheet(filas);
     worksheet['!cols'] = [
       { wch: 10 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 10 },
-      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
-      { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 22 }
+      { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 20 }, { wch: 22 }, { wch: 20 },
+      { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 22 }
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'stats_analisis');

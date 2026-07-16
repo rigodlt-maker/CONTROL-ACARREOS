@@ -2388,7 +2388,8 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div>
         <label>Hora 1er pesaje *</label>
-        <input type="time" id="f-hora1" oninput="calcCiclo()"/>
+        <input type="time" id="f-hora1" oninput="calcCiclo(); pintarEcoHora('f-hora1','f-hora1-eco')"/>
+        <span id="f-hora1-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
     <div class="field-row" style="display:flex;align-items:center;gap:8px;background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
@@ -2402,7 +2403,8 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div>
         <label>Hora 2do pesaje *</label>
-        <input type="time" id="f-hora2" oninput="calcCiclo()"/>
+        <input type="time" id="f-hora2" oninput="calcCiclo(); pintarEcoHora('f-hora2','f-hora2-eco')"/>
+        <span id="f-hora2-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
     <div class="field-row" id="row-ciclo">
@@ -3433,7 +3435,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </h3>
     <div class="field-row">
       <label>Nombre completo</label>
-      <input type="text" id="nc-nombre" placeholder="Ej: Juan Pérez"/>
+      <input type="text" id="nc-nombre" placeholder="Ej: Juan Pérez" data-no-upper/>
     </div>
     <div class="field-row">
       <label>Correo electrónico</label>
@@ -3551,6 +3553,42 @@ function cerrarMenuLateral() {
 }
 window.abrirMenuLateral = abrirMenuLateral;
 window.cerrarMenuLateral = cerrarMenuLateral;
+
+// ── Auto-mayúsculas global: convierte a MAYÚSCULAS mientras se escribe en
+// CUALQUIER <input type="text"/"search"> o <textarea> de la app (boleta,
+// folio, placas, económico, filtros de búsqueda, etc.), sin importar si el
+// campo se creó al cargar la página o después (delegado en document, no
+// requiere registrar el listener por campo). Excepciones explícitas con
+// data-no-upper (p.ej. "Nombre completo" al crear cuenta, que sí debe
+// respetar mayúsculas/minúsculas normales de un nombre de persona). Ya no
+// hace falta el .toUpperCase() manual que traían placas/económico — se
+// deja donde ya estaba por si acaso, pero es redundante ahora.
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  const esTexto = el.tagName === 'TEXTAREA' ||
+    (el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'search'));
+  if (!esTexto || el.hasAttribute('data-no-upper') || el.readOnly) return;
+  const mayus = el.value.toUpperCase();
+  if (mayus === el.value) return;
+  const posIni = el.selectionStart, posFin = el.selectionEnd;
+  el.value = mayus;
+  if (posIni !== null && typeof el.setSelectionRange === 'function') {
+    el.setSelectionRange(posIni, posFin);
+  }
+});
+
+// ── Eco de hora en formato 24h inequívoco. El <input type="time"> SIEMPRE
+// guarda internamente HH:MM en 24h (eso no cambia según el dispositivo),
+// pero el selector visual nativo puede aparecer con AM/PM según el celular
+// (Android/iOS respetan la configuración del sistema, no algo que la app
+// pueda forzar). Este texto de apoyo elimina la ambigüedad visual sin
+// tocar cómo se guarda ni se lee el valor en ningún otro lado del código.
+window.pintarEcoHora = function(inputId, ecoId) {
+  const inp = document.getElementById(inputId);
+  const eco = document.getElementById(ecoId);
+  if (!eco) return;
+  eco.textContent = (inp && inp.value) ? ('🕐 ' + inp.value + ' (formato 24h)') : '';
+};
 
 const RANGOS = {
   'CUERPO 1': { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'0.20 a 0.30 ton','SECUNDARIA 1':'0.30 a 0.50 ton','CORAZA':'5.8 ton','BERMA':'0.30 a 0.50 ton','BERMA DE APOYO':'0.20 a 0.30 ton' },
@@ -5046,7 +5084,7 @@ window.renderPendientes = function() {
       ` : `
         <div class="field-row two-col" style="margin-top:12px;">
            <div><label>Fecha 2</label><input type="date" id="pend-fecha2-${window.escHtml(r._fid)}" value="${new Date().toISOString().slice(0,10)}"></div>
-           <div><label>Hora 2</label><input type="time" id="pend-hora2-${window.escHtml(r._fid)}"></div>
+           <div><label>Hora 2</label><input type="time" id="pend-hora2-${window.escHtml(r._fid)}" oninput="pintarEcoHora('pend-hora2-${window.escHtml(r._fid)}','pend-hora2-eco-${window.escHtml(r._fid)}')"><span id="pend-hora2-eco-${window.escHtml(r._fid)}" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span></div>
         </div>
         <div class="field-row">
            <label>Tara (kg)</label><input type="number" id="pend-tara-${window.escHtml(r._fid)}" placeholder="0000" inputmode="decimal">
@@ -5852,7 +5890,7 @@ function descargarPdfResumen() {
 
   const periodoTexto = document.getElementById('resumen-subtitulo-fecha')?.textContent || 'Todas las fechas';
   const ahora = new Date();
-  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX');
+  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX', { hour12: false });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
@@ -6189,7 +6227,7 @@ window.initSixSigmaTab = async function() {
       ).join('');
     }
 
-    if (estadoEl) estadoEl.textContent = '✅ Actualizado ' + new Date().toLocaleTimeString('es-MX');
+    if (estadoEl) estadoEl.textContent = '✅ Actualizado ' + new Date().toLocaleTimeString('es-MX', { hour12: false });
   } catch (e) {
     if (estadoEl) estadoEl.textContent = '❌ Error al cargar: ' + e.message;
     console.warn('Six Sigma Bloque B.1: error al cargar panel:', e);
@@ -6565,7 +6603,7 @@ function descargarPdfBancos() {
   y += 0.3;
 
   const ahora = new Date();
-  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX');
+  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX', { hour12: false });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);

@@ -6237,6 +6237,14 @@ window.initSixSigmaTab = async function() {
 // Six Sigma Bloque B.1: descarga puntual a Excel, acotada por rango de
 // fecha (obligatorio), pensada para pegar en Minitab (columnas numéricas,
 // timestamps en milisegundos, sin texto que requiera limpieza).
+window.formatearFechaHoraTs = function(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const fecha = d.toLocaleDateString('es-MX');
+  const hora = d.toLocaleTimeString('es-MX', { hour12: false });
+  return fecha + ' ' + hora;
+};
+
 window.descargarExcelSixSigma = async function() {
   const desdeStr = document.getElementById('ss-fecha-desde').value;
   const hastaStr = document.getElementById('ss-fecha-hasta').value;
@@ -6250,20 +6258,40 @@ window.descargarExcelSixSigma = async function() {
   try {
     const docs = await window.dbStatsAnalisisPorRango(desdeTs, hastaTs);
     if (!docs.length) { alert('No hay capturas en ese rango de fechas.'); return; }
-    const filas = docs.map(d => ({
-      id_ticket: d.id_ticket || '',
-      boleta: d.boleta || '',
-      capturista_id: d.capturista_id || '',
-      captura_inicio_ts: d.captura_inicio_ts || '',
-      captura_fin_ts: d.captura_fin_ts || '',
-      duracion_captura_seg: d.duracion_captura_seg ?? '',
-      ediciones_contador: d.ediciones_contador ?? 0,
-      t1_fila_ts: d.t1_fila_ts || '',
-      t2_bruto_ts: d.t2_bruto_ts || '',
-      t3_salida_ts: d.t3_salida_ts || '',
-      t4_destare_ts: d.t4_destare_ts || ''
-    }));
+    const nombres = await window.dbUsuariosListar();
+
+    // Columnas "humanas" (fecha/hora legible, nombre en vez de uid) primero,
+    // y al final las columnas numéricas puras en segundos — esas son las que
+    // se usan para pegar en Minitab (duración, espera en fila, tiempo en
+    // frente). NaN/vacío se deja como celda en blanco, no como texto "NaN".
+    const filas = docs.map(d => {
+      const esperaFilaSeg = (d.t1_fila_ts && d.t2_bruto_ts) ? Math.max(0, Math.round((d.t2_bruto_ts - d.t1_fila_ts) / 1000)) : '';
+      const tiempoFrenteSeg = (d.t3_salida_ts && d.t4_destare_ts) ? Math.max(0, Math.round((d.t4_destare_ts - d.t3_salida_ts) / 1000)) : '';
+      return {
+        'Boleta': d.boleta || '',
+        'Capturista': nombres[d.capturista_id] || d.capturista_id || '',
+        'Inicio de captura': window.formatearFechaHoraTs(d.captura_inicio_ts),
+        'Fin de captura': window.formatearFechaHoraTs(d.captura_fin_ts),
+        'Duración de captura': d.duracion_captura_seg != null ? formatearDuracionSeg(d.duracion_captura_seg) : '',
+        'Veces editado': d.ediciones_contador ?? 0,
+        'Entrada a fila (báscula)': window.formatearFechaHoraTs(d.t1_fila_ts),
+        'Pesaje bruto (báscula)': window.formatearFechaHoraTs(d.t2_bruto_ts),
+        'Salida a frente (báscula)': window.formatearFechaHoraTs(d.t3_salida_ts),
+        'Pesaje tara/destare (báscula)': window.formatearFechaHoraTs(d.t4_destare_ts),
+        'Espera en fila (mm:ss)': esperaFilaSeg !== '' ? formatearDuracionSeg(esperaFilaSeg) : '',
+        'Tiempo en frente (mm:ss)': tiempoFrenteSeg !== '' ? formatearDuracionSeg(tiempoFrenteSeg) : '',
+        'Duración captura (seg)': d.duracion_captura_seg ?? '',
+        'Espera en fila (seg)': esperaFilaSeg,
+        'Tiempo en frente (seg)': tiempoFrenteSeg,
+        'ID interno (referencia)': d.id_ticket || ''
+      };
+    });
     const worksheet = XLSX.utils.json_to_sheet(filas);
+    worksheet['!cols'] = [
+      { wch: 10 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 10 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
+      { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 22 }
+    ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'stats_analisis');
     XLSX.writeFile(workbook, `SixSigma_${desdeStr}_a_${hastaStr}.xlsx`);

@@ -1471,6 +1471,27 @@ window.saveRecord = async function() {
       return;
     }
   }
+  // 18-jul-2026: candado contra doble reserva — si dos capturistas abren
+  // Captura casi al mismo tiempo, ambos pueden ver la misma placa
+  // disponible en el desplegable. Se revalida aquí, justo antes de crear
+  // el ticket, que esa placa siga libre (nadie más la haya usado ya).
+  if (!window._editFid && data.fila_bascula_id) {
+    try {
+      const filaSnap = await window.dbFilaBasculaLeer(data.fila_bascula_id);
+      const filaData = filaSnap.exists() ? filaSnap.data() : null;
+      if (!filaData) {
+        alert('Ese registro de Fila Báscula ya no existe. Dale "🔄 refrescar" a Placas y vuelve a intentar.');
+        return;
+      }
+      if (filaData.id_ticket) {
+        alert('Esa placa ya se usó en otro ticket — probablemente otro capturista la guardó primero. Dale "🔄 refrescar" a Placas y elige otra.');
+        return;
+      }
+    } catch (e) {
+      alert('No se pudo verificar el estado en Fila Báscula: ' + e.message);
+      return;
+    }
+  }
   { // FASE 10: vertido y folio de barcaza son obligatorios solo cuando el destino es colocación (Cuerpo/Muro/Morro).
     // Área de Prefabricados NO es colocación en el rompeolas (es un suministro externo, ver BOT.MD/SIXSIGMA
     // pendientes de julio-2026), así que tampoco pide vertido — mismo trato que un Acopio.
@@ -2146,6 +2167,22 @@ window.dbFilaBasculaAgregar = async function (payload) {
   return ref.id;
 };
 
+// Registro persistente placa -> económico. Sirve para (a) autorellenar el
+// económico de una placa ya conocida sin fiarse de lo que se teclee cada
+// vez, y (b) detectar de forma automática si un económico ya se usó en
+// otra placa (pokayoke pedido 18-jul-2026, tras encontrar 2 volteos
+// distintos con el mismo económico).
+window.dbFlotaLeer = async function (placasKey) {
+  return await getDoc(doc(db_f, 'flota', placasKey));
+};
+window.dbFlotaBuscarPorEconomico = async function (economico) {
+  const snap = await getDocs(query(collection(db_f, 'flota'), where('economico', '==', economico)));
+  return snap.docs.map(d => ({ id: d.id, data: d.data() }));
+};
+window.dbFlotaGuardar = async function (placasKey, campos) {
+  await setDoc(doc(db_f, 'flota', placasKey), campos, { merge: true });
+};
+
 window.dbFilaBasculaActualizar = async function (filaId, campos) {
   await updateDoc(doc(db_f, 'fila_bascula', filaId), campos);
 };
@@ -2468,41 +2505,42 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 <div class="tab-content active" id="tab-form">
   <div class="form-card">
     <h3>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-      Pesajes
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
+      Identificación
     </h3>
+    <div class="field-row">
+      <label>Tipo de camión *</label>
+      <select id="f-tipo-camion" onchange="poblarPlacasDisponibles()">
+        <option value="">— Seleccionar —</option>
+        <option value="VOLTEO">Volteo</option>
+        <option value="GONDOLA">Góndola</option>
+        <option value="ARTICULADO">Articulado</option>
+      </select>
+    </div>
     <div class="field-row two-col">
       <div>
-        <label>Fecha 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
-        <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);"/>
+        <label>Boleta * <span style="font-weight:400;color:var(--text-muted);">(# Ticket)</span></label>
+        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
       </div>
       <div>
-        <label>Hora 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
-        <input type="time" id="f-hora1" readonly style="background:var(--surface-muted);"/>
-        <span id="f-hora1-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
+        <label>Placas * <a href="javascript:void(0)" onclick="poblarPlacasDisponibles()" style="font-weight:400;color:var(--accent);text-decoration:none;">🔄 refrescar</a></label>
+        <select id="f-placas" onchange="autorellenarDesdeFilaBascula()" disabled>
+          <option value="">— Elige tipo de camión primero —</option>
+        </select>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Solo se muestran camiones que ya registraste en Fila Báscula (entrada + salida).</div>
       </div>
     </div>
-    <p style="font-size:11px;color:var(--text-muted);margin:0 0 4px;">
-      Paso #1 (Six Sigma B.2): la fecha/hora del 1er pesaje se toma
-      automáticamente de cuándo el camión se formó en Fila Báscula — ya no
-      se escribe a mano. El 2do pesaje/destare se captura después en
-      "Pendientes", una vez que el camión regrese y se marque "Destarado".
-    </p>
-    <div class="field-row two-col" id="row-fecha2-hora2" style="display:none;">
-      <div>
-        <label>Fecha 2do pesaje *</label>
-        <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
+    <div class="field-row two-col">
+      <div id="wrap-folio">
+        <label>Folio * <span style="font-weight:400;color:var(--text-muted);">(Vale)</span></label>
+        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
       </div>
       <div>
-        <label>Hora 2do pesaje *</label>
-        <input type="time" id="f-hora2" oninput="calcCiclo(); pintarEcoHora('f-hora2','f-hora2-eco')"/>
-        <span id="f-hora2-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
+        <label># Económico *</label>
+        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
       </div>
     </div>
-    <div class="field-row" id="row-ciclo" style="display:none;">
-      <label>Ciclo (tiempo entre pesajes)</label>
-      <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
-    </div>
+    <input type="hidden" id="f-fila-bascula-id"/>
   </div>
 
   <div class="form-card">
@@ -2586,43 +2624,44 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 
   <div class="form-card">
     <h3>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
-      Identificación
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Pesajes
     </h3>
-    <div class="field-row">
-      <label>Tipo de camión *</label>
-      <select id="f-tipo-camion" onchange="poblarPlacasDisponibles()">
-        <option value="">— Seleccionar —</option>
-        <option value="VOLTEO">Volteo</option>
-        <option value="GONDOLA">Góndola</option>
-        <option value="ARTICULADO">Articulado</option>
-      </select>
-    </div>
     <div class="field-row two-col">
       <div>
-        <label>Boleta * <span style="font-weight:400;color:var(--text-muted);">(# Ticket)</span></label>
-        <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
+        <label>Fecha 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
+        <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);"/>
       </div>
       <div>
-        <label>Placas * <a href="javascript:void(0)" onclick="poblarPlacasDisponibles()" style="font-weight:400;color:var(--accent);text-decoration:none;">🔄 refrescar</a></label>
-        <select id="f-placas" onchange="autorellenarDesdeFilaBascula()" disabled>
-          <option value="">— Elige tipo de camión primero —</option>
-        </select>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Solo se muestran camiones que ya registraste en Fila Báscula (entrada + salida).</div>
+        <label>Hora 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(la del ticket que da la báscula)</span></label>
+        <input type="time" id="f-hora1" oninput="pintarEcoHora('f-hora1','f-hora1-eco')"/>
+        <span id="f-hora1-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
-    <div class="field-row two-col">
-      <div id="wrap-folio">
-        <label>Folio * <span style="font-weight:400;color:var(--text-muted);">(Vale)</span></label>
-        <input type="text" id="f-folio" placeholder="Ej: F-0123"/>
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 4px;">
+      La fecha se toma de cuándo el camión se formó en Fila Báscula. La
+      hora escríbela manual, tal como la imprime el ticket del operador de
+      báscula (es el dato que mide cuánto tarda en pesarse). El 2do
+      pesaje/destare se captura después en "Pendientes", cuando el camión
+      regrese y se marque "Destarado".
+    </p>
+    <div class="field-row two-col" id="row-fecha2-hora2" style="display:none;">
+      <div>
+        <label>Fecha 2do pesaje *</label>
+        <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
       </div>
       <div>
-        <label># Económico *</label>
-        <input type="text" id="f-economico" placeholder="Ej: ECO-045"/>
+        <label>Hora 2do pesaje *</label>
+        <input type="time" id="f-hora2" oninput="calcCiclo(); pintarEcoHora('f-hora2','f-hora2-eco')"/>
+        <span id="f-hora2-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
-    <input type="hidden" id="f-fila-bascula-id"/>
+    <div class="field-row" id="row-ciclo" style="display:none;">
+      <label>Ciclo (tiempo entre pesajes)</label>
+      <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
+    </div>
   </div>
+
 
   <div class="form-card">
     <h3>
@@ -3908,11 +3947,14 @@ window.poblarPlacasDisponibles = async function() {
   const tipo = document.getElementById('f-tipo-camion').value;
   const sel = document.getElementById('f-placas');
   document.getElementById('f-fila-bascula-id').value = '';
+  document.getElementById('f-economico').value = '';
+  document.getElementById('f-fecha1').value = '';
   if (!tipo) {
     sel.innerHTML = '<option value="">— Elige tipo de camión primero —</option>';
     sel.disabled = true;
     return;
   }
+  window.marcarInicioCaptura(); // Bloque A: el cronómetro arranca aquí — lo primero que se llena es Tipo de camión
   sel.disabled = true;
   sel.innerHTML = '<option value="">Cargando…</option>';
   try {
@@ -3923,11 +3965,13 @@ window.poblarPlacasDisponibles = async function() {
       return;
     }
     disponibles.sort((a, b) => (a.data.t1_fila_ts || 0) - (b.data.t1_fila_ts || 0));
+    // Solo se muestra la PLACA en la etiqueta — el económico se autorellena
+    // aparte (autorellenarDesdeFilaBascula) y ya no se mezcla aquí.
     sel.innerHTML = '<option value="">— Selecciona placas —</option>' +
       disponibles.map(d => {
         const placasEsc = (d.data.placas || '').replace(/"/g, '&quot;');
         const ecoEsc = (d.data.economico || '').replace(/"/g, '&quot;');
-        return `<option value="${d.id}" data-placas="${placasEsc}" data-economico="${ecoEsc}">${d.data.placas || '(sin placas)'}${d.data.economico ? ' · ' + d.data.economico : ''}</option>`;
+        return `<option value="${d.id}" data-placas="${placasEsc}" data-economico="${ecoEsc}">${d.data.placas || '(sin placas)'}</option>`;
       }).join('');
     sel.disabled = false;
   } catch (e) {
@@ -3946,23 +3990,20 @@ window.tsAFechaHoraCDMX = function(ts) {
 };
 
 window.autorellenarDesdeFilaBascula = function() {
-  window.marcarInicioCaptura(); // Bloque A: el cronómetro ahora arranca aquí, no en fecha1 (que ya es readonly)
   const sel = document.getElementById('f-placas');
   const opt = sel.selectedOptions[0];
   const filaId = sel.value || '';
   document.getElementById('f-fila-bascula-id').value = filaId;
   document.getElementById('f-economico').value = (opt && opt.dataset.economico) ? opt.dataset.economico : '';
-  // Paso #1: fecha/hora del 1er pesaje = cuándo se formó en la fila (t1_fila_ts),
-  // no algo que se escriba a mano. Se lee de la caché global en vivo.
+  // Fecha del 1er pesaje = cuándo se formó en la fila (t1_fila_ts), no algo
+  // que se escriba a mano. La HORA se deja manual (viene del ticket físico
+  // que imprime la báscula, mide el tiempo real de pesaje).
   const filaData = filaId ? (window._filaBasculaPorId || {})[filaId] : null;
   if (filaData && filaData.t1_fila_ts) {
-    const { fecha, hora } = window.tsAFechaHoraCDMX(filaData.t1_fila_ts);
+    const { fecha } = window.tsAFechaHoraCDMX(filaData.t1_fila_ts);
     document.getElementById('f-fecha1').value = fecha;
-    document.getElementById('f-hora1').value = hora;
-    window.pintarEcoHora('f-hora1', 'f-hora1-eco');
   } else {
     document.getElementById('f-fecha1').value = '';
-    document.getElementById('f-hora1').value = '';
   }
 };
 
@@ -6323,10 +6364,37 @@ window.registrarEntradaFila = async function() {
   if (dosPlacas && !trasera) { alert(tipoCamion === 'GONDOLA' ? 'La góndola trae 2 placas — captura también la trasera.' : 'El articulado trae 2 placas — captura también la trasera.'); return; }
   const placas = dosPlacas ? (frontal + ' / ' + trasera) : frontal;
 
-  if (!economico) {
-    const opcion = await abrirEconomicoModal();
-    if (opcion === 'llenar') { document.getElementById('fb-economico').focus(); return; }
-    economico = 'S/N';
+  // Registro de flota (placa -> económico): si esta placa ya se registró
+  // antes, se usa SIEMPRE su económico conocido — no se vuelve a preguntar
+  // ni se confía en lo que se haya tecleado, para no desincronizar el
+  // "seguro" placa-económico (pedido 18-jul-2026).
+  let flotaExistente = null;
+  try {
+    const flotaSnap = await window.dbFlotaLeer(placas);
+    if (flotaSnap.exists()) flotaExistente = flotaSnap.data();
+  } catch (e) { /* si falla la lectura, se sigue con el flujo manual normal */ }
+
+  if (flotaExistente && flotaExistente.economico) {
+    economico = flotaExistente.economico;
+  } else {
+    if (!economico) {
+      const opcion = await abrirEconomicoModal();
+      if (opcion === 'llenar') { document.getElementById('fb-economico').focus(); return; }
+      economico = 'S/N';
+    }
+    // Pokayoke: no puede haber 2 volteos con el mismo económico. Góndola y
+    // Articulado quedan exentos (todavía no tienen económicos propios,
+    // "S/N" repetido es esperado en esos casos).
+    if (tipoCamion === 'VOLTEO' && economico !== 'S/N') {
+      try {
+        const coincidencias = await window.dbFlotaBuscarPorEconomico(economico);
+        const otraPlaca = coincidencias.find(c => c.id !== placas && c.data.tipo_camion === 'VOLTEO');
+        if (otraPlaca) {
+          alert(`El económico "${economico}" ya está asignado a la placa "${otraPlaca.id}". No puede haber 2 volteos con el mismo económico — verifica el número o corrígelo con Admin.`);
+          return;
+        }
+      } catch (e) { /* si falla la verificación, se deja pasar para no bloquear la operación por un error de red */ }
+    }
   }
 
   try {
@@ -6349,6 +6417,11 @@ window.registrarEntradaFila = async function() {
       cerrado: false,
       creadoPor: window._currentUserUid || ''
     });
+    window.dbFlotaGuardar(placas, {
+      economico, tipo_camion: tipoCamion,
+      actualizadoPor: window._currentUserUid || '',
+      actualizadoTs: Date.now()
+    }); // sin await: no debe bloquear ni poder tronar el registro de entrada ya guardado
     document.getElementById('fb-placas').value = '';
     document.getElementById('fb-placas-trasera').value = '';
     document.getElementById('fb-economico').value = '';
@@ -6388,11 +6461,21 @@ window.initFilaBasculaTab = function() {
   window.cambiarVistaBascula(window._vistaBasculaActual);
 };
 
+// 18-jul-2026: capturista solo ve los camiones que ÉL registró (evita que,
+// con varios capturistas en distintas básculas, alguien le dé "Sale a
+// tiro"/"Destarado" por accidente a un camión que no es el suyo). Admin,
+// coordinador y master siempre ven todo.
+function puedoVerRegistroFila(r) {
+  const rol = window._currentUserRol;
+  if (rol === 'admin' || rol === 'coordinador' || rol === 'master') return true;
+  return r.creadoPor === window._currentUserUid;
+}
+
 window.renderFilaBascula = function() {
   // "Camiones con Material" — en fila o rumbo a tiro, todavía sin 1er pesaje.
   const lista = document.getElementById('fb-lista');
   if (lista) {
-    const enTransito = window._filaBasculaEnTransito || [];
+    const enTransito = (window._filaBasculaEnTransito || []).filter(c => puedoVerRegistroFila(c.data));
     if (!enTransito.length) { lista.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No hay vehículos en fila ahora mismo.</p>'; }
     else {
       lista.innerHTML = enTransito.map(({ id, data: r }) => {
@@ -6418,7 +6501,7 @@ window.filtrarBuscadorDestare = function() {
   if (!el) return;
   const buscarEl = document.getElementById('destare-buscar-input');
   const q = buscarEl ? buscarEl.value.trim().toUpperCase() : '';
-  const todos = window._filaBasculaEsperandoDestare || [];
+  const todos = (window._filaBasculaEsperandoDestare || []).filter(c => puedoVerRegistroFila(c.data));
   const filtrados = q ? todos.filter(c => (c.data.placas || '').includes(q)) : todos;
   if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin camiones pendientes de destare.</p>'; return; }
   el.innerHTML = filtrados.map(({ id, data: r }) => {

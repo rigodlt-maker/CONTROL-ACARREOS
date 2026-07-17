@@ -609,6 +609,27 @@ onAuthStateChanged(auth, async (user) => {
     window._currentUserRol = rol;
     window._currentUserUid = user.uid;
 
+    // Six Sigma Bloque B.2 v3 (18-jul-2026): listener global de fila_bascula.
+    // Arranca en cuanto inicia sesión, no solo al visitar "Fila Báscula" —
+    // así Captura y Pendientes también ven en tiempo real el estado de cada
+    // camión (entre distintos capturistas/básculas) sin necesitar refrescar.
+    if (window._unsubFilaBasculaGlobal) window._unsubFilaBasculaGlobal();
+    window._filaBasculaPorId = {};
+    window._filaBasculaEnTransito = [];
+    window._filaBasculaEsperandoDestare = [];
+    const qFilaGlobal = query(collection(db_f, 'fila_bascula'), where('cerrado', '==', false), orderBy('t1_fila_ts', 'desc'), limit(80));
+    window._unsubFilaBasculaGlobal = onSnapshot(qFilaGlobal, (snap) => {
+      const mapa = {}, enTransito = [], esperandoDestare = [];
+      snap.forEach(d => {
+        mapa[d.id] = d.data();
+        (d.data().id_ticket ? esperandoDestare : enTransito).push({ id: d.id, data: d.data() });
+      });
+      window._filaBasculaPorId = mapa;
+      window._filaBasculaEnTransito = enTransito;
+      window._filaBasculaEsperandoDestare = esperandoDestare;
+      if (typeof window.onFilaBasculaCambio === 'function') window.onFilaBasculaCambio();
+    }, (err) => console.warn('Listener global fila_bascula:', err));
+
     // ── Visibilidad por rol: qué opciones del menú lateral ve cada quien. ──
     const visibilidadPorTab = {
       form:       esCapturista || esAdminOMaster || esCoordinador,
@@ -1391,7 +1412,8 @@ window.procesarColaOffline = async function() {
         }
         payload.ts = serverTimestamp();
         payload.ediciones_contador = 0; // Six Sigma Bloque B.3: First Pass Yield
-        await addDoc(collection(db_f, COL), payload);
+        const nuevoRef = await addDoc(collection(db_f, COL), payload);
+        window.procesarFilaBasculaDeTicket(payload, nuevoRef.id, payload.status !== 'completo'); // Six Sigma B.2 v3 (sin await)
         await aplicarResumen(payload, +1);
         await aplicarAgregadoAvanceAcopio(payload, +1);
       } else if (reg.type === 'UPDATE') {
@@ -1399,6 +1421,7 @@ window.procesarColaOffline = async function() {
         nuevo.ts_updated = serverTimestamp();
         nuevo.ediciones_contador = increment(1); // Six Sigma Bloque B.3: First Pass Yield
         await updateDoc(doc(db_f, COL, fid), nuevo);
+        window.procesarFilaBasculaDeTicket(nuevo, fid, nuevo.status !== 'completo'); // Six Sigma B.2 v3 (sin await)
         await incrementarStatsResumen({ capturas_editadas_eventos: 1 }); // Six Sigma Bloque B.1
         await moverResumen(original, nuevo);
         await moverAgregadoAvanceAcopio(original, nuevo);
@@ -1587,8 +1610,6 @@ window.editRecord = async function() {
   toggleFolioBarcaza();
   document.getElementById('f-folio-barcaza').value = r.folio_barcaza || '';
   checkTransferenciaAcopios();
-  document.getElementById('f-pendiente').checked = (r.status === 'pendiente');
-  togglePendienteForm();
   calcCiclo(); calcPesos(); updateRangos();
   setTimeout(() => {
     if (r.rango === 'PENDIENTE') {
@@ -1620,16 +1641,27 @@ window.deleteRecord = async function() {
 window.completarPendiente = async function(fid) {
   const r = findRecord(fid);
   if (!r) { alert('No se encontró el registro.'); return; }
-  const fecha2 = (document.getElementById('pend-fecha2-' + fid) || {}).value || '';
-  const hora2  = (document.getElementById('pend-hora2-'  + fid) || {}).value || '';
-  const tara   = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
-  if (!fecha2) { alert('Ingresa la fecha del 2do pesaje.'); return; }
-  if (!hora2)  { alert('Ingresa la hora del 2do pesaje.'); return; }
+  // Paso #4 (Six Sigma B.2 v3): candado real — no se guarda nada si el
+  // camión no pasó de nuevo por Fila Báscula y quedó "Destarado". Se
+  // revalida aquí (no solo en el render) por si acaso.
+  const fila = r.fila_bascula_id ? (window._filaBasculaPorId || {})[r.fila_bascula_id] : null;
+  if (r.fila_bascula_id && (!fila || !fila.t3b_salida_ts)) {
+    alert('Este camión todavía no tiene "Destarado" registrado en Fila Báscula → Camiones Destare. Regístralo antes de capturar el peso.');
+    return;
+  }
+  const tara = parseFloat((document.getElementById('pend-tara-' + fid) || {}).value) || 0;
   if (tara <= 0) { alert('Ingresa la tara.'); return; }
-  const dt1 = new Date(r.fecha1 + 'T' + (r.hora1||'00:00') + ':00');
-  const dt2 = new Date(fecha2 + 'T' + hora2 + ':00');
+
+  // Fecha/hora del 2do pesaje = el momento exacto de "Destarado" (t3b_salida_ts),
+  // en horario CDMX — ya no se escriben a mano (pokayoke).
+  const { fecha: fecha2, hora: hora2 } = fila
+    ? window.tsAFechaHoraCDMX(fila.t3b_salida_ts)
+    : window.tsAFechaHoraCDMX(Date.now()); // registro viejo sin liga a fila_bascula, respaldo
+
+  const dt1 = window.combinarFechaHora(r.fecha1, r.hora1 || '00:00');
+  const dt2 = window.combinarFechaHora(fecha2, hora2);
   const diffMs = dt2 - dt1;
-  if (diffMs < 0) { alert('La fecha/hora del 2do pesaje no puede ser anterior a la del 1er pesaje.'); return; }
+  if (diffMs < 0) { alert('La fecha/hora del destare no puede ser anterior a la del 1er pesaje — revisa los timestamps de Fila Báscula.'); return; }
   const totalMin = Math.floor(diffMs / 60000);
   const hrs = Math.floor(totalMin / 60);
   const min = totalMin % 60;
@@ -1659,6 +1691,7 @@ window.completarPendiente = async function(fid) {
     await updateDoc(doc(db_f, COL, fid), payload);
     await moverResumen(original, actualizado); // FASE 5: Await crítico
     await moverAgregadoAvanceAcopio(original, actualizado); // Fase 14.2: Await crítico
+    window.procesarFilaBasculaDeTicket(actualizado, fid, false); // Six Sigma B.2 v3 (sin await): cierra fila_bascula + escribe stats_analisis
     window.showSyncToast('✅', 'Destare completado', 'ok');
     if (typeof window.renderPendientes === 'function') window.renderPendientes();
   } catch (e) {
@@ -2440,20 +2473,22 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </h3>
     <div class="field-row two-col">
       <div>
-        <label>Fecha 1er pesaje *</label>
-        <input type="date" id="f-fecha1" oninput="calcCiclo()" onfocus="marcarInicioCaptura()"/>
+        <label>Fecha 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
+        <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);"/>
       </div>
       <div>
-        <label>Hora 1er pesaje *</label>
-        <input type="time" id="f-hora1" oninput="calcCiclo(); pintarEcoHora('f-hora1','f-hora1-eco')"/>
+        <label>Hora 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
+        <input type="time" id="f-hora1" readonly style="background:var(--surface-muted);"/>
         <span id="f-hora1-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
-    <div class="field-row" style="display:flex;align-items:center;gap:8px;background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
-      <input type="checkbox" id="f-pendiente" onchange="togglePendienteForm()" style="width:18px;height:18px;accent-color:var(--warning);flex-shrink:0;cursor:pointer;">
-      <label for="f-pendiente" style="margin:0;font-size:13px;color:var(--warning);font-weight:600;cursor:pointer;">Dejar 2do pesaje y tara como pendientes</label>
-    </div>
-    <div class="field-row two-col" id="row-fecha2-hora2">
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 4px;">
+      Paso #1 (Six Sigma B.2): la fecha/hora del 1er pesaje se toma
+      automáticamente de cuándo el camión se formó en Fila Báscula — ya no
+      se escribe a mano. El 2do pesaje/destare se captura después en
+      "Pendientes", una vez que el camión regrese y se marque "Destarado".
+    </p>
+    <div class="field-row two-col" id="row-fecha2-hora2" style="display:none;">
       <div>
         <label>Fecha 2do pesaje *</label>
         <input type="date" id="f-fecha2" oninput="calcCiclo()"/>
@@ -2464,7 +2499,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
         <span id="f-hora2-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
-    <div class="field-row" id="row-ciclo">
+    <div class="field-row" id="row-ciclo" style="display:none;">
       <label>Ciclo (tiempo entre pesajes)</label>
       <input type="text" id="f-ciclo" class="calc-field-neutral" readonly placeholder="Se calcula automáticamente"/>
     </div>
@@ -2599,7 +2634,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
         <label>Peso Bruto (kg) *</label>
         <input type="number" id="f-bruto" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
       </div>
-      <div id="row-tara">
+      <div id="row-tara" style="display:none;">
         <label>Tara (kg) *</label>
         <input type="number" id="f-tara" placeholder="0000" inputmode="decimal" oninput="calcPesos()"/>
       </div>
@@ -2965,42 +3000,48 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 </div>
 
 <div class="tab-content" id="tab-bascula">
-  <div class="chart-card" style="margin-bottom:14px;">
-    <h3 style="margin:0 0 4px;">Fila Báscula</h3>
-    <p style="font-size:12px;color:var(--text-muted);margin:0 0 14px;">
-      Six Sigma Bloque B.2: registra la llegada del camión a la fila y su
-      salida hacia el frente de tiro, para medir espera y tránsito por
-      separado del tiempo de pesaje. Góndola y Articulado traen 2 placas.
-    </p>
-    <div class="field-row" style="margin-bottom:8px;">
-      <select id="fb-tipo-camion" onchange="toggleSegundaPlacaFila()" style="height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);width:100%;">
-        <option value="">— Tipo de camión —</option>
-        <option value="VOLTEO">Volteo</option>
-        <option value="GONDOLA">Góndola (2 placas)</option>
-        <option value="ARTICULADO">Articulado (2 placas)</option>
-      </select>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <input type="text" id="fb-placas" placeholder="Placas" style="flex:1;min-width:120px;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
-      <input type="text" id="fb-economico" placeholder="Económico (opcional)" style="flex:1;min-width:120px;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
-    </div>
-    <div style="display:none;margin-bottom:10px;" id="wrap-fb-placas-trasera">
-      <input type="text" id="fb-placas-trasera" placeholder="Placas trasera" style="width:100%;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
-    </div>
-    <button class="btn btn-primary" style="width:100%;" onclick="registrarEntradaFila()">🚛 Registrar Entrada a fila</button>
+  <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <button id="btn-fb-material" class="btn btn-primary" style="flex:1;font-size:13px;" onclick="cambiarVistaBascula('material')">🚛 Camiones con Material</button>
+    <button id="btn-fb-destare" class="btn btn-secondary" style="flex:1;font-size:13px;" onclick="cambiarVistaBascula('destare')">📋 Camiones Destare</button>
   </div>
 
-  <div class="chart-card" style="margin-bottom:14px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h4 style="margin:0;">Esperando destare</h4>
-      <button class="btn btn-secondary" style="font-size:12px;" onclick="abrirBuscadorDestare()">🔎 Buscar camión</button>
+  <div id="vista-fb-material">
+    <div class="chart-card" style="margin-bottom:14px;">
+      <h3 style="margin:0 0 4px;">Registrar entrada a fila</h3>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 14px;">
+        Six Sigma Bloque B.2: registra la llegada del camión a la fila. Al
+        pesarse, dale "Sale a tiro". Góndola y Articulado traen 2 placas.
+      </p>
+      <div class="field-row" style="margin-bottom:8px;">
+        <select id="fb-tipo-camion" onchange="toggleSegundaPlacaFila()" style="height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);width:100%;">
+          <option value="">— Tipo de camión —</option>
+          <option value="VOLTEO">Volteo</option>
+          <option value="GONDOLA">Góndola (2 placas)</option>
+          <option value="ARTICULADO">Articulado (2 placas)</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <input type="text" id="fb-placas" placeholder="Placas" style="flex:1;min-width:120px;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
+        <input type="text" id="fb-economico" placeholder="Económico (opcional)" style="flex:1;min-width:120px;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
+      </div>
+      <div style="display:none;margin-bottom:10px;" id="wrap-fb-placas-trasera">
+        <input type="text" id="fb-placas-trasera" placeholder="Placas trasera" style="width:100%;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="registrarEntradaFila()">🚛 Registrar Entrada a fila</button>
     </div>
-    <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Camiones que ya tienen 1er pesaje capturado y están en su 2da pasada por báscula (regresan vacíos a pesar tara).</p>
+    <div class="chart-card">
+      <h4 style="margin:0 0 10px;">En fila / rumbo a tiro (esperando 1er pesaje)</h4>
+      <div id="fb-lista"><p style="font-size:13px;color:var(--text-muted);">Cargando…</p></div>
+    </div>
   </div>
 
-  <div class="chart-card">
-    <h4 style="margin:0 0 10px;">En tránsito (rumbo al frente / esperando 1er pesaje)</h4>
-    <div id="fb-lista"><p style="font-size:13px;color:var(--text-muted);">Cargando…</p></div>
+  <div id="vista-fb-destare" style="display:none;">
+    <div class="chart-card">
+      <h4 style="margin:0 0 4px;">Pendientes de destare</h4>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">Camiones que ya tienen 1er pesaje capturado y van de regreso a formarse otra vez (vacíos) para pesar tara.</p>
+      <input type="text" id="destare-buscar-input" placeholder="Buscar por placas…" oninput="filtrarBuscadorDestare()" style="height:42px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 12px;font-size:14px;background:var(--surface);margin-bottom:10px;width:100%;">
+      <div id="destare-lista"></div>
+    </div>
   </div>
 </div>
 
@@ -3019,33 +3060,6 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </div>
   </div>
 </div>
-
-<!-- Six Sigma Bloque B.2 v2: buscador de camiones "esperando destare" +
-     detalle con los botones de 2da entrada/salida a fila. -->
-<div class="modal-overlay" id="destare-modal-overlay" onclick="cerrarBuscadorDestareOutside(event)">
-  <div class="modal">
-    <div class="modal-header">
-      <h2>Esperando destare</h2>
-      <button class="modal-close" onclick="cerrarBuscadorDestare()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <input type="text" id="destare-buscar-input" placeholder="Buscar por placas…" oninput="filtrarBuscadorDestare()" style="height:42px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 12px;font-size:14px;background:var(--surface);margin-bottom:10px;width:100%;">
-    <div id="destare-lista"></div>
-  </div>
-</div>
-
-<!-- Detalle de un camión esperando destare: botones verde/amarillo para su 2da pasada. -->
-<div class="modal-overlay" id="destare-detalle-modal-overlay" onclick="cerrarDestareDetalleOutside(event)">
-  <div class="modal">
-    <div class="modal-header">
-      <h2 id="destare-detalle-titulo">Camión</h2>
-      <button class="modal-close" onclick="cerrarDestareDetalle()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div id="destare-detalle-body"></div>
-  </div>
 </div>
 
 <div class="tab-content" id="tab-metas">
@@ -3921,11 +3935,35 @@ window.poblarPlacasDisponibles = async function() {
   }
 };
 
+// Six Sigma Bloque B.2 v3: convierte un timestamp (ms) a fecha/hora en
+// horario de CDMX, sin depender del huso horario del dispositivo — mismo
+// criterio que dia_captura en registrarEntradaFila().
+window.tsAFechaHoraCDMX = function(ts) {
+  const d = new Date(ts);
+  const fecha = d.toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+  const hora = d.toLocaleTimeString('en-GB', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit', hour12: false });
+  return { fecha, hora };
+};
+
 window.autorellenarDesdeFilaBascula = function() {
+  window.marcarInicioCaptura(); // Bloque A: el cronómetro ahora arranca aquí, no en fecha1 (que ya es readonly)
   const sel = document.getElementById('f-placas');
   const opt = sel.selectedOptions[0];
-  document.getElementById('f-fila-bascula-id').value = sel.value || '';
+  const filaId = sel.value || '';
+  document.getElementById('f-fila-bascula-id').value = filaId;
   document.getElementById('f-economico').value = (opt && opt.dataset.economico) ? opt.dataset.economico : '';
+  // Paso #1: fecha/hora del 1er pesaje = cuándo se formó en la fila (t1_fila_ts),
+  // no algo que se escriba a mano. Se lee de la caché global en vivo.
+  const filaData = filaId ? (window._filaBasculaPorId || {})[filaId] : null;
+  if (filaData && filaData.t1_fila_ts) {
+    const { fecha, hora } = window.tsAFechaHoraCDMX(filaData.t1_fila_ts);
+    document.getElementById('f-fecha1').value = fecha;
+    document.getElementById('f-hora1').value = hora;
+    window.pintarEcoHora('f-hora1', 'f-hora1-eco');
+  } else {
+    document.getElementById('f-fecha1').value = '';
+    document.getElementById('f-hora1').value = '';
+  }
 };
 
 // FASE 10 — Muestra el campo "Vertido" (Marino/Terrestre) solo cuando el
@@ -4452,7 +4490,11 @@ function getFormData() {
   const bruto = parseFloat(document.getElementById('f-bruto').value) || 0;
   const tara  = parseFloat(document.getElementById('f-tara').value)  || 0;
   const neto  = bruto - tara;
-  const esPendiente = document.getElementById('f-pendiente').checked;
+  // Paso #3 (Six Sigma B.2 v3, 18-jul-2026): ya no hay checkbox — todo
+  // ticket NUEVO nace pendiente (el 2do pesaje/destare se captura después
+  // en "Pendientes", disparado por "Destarado" en Fila Báscula). Si se
+  // está EDITANDO un ticket existente, se respeta el status que ya tenía.
+  const esPendiente = window._editFid ? (window._editOriginal && window._editOriginal.status === 'pendiente') : true;
   const origenTipo  = document.getElementById('f-origen-tipo').value || 'BANCO';
   const destino     = document.getElementById('f-destino').value;
   const tipoCamion  = document.getElementById('f-tipo-camion').value;
@@ -4516,33 +4558,9 @@ function clearForm() {
   document.getElementById('range-hint').style.display = 'none';
   document.getElementById('neto-display').textContent = '—';
   document.getElementById('ton-display').textContent  = '—';
-  document.getElementById('f-pendiente').checked = false;
-  togglePendienteForm();
   window._editFid = null;
 }
 
-function togglePendienteForm() {
-  const pendiente = document.getElementById('f-pendiente').checked;
-  const fecha2El = document.getElementById('f-fecha2');
-  const hora2El  = document.getElementById('f-hora2');
-  const taraEl   = document.getElementById('f-tara');
-  const rowFecha2 = document.getElementById('row-fecha2-hora2');
-  const rowCiclo  = document.getElementById('row-ciclo');
-  const rowTara   = document.getElementById('row-tara');
-  fecha2El.disabled = pendiente;
-  hora2El.disabled   = pendiente;
-  taraEl.disabled    = pendiente;
-  rowFecha2.style.opacity = pendiente ? '0.4' : '1';
-  rowCiclo.style.opacity  = pendiente ? '0.4' : '1';
-  rowTara.style.opacity   = pendiente ? '0.4' : '1';
-  if (pendiente) {
-    fecha2El.value = ''; hora2El.value = ''; taraEl.value = '';
-    document.getElementById('f-ciclo').value = '';
-    document.getElementById('neto-display').textContent = '—';
-    document.getElementById('ton-display').textContent  = '—';
-  }
-}
-window.togglePendienteForm = togglePendienteForm;
 
 function fmtFecha(val) {
   if (!val) return '—';
@@ -5265,18 +5283,32 @@ window.renderPendientes = function() {
         <div style="margin-top:10px; font-size:12px; color:var(--danger);">
           El sistema detectó que esta boleta ya existía al subir de modo offline. Por favor revisa y edita en Base de Datos.
         </div>
-      ` : `
-        <div class="field-row two-col" style="margin-top:12px;">
-           <div><label>Fecha 2</label><input type="date" id="pend-fecha2-${window.escHtml(r._fid)}" value="${new Date().toISOString().slice(0,10)}"></div>
-           <div><label>Hora 2</label><input type="time" id="pend-hora2-${window.escHtml(r._fid)}" oninput="pintarEcoHora('pend-hora2-${window.escHtml(r._fid)}','pend-hora2-eco-${window.escHtml(r._fid)}')"><span id="pend-hora2-eco-${window.escHtml(r._fid)}" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span></div>
-        </div>
+      ` : (function() {
+        // Paso #4 (Six Sigma B.2 v3, 18-jul-2026): candado real — no se
+        // puede tocar el destare de este ticket hasta que el camión haya
+        // vuelto a pasar por Fila Báscula (2da entrada) Y esté "Destarado"
+        // (2da salida). Se lee de la caché GLOBAL en vivo (window._filaBasculaPorId),
+        // así que si otro capturista/báscula lo destara, este candado se
+        // quita solo, sin refrescar.
+        const fila = r.fila_bascula_id ? (window._filaBasculaPorId || {})[r.fila_bascula_id] : null;
+        if (r.fila_bascula_id && !fila) {
+          return `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">🔒 Cargando estado de Fila Báscula…</div>`;
+        }
+        if (r.fila_bascula_id && !fila.t1b_fila_ts) {
+          return `<div style="margin-top:10px;font-size:12px;color:var(--warning);background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;">🔒 Este camión debe volver a formarse en Fila Báscula → "Camiones Destare" → 🟢 Entra a fila, antes de poder capturar su destare.</div>`;
+        }
+        if (r.fila_bascula_id && !fila.t3b_salida_ts) {
+          return `<div style="margin-top:10px;font-size:12px;color:var(--warning);background:var(--warning-light);border-radius:var(--radius);padding:10px 12px;">🔒 Falta "🟡 Destarado" en Fila Báscula → "Camiones Destare" para poder capturar el peso.</div>`;
+        }
+        return `
         <div class="field-row">
-           <label>Tara (kg)</label><input type="number" id="pend-tara-${window.escHtml(r._fid)}" placeholder="0000" inputmode="decimal">
+           <label>Tara (kg) <span style="font-weight:400;color:var(--text-muted);">— fecha/hora del destare ya se tomaron de "Destarado" en Fila Báscula</span></label>
+           <input type="number" id="pend-tara-${window.escHtml(r._fid)}" placeholder="0000" inputmode="decimal">
         </div>
         <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="completarPendiente('${window.escHtml(r._fid)}')">
            Completar pesaje
-        </button>
-      `}
+        </button>`;
+      })()}
     </div>
     `;
   }).join('');
@@ -6244,9 +6276,17 @@ let unsubscribeFilaBascula = null;
 
 function combinarFechaHora(fecha, hora) {
   if (!fecha) return null;
-  const t = new Date(fecha + 'T' + (hora || '00:00') + ':00').getTime();
+  // Six Sigma B.2 v3: fecha1/hora1 y fecha2/hora2 SIEMPRE vienen ahora de
+  // tsAFechaHoraCDMX() (auto-llenado desde Fila Báscula, ya no se escriben
+  // a mano) — forzar aquí el mismo offset (-06:00, CDMX no tiene horario de
+  // verano desde 2022) es obligatorio: sin él, "new Date()" interpreta el
+  // string en el huso horario del DISPOSITIVO, que podría no ser CDMX si el
+  // celular está mal configurado, dando timestamps y KPIs de espera
+  // incorrectos aunque los números de fecha/hora "se vean bien".
+  const t = new Date(fecha + 'T' + (hora || '00:00') + ':00-06:00').getTime();
   return isNaN(t) ? null : t;
 }
+window.combinarFechaHora = combinarFechaHora;
 
 // Six Sigma Bloque B.2 v2: modal de "económico vacío" implementado como
 // Promise — se abre el modal, se espera a que el usuario toque uno de los
@@ -6290,10 +6330,17 @@ window.registrarEntradaFila = async function() {
   }
 
   try {
+    // Paso #1 (18-jul-2026): día en horario de CDMX, independiente del huso
+    // horario del celular del capturista — evita que un teléfono mal
+    // configurado agrupe un registro en el día equivocado. Este campo (y
+    // t1_fila_ts) solo lo puede corregir después coordinador/master, ver
+    // regla de Firestore en fila_bascula.
+    const diaCaptura = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
     await window.dbFilaBasculaAgregar({
       tipo_camion: tipoCamion,
       placas, economico,
       t1_fila_ts: Date.now(),
+      dia_captura: diaCaptura,
       t3_salida_ts: null,
       t1b_fila_ts: null,
       t3b_salida_ts: null,
@@ -6316,111 +6363,95 @@ window.registrarEntradaFila = async function() {
 window.registrarSalidaFrente = async function(filaId) {
   try {
     await window.dbFilaBasculaActualizar(filaId, { t3_salida_ts: Date.now() });
-    window.showSyncToast('✅', 'Salida hacia frente registrada', 'ok');
+    window.showSyncToast('✅', 'Sale a tiro registrado', 'ok');
   } catch (e) {
     alert('Error al registrar salida: ' + e.message);
   }
 };
 
-window.initFilaBasculaTab = function() {
-  if (unsubscribeFilaBascula) { unsubscribeFilaBascula(); unsubscribeFilaBascula = null; }
-  const lista = document.getElementById('fb-lista');
-  unsubscribeFilaBascula = window.dbFilaBasculaSuscribir((snap) => {
-    const enTransito = [];
-    const esperandoDestare = [];
-    snap.forEach(d => {
-      const r = d.data();
-      if (r.id_ticket) { esperandoDestare.push({ id: d.id, data: r }); }
-      else { enTransito.push({ id: d.id, data: r }); }
-    });
-    // Cache para el buscador de "Esperando destare" (modal aparte, no
-    // repinta cada vez que cambia — se lee al abrir/filtrar el buscador).
-    window._filaBasculaEsperandoDestare = esperandoDestare;
+window.cambiarVistaBascula = function(vista) {
+  const esMaterial = vista === 'material';
+  document.getElementById('vista-fb-material').style.display = esMaterial ? 'block' : 'none';
+  document.getElementById('vista-fb-destare').style.display = esMaterial ? 'none' : 'block';
+  document.getElementById('btn-fb-material').className = 'btn ' + (esMaterial ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('btn-fb-destare').className = 'btn ' + (esMaterial ? 'btn-secondary' : 'btn-primary');
+  window._vistaBasculaActual = vista;
+  window.renderFilaBascula();
+};
 
-    if (!enTransito.length) { lista.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No hay vehículos en tránsito ahora mismo.</p>'; }
+// Six Sigma Bloque B.2 v3: ya no hay listener propio de esta pestaña — lee
+// siempre de la caché global (window._filaBasculaEnTransito /
+// ...EsperandoDestare) que arranca sola al iniciar sesión (ver
+// onAuthStateChanged) y se repinta con cada cambio vía onFilaBasculaCambio.
+window.initFilaBasculaTab = function() {
+  if (!window._vistaBasculaActual) window._vistaBasculaActual = 'material';
+  window.cambiarVistaBascula(window._vistaBasculaActual);
+};
+
+window.renderFilaBascula = function() {
+  // "Camiones con Material" — en fila o rumbo a tiro, todavía sin 1er pesaje.
+  const lista = document.getElementById('fb-lista');
+  if (lista) {
+    const enTransito = window._filaBasculaEnTransito || [];
+    if (!enTransito.length) { lista.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No hay vehículos en fila ahora mismo.</p>'; }
     else {
-      let html = '';
-      enTransito.forEach(({ id, data: r }) => {
+      lista.innerHTML = enTransito.map(({ id, data: r }) => {
         const minEnFila = Math.round((Date.now() - r.t1_fila_ts) / 60000);
-        const estado = r.t3_salida_ts ? 'Rumbo al frente / esperando 1er pesaje' : 'En fila o pesándose (bruto)';
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;border-top:0.5px solid var(--border);padding:8px 0;">
+        const estado = r.t3_salida_ts ? 'Rumbo a tiro / esperando 1er pesaje' : 'En fila o pesándose (bruto)';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;border-top:0.5px solid var(--border);padding:8px 0;">
           <div>
             <strong>${r.placas || '(sin placas)'}${r.economico ? ' · ' + r.economico : ''}</strong><br>
             <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''}</span><br>
             <span style="font-size:12px;color:var(--text-muted);">${estado} · hace ${minEnFila} min</span>
           </div>
-          ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}')">Salida hacia frente</button>`}
+          ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}')">Sale a tiro</button>`}
         </div>`;
-      });
-      lista.innerHTML = html;
+      }).join('');
     }
-  }, (err) => {
-    lista.innerHTML = '<p style="font-size:13px;color:var(--accent-danger);">Error al cargar: ' + err.message + '</p>';
-  });
+  }
+  // "Camiones Destare" — ya con 1er pesaje capturado (id_ticket asignado).
+  window.filtrarBuscadorDestare();
 };
 
-// Six Sigma Bloque B.2 v2: buscador de camiones "esperando destare" (ya
-// tienen 1er pesaje capturado, id_ticket asignado). Usa la caché que
-// initFilaBasculaTab ya mantiene actualizada (window._filaBasculaEsperandoDestare),
-// no dispara una consulta nueva — evita otra lectura y otro índice.
-window.abrirBuscadorDestare = function() {
-  document.getElementById('destare-buscar-input').value = '';
-  document.getElementById('destare-modal-overlay').classList.add('open');
-  filtrarBuscadorDestare();
-};
-window.cerrarBuscadorDestare = function() {
-  document.getElementById('destare-modal-overlay').classList.remove('open');
-};
-window.cerrarBuscadorDestareOutside = function(e) {
-  if (e.target === document.getElementById('destare-modal-overlay')) window.cerrarBuscadorDestare();
-};
 window.filtrarBuscadorDestare = function() {
-  const q = document.getElementById('destare-buscar-input').value.trim().toUpperCase();
+  const el = document.getElementById('destare-lista');
+  if (!el) return;
+  const buscarEl = document.getElementById('destare-buscar-input');
+  const q = buscarEl ? buscarEl.value.trim().toUpperCase() : '';
   const todos = window._filaBasculaEsperandoDestare || [];
   const filtrados = q ? todos.filter(c => (c.data.placas || '').includes(q)) : todos;
-  const el = document.getElementById('destare-lista');
-  if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin resultados.</p>'; return; }
+  if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin camiones pendientes de destare.</p>'; return; }
   el.innerHTML = filtrados.map(({ id, data: r }) => {
-    const estado = r.t3b_salida_ts ? '✅ Lista para capturar destare' : (r.t1b_fila_ts ? '2da entrada registrada, falta salida' : 'Falta 2da entrada a fila');
-    return `<div style="border-top:0.5px solid var(--border);padding:10px 0;cursor:pointer;" onclick="abrirDestareDetalle('${id}')">
+    const estado = r.t3b_salida_ts ? '✅ Destarado — listo para capturar en Pendientes' : (r.t1b_fila_ts ? '⏳ En fila, falta "Destarado"' : '🚧 Falta "Entra a fila"');
+    return `<div style="border-top:0.5px solid var(--border);padding:10px 0;">
       <strong>${r.placas || '(sin placas)'}${r.economico ? ' · ' + r.economico : ''}</strong><br>
       <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''} · Boleta ${r.boleta || '—'}</span><br>
       <span style="font-size:12px;color:var(--text-muted);">${estado}</span>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}')">🟢 Entra a fila</button>
+        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}')">🟡 Destarado</button>
+      </div>
     </div>`;
   }).join('');
 };
 
-window.abrirDestareDetalle = function(filaId) {
-  const item = (window._filaBasculaEsperandoDestare || []).find(c => c.id === filaId);
-  if (!item) return;
-  const r = item.data;
-  document.getElementById('destare-detalle-titulo').textContent = r.placas || '(sin placas)';
-  const cuerpo = document.getElementById('destare-detalle-body');
-  cuerpo.innerHTML = `
-    <p style="font-size:13px;color:var(--text-muted);margin:0 0 4px;">${r.tipo_camion || ''} · Económico ${r.economico || '—'} · Boleta ${r.boleta || '—'}</p>
-    <p style="font-size:12px;color:var(--text-muted);margin:0 0 16px;">2da pasada por báscula (regresa vacío a pesar tara/destare).</p>
-    <div style="display:flex;gap:8px;">
-      <button id="btn-destare-entra" class="btn" style="flex:1;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${filaId}')">🟢 Entra a fila</button>
-      <button id="btn-destare-sale" class="btn" style="flex:1;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${filaId}')">🟡 Sale de fila</button>
-    </div>
-    ${r.t1b_fila_ts ? `<p style="font-size:11px;color:var(--text-muted);margin-top:10px;">2da entrada: ${window.formatearFechaHoraTs(r.t1b_fila_ts)}</p>` : ''}
-    ${r.t3b_salida_ts ? `<p style="font-size:11px;color:var(--text-muted);margin:0;">2da salida: ${window.formatearFechaHoraTs(r.t3b_salida_ts)}</p>` : ''}
-    ${r.t3b_salida_ts ? '<p style="font-size:12px;color:#2e7d32;font-weight:600;margin-top:10px;">✅ Ya puedes capturar el 2do pesaje (destare) de este ticket en Pendientes.</p>' : ''}
-  `;
-  document.getElementById('destare-detalle-modal-overlay').classList.add('open');
+// Six Sigma Bloque B.2 v3: se llama cada vez que cambia la caché global de
+// fila_bascula (nuevo camión, "Sale a tiro", "Entra a fila", "Destarado",
+// desde CUALQUIER usuario/báscula) — repinta lo que esté visible ahora
+// mismo para que todos vean lo mismo sin refrescar manualmente.
+window.onFilaBasculaCambio = function() {
+  if (document.getElementById('tab-bascula') && document.getElementById('tab-bascula').classList.contains('active')) {
+    window.renderFilaBascula();
+  }
+  if (document.getElementById('tab-pendientes') && document.getElementById('tab-pendientes').classList.contains('active')) {
+    if (typeof window.renderPendientes === 'function') window.renderPendientes();
+  }
 };
-window.cerrarDestareDetalle = function() {
-  document.getElementById('destare-detalle-modal-overlay').classList.remove('open');
-};
-window.cerrarDestareDetalleOutside = function(e) {
-  if (e.target === document.getElementById('destare-detalle-modal-overlay')) window.cerrarDestareDetalle();
-};
+
 window.registrarEntradaFilaSegunda = async function(filaId) {
   try {
     await window.dbFilaBasculaActualizar(filaId, { t1b_fila_ts: Date.now() });
     window.showSyncToast('✅', '2da entrada a fila registrada', 'ok');
-    window.cerrarDestareDetalle();
-    window.cerrarBuscadorDestare();
   } catch (e) {
     alert('Error al registrar entrada: ' + e.message);
   }
@@ -6428,11 +6459,9 @@ window.registrarEntradaFilaSegunda = async function(filaId) {
 window.registrarSalidaFilaSegunda = async function(filaId) {
   try {
     await window.dbFilaBasculaActualizar(filaId, { t3b_salida_ts: Date.now() });
-    window.showSyncToast('✅', '2da salida de fila registrada — ya puedes capturar el destare', 'ok');
-    window.cerrarDestareDetalle();
-    window.cerrarBuscadorDestare();
+    window.showSyncToast('✅', 'Destarado registrado — ya puedes capturar el peso en Pendientes', 'ok');
   } catch (e) {
-    alert('Error al registrar salida: ' + e.message);
+    alert('Error al registrar destarado: ' + e.message);
   }
 };
 

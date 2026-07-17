@@ -2569,7 +2569,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
         <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
       </div>
       <div>
-        <label>Placas *</label>
+        <label>Placas * <a href="javascript:void(0)" onclick="poblarPlacasDisponibles()" style="font-weight:400;color:var(--accent);text-decoration:none;">🔄 refrescar</a></label>
         <select id="f-placas" onchange="autorellenarDesdeFilaBascula()" disabled>
           <option value="">— Elige tipo de camión primero —</option>
         </select>
@@ -4343,6 +4343,7 @@ function showTab(t) {
   if (t === 'bancos') initBancosTab();
   if (t === 'metas') initMetasTab();
   if (t === 'bascula') initFilaBasculaTab();
+  if (t === 'form' && document.getElementById('f-tipo-camion').value) poblarPlacasDisponibles();
   initDateHints();
 }
 

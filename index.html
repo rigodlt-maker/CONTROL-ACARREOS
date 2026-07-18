@@ -645,6 +645,7 @@ onAuthStateChanged(auth, async (user) => {
       metas:      esAdminOMaster || esCoordinador || esVisor,
       excel:      esAdminOMaster || esCoordinador || esVisor,
       sixsigma:   esMaster, // Six Sigma Bloque B.1: único rol con acceso, ver SIXSIGMA.md sección 1
+      tendencia:  esMaster || esVisor, // 11.4 (18-jul-2026): análisis de tendencia R², visor y master
       admin:      esAdminOMaster
     };
     Object.entries(visibilidadPorTab).forEach(([t, cond]) => {
@@ -1595,6 +1596,14 @@ window.editRecord = async function() {
     const el = document.getElementById(id); if (el) el.value = v || '';
   });
   document.getElementById('f-material').value = r.material || '';
+  // 18-jul-2026: aplica el filtro de destinos permitidos para ESTE
+  // material antes de fijar el destino guardado. Si el registro es
+  // viejo y su combinación material/destino ya no está permitida hoy,
+  // la opción queda deshabilitada para elegirla de nuevo pero su
+  // asignación por script (siguiente línea) no se bloquea, así que el
+  // dato histórico se sigue mostrando tal cual sin alertas ni pérdida
+  // de información al editar.
+  filtrarDestinosPorMaterial();
   // Registros anteriores a la Fase 1 no tienen origen_tipo guardado: se asume BANCO
   // (era la única opción de origen que existía antes de este cambio).
   document.getElementById('f-origen-tipo').value = r.origen_tipo || 'BANCO';
@@ -2376,7 +2385,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <div class="field-row">
         <label>Contraseña</label>
         <div style="position:relative;">
-          <input type="password" id="login-pass" placeholder="••••••" autocomplete="current-password" style="padding-right:40px;"/>
+          <input type="password" id="login-pass" placeholder="••••••" autocomplete="current-password" data-no-upper style="padding-right:40px;"/>
           <button type="button" class="pass-toggle-btn" onclick="togglePasswordVisibility('login-pass', this)" aria-label="Mostrar contraseña" title="Mostrar contraseña" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;color:var(--text-muted);">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
@@ -2489,6 +2498,10 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 14l4-6 4 3 5-8"/></svg>
       6 Sigma
     </button>
+    <button class="nav-item" id="nd-tendencia" style="display:none" onclick="showTab('tendencia'); initTendenciaTab();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 16c2-6 4-6 6 0s4 6 6-2"/><circle cx="7" cy="13" r="1"/><circle cx="13" cy="15" r="1"/><circle cx="19" cy="8" r="1"/></svg>
+      Tendencia
+    </button>
 
     <div class="nav-group-title">Administración</div>
     <button class="nav-item" id="nd-admin" style="display:none" onclick="showTab('admin'); cargarPanelAdmin();">
@@ -2551,7 +2564,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <div class="field-row two-col">
       <div>
         <label>Material *</label>
-        <select id="f-material" onchange="updateRangos()">
+        <select id="f-material" onchange="updateRangos(); filtrarDestinosPorMaterial();">
           <option value="">— Seleccionar —</option>
           <option value="NUCLEO">Núcleo</option>
           <option value="BERMA">Berma</option>
@@ -3612,6 +3625,65 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   </div>
 </div>
 
+<!-- 11.4 (18-jul-2026): Análisis de Tendencias / Proyecciones — visor y master.
+     Botón "Generar Análisis" dispara UNA lectura completa de `acarreos`
+     (traerTodoFirestore), NO es un listener ni se dispara solo al entrar
+     a la pestaña — mismo criterio de costo que "Ver TODO el histórico"
+     (ver INSTRUCCIONESAPP.md sección 11.1/11.4). -->
+<div class="tab-content" id="tab-tendencia">
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3 style="margin:0;">📈 Análisis de Tendencias / Proyecciones</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+      Regresión lineal y cuadrática sobre el tonelaje diario histórico
+      (solo viajes completos), para proyectar cuándo se alcanza una meta
+      de capacidad diaria. Lee TODO el histórico de acarreos cada vez que
+      le das clic a "Generar Análisis" — úsalo cuando lo necesites, no se
+      actualiza solo.
+    </p>
+  </div>
+
+  <div class="form-card" style="margin-bottom:14px;">
+    <div class="field-row">
+      <label>Objetivo de TON / DÍA</label>
+      <input type="number" id="tnd-objetivo" placeholder="Ej: 10000" min="0" step="1" inputmode="numeric"/>
+    </div>
+    <button id="btn-generar-tendencia" class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="generarAnalisisTendencia()">Generar Análisis</button>
+    <p id="tnd-progreso" style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:center;"></p>
+  </div>
+
+  <div id="tnd-resultado" style="display:none;">
+    <div class="chart-card" style="margin-bottom:14px;">
+      <h3>Resumen comparativo</h3>
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="val" id="tnd-r2-lineal">—</div>
+          <div class="lbl">R² — Modelo lineal</div>
+        </div>
+        <div class="kpi-card">
+          <div class="val" id="tnd-r2-cuadratico">—</div>
+          <div class="lbl">R² — Modelo cuadrático</div>
+        </div>
+      </div>
+      <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo lineal (Y = a + bt)</div>
+        <div id="tnd-meta-lineal" style="font-weight:700;font-size:15px;">—</div>
+      </div>
+      <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo cuadrático (Y = a + bt + ct²)</div>
+        <div id="tnd-meta-cuadratico" style="font-weight:700;font-size:15px;">—</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Tonelaje diario y proyección</h3>
+      <div style="position:relative;height:320px;">
+        <canvas id="chart-tendencia"></canvas>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Puntos azules: tonelaje real por día laborable (lunes a viernes). Línea: proyección lineal. Curva: proyección cuadrática. Ambas hasta tocar el objetivo.</p>
+    </div>
+  </div>
+</div>
+
 <div class="tab-content" id="tab-admin">
   <div class="form-card" id="card-crear-cuenta" style="display:none;margin-bottom:10px;">
     <h3>
@@ -3629,7 +3701,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <div class="field-row">
       <label>Contraseña (mín. 6 caracteres)</label>
       <div style="position:relative;">
-        <input type="password" id="nc-pass" placeholder="••••••" autocomplete="new-password" style="padding-right:40px;"/>
+        <input type="password" id="nc-pass" placeholder="••••••" autocomplete="new-password" data-no-upper style="padding-right:40px;"/>
         <button type="button" class="pass-toggle-btn" onclick="togglePasswordVisibility('nc-pass', this)" aria-label="Mostrar contraseña" title="Mostrar contraseña" style="position:absolute;right:2px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;color:var(--text-muted);">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
@@ -3748,6 +3820,14 @@ window.cerrarMenuLateral = cerrarMenuLateral;
 // respetar mayúsculas/minúsculas normales de un nombre de persona). Ya no
 // hace falta el .toUpperCase() manual que traían placas/económico — se
 // deja donde ya estaba por si acaso, pero es redundante ahora.
+// Corrección 18-jul-2026: #login-pass y #nc-pass (contraseña) también
+// llevan data-no-upper. Bug real detectado: togglePasswordVisibility()
+// cambia el input de type="password" a type="text" para "mostrar" la
+// contraseña, y en ese momento SÍ entraban en "esTexto" de este mismo
+// listener — forzando a MAYÚSCULAS el valor REAL guardado en el campo
+// (no solo la vista), rompiendo contraseñas con minúsculas si se
+// escribía o corregía con la contraseña visible. Las contraseñas deben
+// quedar siempre en escritura libre, sin importar el type visible.
 document.addEventListener('input', function(e) {
   const el = e.target;
   const esTexto = el.tagName === 'TEXTAREA' ||
@@ -3791,6 +3871,59 @@ const RANGOS_ACOPIO = {
   'CORAZA':         ['5.8 ton', '10 ton', '16 ton', '19 ton'],
   'BERMA':          ['0.30 a 0.50 ton', '0.50 a 1.00 ton', '0.80 a 1.50 ton', '1.00 a 2.00 ton', '1.20 a 2.30 ton', '1.50 a 3.00 ton'],
   'BERMA DE APOYO': ['0.20 a 0.30 ton', '0.30 a 0.50 ton', '0.50 a 0.80 ton', '0.60 a 1.00 ton', '0.80 a 1.20 ton', '1.00 a 1.50 ton']
+};
+
+// ══════════════════════════════════════════════════════
+// 18-jul-2026 — Filtro Material → Destino en "Material y Destino".
+// Pedido por Jesús: no todos los materiales pueden ir a todos los
+// destinos, y antes el formulario dejaba seleccionar cualquier
+// combinación. Reglas de negocio confirmadas:
+//  - CORAZA: solo los 2 acopios y CUERPO 1/2/3 (el Muro no lleva coraza;
+//    Cuerpo 4 y 5 llevan core-locs, no coraza; Morro y Área de
+//    Prefabricados quedan fuera porque la instrucción los limita
+//    explícitamente a "solo... los dos acopios y los cuerpos").
+//  - NUCLEO: sin restricción — va a todos los acopios y todos los cuerpos.
+//  - SECUNDARIA 1, SECUNDARIA 2, BERMA, BERMA DE APOYO: a todos lados
+//    EXCEPTO Muro.
+// "AREA DE PREFABRICADOS" no se restringe por material (es un destino
+// genérico fuera de la estructura del rompeolas, no mencionado en las
+// reglas anteriores) y siempre queda disponible.
+// Se implementa como lista de EXCLUSIÓN (destinos que NO se permiten para
+// ese material) en vez de lista de inclusión, para que sea más corto de
+// leer y mantener.
+const EXCLUSIONES_DESTINO_POR_MATERIAL = {
+  'CORAZA':         ['MURO', 'MORRO', 'CUERPO 4', 'CUERPO 5', 'AREA DE PREFABRICADOS'],
+  'NUCLEO':         [],
+  'SECUNDARIA 1':   ['MURO'],
+  'SECUNDARIA 2':   ['MURO'],
+  'BERMA':          ['MURO'],
+  'BERMA DE APOYO': ['MURO']
+};
+
+// Deshabilita (no elimina, para no perder la opción si luego cambia el
+// material) las <option> de #f-destino que no apliquen al material
+// elegido. Si el destino ya seleccionado deja de ser válido, se limpia y
+// se avisa — pero SOLO cuando el cambio lo dispara el propio usuario
+// (ver editRecord, que llama a esta función ANTES de fijar el destino del
+// registro para no chocar con combinaciones antiguas ya guardadas).
+window.filtrarDestinosPorMaterial = function() {
+  const material = document.getElementById('f-material').value;
+  const sel = document.getElementById('f-destino');
+  if (!sel) return;
+  const excluidos = EXCLUSIONES_DESTINO_POR_MATERIAL[material] || [];
+  let seleccionInvalida = false;
+  Array.from(sel.options).forEach(opt => {
+    if (!opt.value) return; // deja siempre visible el placeholder "— Seleccionar —"
+    const excluido = excluidos.includes(opt.value);
+    opt.disabled = excluido;
+    if (excluido && sel.value === opt.value) seleccionInvalida = true;
+  });
+  if (seleccionInvalida) {
+    sel.value = '';
+    document.getElementById('f-rango').value = '';
+    if (typeof updateRangos === 'function') updateRangos();
+    alert('Ese material no se puede enviar al destino que tenías seleccionado. Elige un destino válido para ' + (material || 'el material') + '.');
+  }
 };
 
 // ══════════════════════════════════════════════════════
@@ -3959,7 +4092,14 @@ window.poblarPlacasDisponibles = async function() {
   sel.innerHTML = '<option value="">Cargando…</option>';
   try {
     const docs = await window.dbFilaBasculaBuscarPorTipo(tipo);
-    const disponibles = docs.filter(d => !d.data.cerrado && !d.data.id_ticket && d.data.t3_salida_ts);
+    // 18-jul-2026: además de estar libres (sin id_ticket, con salida a
+    // tiro ya registrada), solo deben ofrecerse al capturista los camiones
+    // que ÉL MISMO registró — mismo criterio que ya aplica Fila Báscula
+    // (puedoVerRegistroFila) para "Camiones con Material"/"Camiones
+    // Destare". Antes esto no se filtraba aquí, así que el capturista A
+    // veía en Captura también las placas que había liberado el
+    // capturista B. Admin, coordinador y master siguen viendo todo.
+    const disponibles = docs.filter(d => !d.data.cerrado && !d.data.id_ticket && d.data.t3_salida_ts && puedoVerRegistroFila(d.data));
     if (!disponibles.length) {
       sel.innerHTML = '<option value="">— Ninguno disponible, regístralo en Fila Báscula —</option>';
       return;
@@ -4583,6 +4723,7 @@ function clearForm() {
   });
   document.getElementById('f-fila-bascula-id').value = '';
   document.getElementById('f-material').selectedIndex = 0;
+  filtrarDestinosPorMaterial(); // sin material elegido, todos los destinos quedan habilitados de nuevo
   document.getElementById('f-origen-tipo').selectedIndex = 0;
   updateOrigenOptions();
   document.getElementById('f-destino').selectedIndex  = 0;
@@ -5556,9 +5697,11 @@ function renderResumenDia() {
   // Pendientes de destare: estatus global (sin importar banco, material ni fecha)
   const pendientesGlobal = datos.filter(r => r.status === 'pendiente');
   const pendGondolas = pendientesGlobal.filter(r => r.tipo_camion === 'GONDOLA').length;
+  const pendArticulados = pendientesGlobal.filter(r => r.tipo_camion === 'ARTICULADO').length; // 11.3 (18-jul-2026): antes se quedaba fuera de este resumen
   const pendVolteos  = pendientesGlobal.filter(r => r.tipo_camion === 'VOLTEO').length;
   const partesPend = [
     pendGondolas > 0 ? `${pendGondolas} góndola${pendGondolas > 1 ? 's' : ''}` : '',
+    pendArticulados > 0 ? `${pendArticulados} articulado${pendArticulados > 1 ? 's' : ''}` : '',
     pendVolteos  > 0 ? `${pendVolteos} volteo${pendVolteos > 1 ? 's' : ''}` : ''
   ].filter(Boolean).join(', ');
   const htmlPendientes = `<div style="margin-top:10px;padding-top:8px;border-top:0.5px solid rgba(15,110,86,0.25);font-weight:600;color:var(--warning);">⏳ Pendientes de destare: ${partesPend ? partesPend + '.' : 'ninguno.'}</div>`;
@@ -5645,6 +5788,7 @@ function renderReportesEstatus() {
 
   // Conteo tipo camión en pendientes
   const pendGondolas = pendientes.filter(r => r.tipo_camion === 'GONDOLA').length;
+  const pendArticulados = pendientes.filter(r => r.tipo_camion === 'ARTICULADO').length; // 11.3 (18-jul-2026): antes se quedaba fuera de este resumen
   const pendVolteos  = pendientes.filter(r => r.tipo_camion === 'VOLTEO').length;
 
   // ── Función auxiliar: agrupar lista por banco > grupos ──
@@ -5695,6 +5839,7 @@ function renderReportesEstatus() {
 
   const tipoPendStr = [
     pendGondolas > 0 ? `${pendGondolas} góndola${pendGondolas > 1 ? 's' : ''}` : '',
+    pendArticulados > 0 ? `${pendArticulados} articulado${pendArticulados > 1 ? 's' : ''}` : '',
     pendVolteos  > 0 ? `${pendVolteos} volteo${pendVolteos > 1 ? 's' : ''}` : ''
   ].filter(Boolean).join(' · ');
 
@@ -6511,8 +6656,8 @@ window.filtrarBuscadorDestare = function() {
       <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''} · Boleta ${r.boleta || '—'}</span><br>
       <span style="font-size:12px;color:var(--text-muted);">${estado}</span>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}')">🟢 Entra a fila</button>
-        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}')">🟡 Destarado</button>
+        <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}', this)">🟢 Entra a fila</button>
+        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
       </div>
     </div>`;
   }).join('');
@@ -6531,19 +6676,31 @@ window.onFilaBasculaCambio = function() {
   }
 };
 
-window.registrarEntradaFilaSegunda = async function(filaId) {
+// 18-jul-2026: antes, "Entra a fila" y "Destarado" solo quedaban
+// deshabilitados cuando el re-render disparado por el snapshot de
+// Firestore volvía a pintar la lista (onFilaBasculaCambio) — con la
+// latencia normal de red, un doble clic accidental alcanzaba a mandar
+// la escritura 2 veces antes de que llegara esa actualización. Ahora el
+// botón se deshabilita de inmediato al hacer clic (mismo elemento, vía
+// el segundo parámetro `btn`), sin esperar al round-trip de Firestore.
+// Si falla la escritura, se vuelve a habilitar para poder reintentar.
+window.registrarEntradaFilaSegunda = async function(filaId, btn) {
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await window.dbFilaBasculaActualizar(filaId, { t1b_fila_ts: Date.now() });
     window.showSyncToast('✅', '2da entrada a fila registrada', 'ok');
   } catch (e) {
+    if (btn) btn.disabled = false;
     alert('Error al registrar entrada: ' + e.message);
   }
 };
-window.registrarSalidaFilaSegunda = async function(filaId) {
+window.registrarSalidaFilaSegunda = async function(filaId, btn) {
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await window.dbFilaBasculaActualizar(filaId, { t3b_salida_ts: Date.now() });
     window.showSyncToast('✅', 'Destarado registrado — ya puedes capturar el peso en Pendientes', 'ok');
   } catch (e) {
+    if (btn) btn.disabled = false;
     alert('Error al registrar destarado: ' + e.message);
   }
 };
@@ -6682,8 +6839,7 @@ window.initSixSigmaTab = async function() {
 };
 
 // Six Sigma Bloque B.1: descarga puntual a Excel, acotada por rango de
-// fecha (obligatorio), pensada para pegar en Minitab (columnas numéricas,
-// timestamps en milisegundos, sin texto que requiera limpieza).
+// fecha (obligatorio).
 window.formatearFechaHoraTs = function(ts) {
   if (!ts) return '';
   const d = new Date(ts);
@@ -6691,6 +6847,28 @@ window.formatearFechaHoraTs = function(ts) {
   const hora = d.toLocaleTimeString('es-MX', { hour12: false });
   return fecha + ' ' + hora;
 };
+
+// 18-jul-2026: formatos numéricos reales "mm:ss" / "hh:mm:ss" para las
+// columnas de duración del Excel — antes usaban formatearDuracionSeg()
+// (pensada para las tarjetas KPI en pantalla, da "3 min 45s" o "0s"/"1s"
+// para valores chicos), que no es el formato mm:ss que dicen sus propios
+// encabezados. No se toca formatearDuracionSeg() porque las tarjetas KPI
+// del panel siguen usándola tal cual.
+function formatearMMSS(seg) {
+  if (seg === '' || seg == null || isNaN(seg)) return '';
+  const total = Math.max(0, Math.round(seg));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function formatearHHMMSS(seg) {
+  if (seg === '' || seg == null || isNaN(seg)) return '';
+  const total = Math.max(0, Math.round(seg));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
 
 window.descargarExcelSixSigma = async function() {
   const desdeStr = document.getElementById('ss-fecha-desde').value;
@@ -6707,10 +6885,23 @@ window.descargarExcelSixSigma = async function() {
     if (!docs.length) { alert('No hay capturas en ese rango de fechas.'); return; }
     const nombres = await window.dbUsuariosListar();
 
-    // Columnas "humanas" (fecha/hora legible, nombre en vez de uid) primero,
-    // y al final las columnas numéricas puras en segundos — esas son las que
-    // se usan para pegar en Minitab (duración, espera en fila, tiempo en
-    // frente). NaN/vacío se deja como celda en blanco, no como texto "NaN".
+    // 18-jul-2026 — Encabezados y orden revisados con Jesús para que se
+    // entiendan sin tener que adivinar qué mide cada columna:
+    //  - "Tiempo en fila bruto (mm:ss)" es columna nueva, movida justo
+    //    después de "Salida hacia frente" (antes existía pero hasta el
+    //    final de la hoja, en segundos planos).
+    //  - "2da Entrada a fila (Destare)" es el mismo dato que antes decía
+    //    "2a entrada a fila (vacío, de regreso)", solo se renombró.
+    //  - "Tiempo en tirar material (hh:mm:ss)": es el tiempo entre "Sale
+    //    a tiro" y que el camión se vuelve a formar ya vacío para el
+    //    destare. Se deja en hh:mm:ss (no mm:ss) porque si un camión no
+    //    regresa a destararse el mismo rato, el ciclo puede durar horas.
+    //  - Se quitaron las 4 columnas numéricas en segundos que traía la
+    //    hoja al final ("Duración captura (seg)", "Espera en fila bruto
+    //    (seg)", "Tiempo en viaje/frente (seg)", "Espera en fila tara
+    //    (seg)") porque eran el mismo dato duplicado de las columnas
+    //    mm:ss/hh:mm:ss de arriba — Jesús señaló el duplicado de
+    //    "Espera en fila tara (seg)" y aplica igual a las otras 3.
     const filas = docs.map(d => {
       const esperaBrutoSeg  = (d.t1_fila_ts && d.t2_bruto_ts) ? Math.max(0, Math.round((d.t2_bruto_ts - d.t1_fila_ts) / 1000)) : '';
       const tiempoFrenteSeg = (d.t3_salida_ts && d.t1b_fila_ts) ? Math.max(0, Math.round((d.t1b_fila_ts - d.t3_salida_ts) / 1000)) : '';
@@ -6718,30 +6909,26 @@ window.descargarExcelSixSigma = async function() {
       return {
         'Boleta': d.boleta || '',
         'Capturista': nombres[d.capturista_id] || d.capturista_id || '',
-        'Inicio de captura': window.formatearFechaHoraTs(d.captura_inicio_ts),
-        'Fin de captura': window.formatearFechaHoraTs(d.captura_fin_ts),
-        'Duración de captura': d.duracion_captura_seg != null ? formatearDuracionSeg(d.duracion_captura_seg) : '',
+        'Inicio Captura': window.formatearFechaHoraTs(d.captura_inicio_ts),
+        'Fin Captura': window.formatearFechaHoraTs(d.captura_fin_ts),
+        'Duracion de captura': d.duracion_captura_seg != null ? formatearDuracionSeg(d.duracion_captura_seg) : '',
         'Veces editado': d.ediciones_contador ?? 0,
-        '1a entrada a fila (cargado)': window.formatearFechaHoraTs(d.t1_fila_ts),
+        '1a Entrada a fila (Cargado)': window.formatearFechaHoraTs(d.t1_fila_ts),
+        'Salida hacia frente': window.formatearFechaHoraTs(d.t3_salida_ts),
+        'Tiempo en fila bruto (mm:ss)': formatearMMSS(esperaBrutoSeg),
         'Pesaje bruto': window.formatearFechaHoraTs(d.t2_bruto_ts),
-        'Salida hacia el frente': window.formatearFechaHoraTs(d.t3_salida_ts),
-        '2a entrada a fila (vacío, de regreso)': window.formatearFechaHoraTs(d.t1b_fila_ts),
+        '2da Entrada a fila (Destare)': window.formatearFechaHoraTs(d.t1b_fila_ts),
         'Pesaje tara/destare': window.formatearFechaHoraTs(d.t4_destare_ts),
-        'Espera en fila - bruto (mm:ss)': esperaBrutoSeg !== '' ? formatearDuracionSeg(esperaBrutoSeg) : '',
-        'Tiempo en el viaje/frente (mm:ss)': tiempoFrenteSeg !== '' ? formatearDuracionSeg(tiempoFrenteSeg) : '',
-        'Espera en fila - tara (mm:ss)': esperaTaraSeg !== '' ? formatearDuracionSeg(esperaTaraSeg) : '',
-        'Duración captura (seg)': d.duracion_captura_seg ?? '',
-        'Espera en fila bruto (seg)': esperaBrutoSeg,
-        'Tiempo en viaje/frente (seg)': tiempoFrenteSeg,
-        'Espera en fila tara (seg)': esperaTaraSeg,
-        'ID interno (referencia)': d.id_ticket || ''
+        'Tiempo en fila Tara (mm:ss)': formatearMMSS(esperaTaraSeg),
+        'Tiempo en tirar material (hh:mm:ss)': formatearHHMMSS(tiempoFrenteSeg),
+        'ID INTERNO': d.id_ticket || ''
       };
     });
     const worksheet = XLSX.utils.json_to_sheet(filas);
     worksheet['!cols'] = [
       { wch: 10 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 10 },
-      { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 20 }, { wch: 22 }, { wch: 20 },
-      { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 22 }
+      { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 22 }, { wch: 20 },
+      { wch: 20 }, { wch: 26 }, { wch: 22 }
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'stats_analisis');
@@ -6750,6 +6937,307 @@ window.descargarExcelSixSigma = async function() {
     alert('Error al generar el Excel: ' + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Descargar Excel (stats_analisis)'; }
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// 11.4 (18-jul-2026) — Análisis de Tendencias / Proyecciones (R²).
+// Solo visor y master (ver visibilidadPorTab). Botón "Generar Análisis"
+// dispara UNA lectura completa de `acarreos` (traerTodoFirestore), igual
+// de costosa que "Ver TODO el histórico" — por eso NO es un listener y
+// NO se dispara solo al entrar a la pestaña (initTendenciaTab no lee
+// nada, solo prepara la UI).
+//
+// Decisiones confirmadas por Jesús (16-jul-2026, TENDENCIA.md, y
+// 18-jul-2026 en esta sesión):
+//  - Día laborable = lunes a viernes. Sábado y domingo no cuentan en el
+//    índice t. Un día laborable sin registros SÍ ocupa su lugar en la
+//    secuencia con tonelaje 0 (no se salta, para no romper el espaciado
+//    uniforme que necesita la regresión).
+//  - Solo cuentan viajes con status 'completo' (tonelaje real, con tara
+//    ya capturada) — los 'pendiente' NO se incluyen en el tonelaje
+//    diario.
+//  - Si la meta ya se alcanzó (el propio modelo, evaluado en el último
+//    día real, ya iguala o supera el objetivo), se muestra cuánto se
+//    superó en vez de una fecha a futuro.
+//  - Si el modelo NUNCA cruza el objetivo con la pendiente actual
+//    (lineal con pendiente ≤ 0, o cuadrático sin raíz futura real): por
+//    decisión explícita de Jesús (18-jul-2026) igual se muestra una
+//    fecha, no un mensaje bloqueante de "no se alcanza". Como
+//    matemáticamente no existe una fecha real de cruce en ese caso, se
+//    usa un horizonte de referencia de 10 años (≈2,600 días laborables)
+//    desde el último día real, marcado explícitamente como
+//    "(referencial)" para no presentarlo como si fuera un cálculo exacto
+//    — no se inventa un número de toneladas falso, se es transparente en
+//    el texto de que la tendencia actual no cruza.
+window.initTendenciaTab = function() {
+  // Intencionalmente vacío: no dispara ninguna lectura de Firestore. El
+  // análisis solo se genera cuando el usuario le da clic a "Generar
+  // Análisis" (ver comentario de costo arriba).
+};
+
+function tnd_esDiaLaborable(fecha) {
+  const dow = fecha.getDay();
+  return dow !== 0 && dow !== 6;
+}
+
+// Avanza `n` días LABORABLES (enteros, redondeado hacia arriba) a partir
+// de fechaBase. Si n <= 0, regresa fechaBase tal cual. Con tope de
+// seguridad de 20,000 pasos (~77 años) para no colgar el navegador si
+// algo sale mal en el cálculo previo.
+function tnd_avanzarDiasLaborables(fechaBase, n) {
+  const d = new Date(fechaBase.getTime());
+  let restantes = Math.ceil(n);
+  let tope = 20000;
+  while (restantes > 0 && tope > 0) {
+    d.setDate(d.getDate() + 1);
+    if (tnd_esDiaLaborable(d)) restantes--;
+    tope--;
+  }
+  return d;
+}
+
+function tnd_regresionLineal(puntos) {
+  const n = puntos.length;
+  let sumT = 0, sumY = 0, sumTT = 0, sumTY = 0;
+  puntos.forEach(p => { sumT += p.t; sumY += p.y; sumTT += p.t * p.t; sumTY += p.t * p.y; });
+  const denom = (n * sumTT - sumT * sumT);
+  const b = denom !== 0 ? (n * sumTY - sumT * sumY) / denom : 0;
+  const a = (sumY - b * sumT) / n;
+  const meanY = sumY / n;
+  let ssTot = 0, ssRes = 0;
+  puntos.forEach(p => {
+    const yHat = a + b * p.t;
+    ssTot += Math.pow(p.y - meanY, 2);
+    ssRes += Math.pow(p.y - yHat, 2);
+  });
+  const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 1;
+  return { a, b, r2 };
+}
+
+function tnd_det3(m) {
+  return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+       - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+       + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+}
+
+function tnd_regresionCuadratica(puntos) {
+  const n = puntos.length;
+  let s0 = n, s1 = 0, s2 = 0, s3 = 0, s4 = 0, sy = 0, sty = 0, st2y = 0;
+  puntos.forEach(p => {
+    const t = p.t, t2 = t * t;
+    s1 += t; s2 += t2; s3 += t2 * t; s4 += t2 * t2;
+    sy += p.y; sty += t * p.y; st2y += t2 * p.y;
+  });
+  const M = [[s0, s1, s2], [s1, s2, s3], [s2, s3, s4]];
+  const D = tnd_det3(M);
+  let a = 0, b = 0, c = 0;
+  if (Math.abs(D) > 1e-9) {
+    const Ma = [[sy, s1, s2], [sty, s2, s3], [st2y, s3, s4]];
+    const Mb = [[s0, sy, s2], [s1, sty, s3], [s2, st2y, s4]];
+    const Mc = [[s0, s1, sy], [s1, s2, sty], [s2, s3, st2y]];
+    a = tnd_det3(Ma) / D; b = tnd_det3(Mb) / D; c = tnd_det3(Mc) / D;
+  }
+  const meanY = sy / n;
+  let ssTot = 0, ssRes = 0;
+  puntos.forEach(p => {
+    const yHat = a + b * p.t + c * p.t * p.t;
+    ssTot += Math.pow(p.y - meanY, 2);
+    ssRes += Math.pow(p.y - yHat, 2);
+  });
+  const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 1;
+  return { a, b, c, r2 };
+}
+
+// Construye la serie diaria (t=1..N, solo días laborables, con 0 en los
+// días sin registro completo) a partir de los registros ya filtrados por
+// status === 'completo'.
+function tnd_construirSerie(registrosCompletos) {
+  const tonPorFecha = {};
+  registrosCompletos.forEach(r => {
+    if (!r.fecha1) return;
+    const ton = r.ton != null ? r.ton : (r.neto_kg || 0) / 1000;
+    tonPorFecha[r.fecha1] = (tonPorFecha[r.fecha1] || 0) + ton;
+  });
+  const fechas = Object.keys(tonPorFecha).sort();
+  if (!fechas.length) return null;
+  const fechaInicio = window.parseDateForExcel(fechas[0]);
+  const fechaFin = window.parseDateForExcel(fechas[fechas.length - 1]);
+
+  const serie = [];
+  let t = 0;
+  const cursor = new Date(fechaInicio.getTime());
+  while (cursor.getTime() <= fechaFin.getTime()) {
+    if (tnd_esDiaLaborable(cursor)) {
+      t++;
+      const key = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
+      serie.push({ t, fecha: new Date(cursor.getTime()), y: tonPorFecha[key] || 0 });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return { serie, fechaFin };
+}
+
+// Despeja t para el modelo lineal (a + b t = objetivo) y arma el
+// resultado a mostrar: fecha proyectada, "ya se alcanzó", o referencial
+// a 10 años si la pendiente no cruza. `ultimoT`/`ultimaFecha` son el
+// último punto real de la serie.
+function tnd_resolverLineal(modelo, objetivo, ultimoT, ultimaFecha) {
+  const yActual = modelo.a + modelo.b * ultimoT;
+  if (yActual >= objetivo) {
+    return { alcanzada: true, exceso: yActual - objetivo };
+  }
+  if (modelo.b > 1e-9) {
+    const t = (objetivo - modelo.a) / modelo.b;
+    const fecha = tnd_avanzarDiasLaborables(ultimaFecha, t - ultimoT);
+    return { alcanzada: false, referencial: false, fecha };
+  }
+  // Pendiente plana o negativa: no hay cruce matemático real. Por
+  // decisión de Jesús se muestra igual una fecha, marcada como
+  // referencial a 10 años (~2,600 días laborables) en vez de bloquear
+  // con un mensaje de "no se alcanza".
+  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
+  return { alcanzada: false, referencial: true, fecha };
+}
+
+// Igual que el lineal pero para c t² + b t + (a - objetivo) = 0.
+function tnd_resolverCuadratico(modelo, objetivo, ultimoT, ultimaFecha) {
+  const { a, b, c } = modelo;
+  const yActual = a + b * ultimoT + c * ultimoT * ultimoT;
+  if (yActual >= objetivo) {
+    return { alcanzada: true, exceso: yActual - objetivo };
+  }
+  let raizValida = null;
+  if (Math.abs(c) > 1e-12) {
+    const disc = b * b - 4 * c * (a - objetivo);
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      const r1 = (-b + sq) / (2 * c);
+      const r2 = (-b - sq) / (2 * c);
+      [r1, r2].filter(r => r > ultimoT && isFinite(r)).sort((x, y) => x - y).forEach(r => {
+        if (raizValida === null) raizValida = r;
+      });
+    }
+  } else if (Math.abs(b) > 1e-9) {
+    const t = (objetivo - a) / b;
+    if (t > ultimoT) raizValida = t;
+  }
+  if (raizValida !== null) {
+    const fecha = tnd_avanzarDiasLaborables(ultimaFecha, raizValida - ultimoT);
+    return { alcanzada: false, referencial: false, fecha };
+  }
+  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
+  return { alcanzada: false, referencial: true, fecha };
+}
+
+function tnd_formatearFecha(fecha) {
+  return fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+let chartTendencia = null;
+
+window.generarAnalisisTendencia = async function() {
+  const objetivoInput = document.getElementById('tnd-objetivo');
+  const objetivo = parseFloat(objetivoInput.value);
+  if (!objetivo || objetivo <= 0) { alert('Captura un objetivo de TON/DÍA mayor a 0.'); return; }
+
+  const btn = document.getElementById('btn-generar-tendencia');
+  const progreso = document.getElementById('tnd-progreso');
+  const resultado = document.getElementById('tnd-resultado');
+  if (btn) btn.disabled = true;
+  if (resultado) resultado.style.display = 'none';
+  if (progreso) progreso.textContent = 'Leyendo histórico completo…';
+
+  try {
+    const todos = await window.traerTodoFirestore(null, null, (n) => {
+      if (progreso) progreso.textContent = `Leyendo histórico completo… ${n.toLocaleString('es-MX')} registro(s)`;
+    });
+    const completos = todos.filter(r => r.status === 'completo' && r.fecha1);
+    if (progreso) progreso.textContent = `${todos.length.toLocaleString('es-MX')} registro(s) leídos, ${completos.length.toLocaleString('es-MX')} completos usados para el análisis.`;
+
+    const datosSerie = tnd_construirSerie(completos);
+    if (!datosSerie || datosSerie.serie.length < 3) {
+      alert('No hay suficientes días con viajes completos para generar una regresión confiable (se necesitan al menos 3 días laborables con datos).');
+      return;
+    }
+    const { serie, fechaFin } = datosSerie;
+    const ultimoT = serie[serie.length - 1].t;
+
+    const puntosRegresion = serie.map(p => ({ t: p.t, y: p.y }));
+    const modeloLineal = tnd_regresionLineal(puntosRegresion);
+    const modeloCuadratico = tnd_regresionCuadratica(puntosRegresion);
+    const resLineal = tnd_resolverLineal(modeloLineal, objetivo, ultimoT, fechaFin);
+    const resCuadratico = tnd_resolverCuadratico(modeloCuadratico, objetivo, ultimoT, fechaFin);
+
+    document.getElementById('tnd-r2-lineal').textContent = (modeloLineal.r2 * 100).toFixed(1) + '%';
+    document.getElementById('tnd-r2-cuadratico').textContent = (modeloCuadratico.r2 * 100).toFixed(1) + '%';
+
+    const pintarResultado = (elId, res) => {
+      const el = document.getElementById(elId);
+      if (res.alcanzada) {
+        el.textContent = `✅ Meta ya superada por ${res.exceso.toFixed(1)} ton/día (con la tendencia actual)`;
+      } else if (res.referencial) {
+        el.textContent = `⚠️ Con la pendiente actual no hay un cruce matemático real — fecha referencial (horizonte de 10 años): ${tnd_formatearFecha(res.fecha)}`;
+      } else {
+        el.textContent = `📅 Se alcanzaría el ${tnd_formatearFecha(res.fecha)}`;
+      }
+    };
+    pintarResultado('tnd-meta-lineal', resLineal);
+    pintarResultado('tnd-meta-cuadratico', resCuadratico);
+
+    // Gráfico mixto: puntos reales + proyección de cada modelo hasta su
+    // fecha de cruce (o hasta el horizonte referencial de 10 años).
+    const tFinLineal = resLineal.alcanzada ? ultimoT : (resLineal.referencial ? ultimoT + 2600 : (objetivo - modeloLineal.a) / modeloLineal.b);
+    const tFinCuadratico = resCuadratico.alcanzada ? ultimoT : (resCuadratico.referencial ? ultimoT + 2600 : Math.max(ultimoT, tFinLineal));
+    const tFinGrafica = Math.max(ultimoT, tFinLineal, tFinCuadratico, ultimoT + 1);
+    const pasoProyeccion = Math.max(1, Math.round((tFinGrafica - ultimoT) / 60));
+
+    const puntosReales = serie.map(p => ({ x: p.t, y: +p.y.toFixed(2) }));
+    const lineaLineal = [];
+    const curvaCuadratica = [];
+    for (let t = 1; t <= tFinGrafica; t += (t < ultimoT ? Math.max(1, Math.round(ultimoT / 40)) : pasoProyeccion)) {
+      lineaLineal.push({ x: t, y: +(modeloLineal.a + modeloLineal.b * t).toFixed(2) });
+      curvaCuadratica.push({ x: t, y: +(modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t).toFixed(2) });
+    }
+
+    if (typeof Chart !== 'undefined') {
+      const ctx = document.getElementById('chart-tendencia').getContext('2d');
+      if (chartTendencia) chartTendencia.destroy();
+      chartTendencia = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [
+            { type: 'scatter', label: 'Tonelaje real diario', data: puntosReales, backgroundColor: '#1a4f8a', pointRadius: 3 },
+            { type: 'line', label: 'Proyección lineal', data: lineaLineal, borderColor: '#0f6e56', borderWidth: 2, pointRadius: 0, fill: false, tension: 0 },
+            { type: 'line', label: 'Proyección cuadrática', data: curvaCuadratica, borderColor: '#a32d2d', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.25 },
+            { type: 'line', label: 'Objetivo', data: [{ x: 1, y: objetivo }, { x: tFinGrafica, y: objetivo }], borderColor: '#854f0b', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { x: { title: { display: true, text: 'Día laborable (t)' } }, y: { title: { display: true, text: 'Toneladas' } } },
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: (ctxT) => {
+                  const t = ctxT.raw.x;
+                  const fechaEtq = t <= ultimoT ? tnd_avanzarDiasLaborables(serie[0].fecha, t - 1) : tnd_avanzarDiasLaborables(fechaFin, t - ultimoT);
+                  return `${ctxT.dataset.label}: ${ctxT.raw.y.toFixed(1)} t — ${tnd_formatearFecha(fechaEtq)}`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    if (resultado) resultado.style.display = '';
+    if (progreso) progreso.textContent = `Análisis generado con ${serie.length.toLocaleString('es-MX')} día(s) laborables (${completos.length.toLocaleString('es-MX')} viajes completos).`;
+  } catch (e) {
+    alert('Error al generar el análisis: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 };
 
@@ -7037,60 +7525,102 @@ function renderBancosFolio() {
 window.renderBancosFolio = renderBancosFolio;
 
 // FASE 16.4.1 — Exportar PDF de la tabla de Bancos, mismo estándar que 16.2
+// 11.2 (18-jul-2026): rediseñado de resumen agregado (banco > material) a
+// desglose viaje por viaje, a pedido de Jesús — se necesita identificar el
+// camión exacto (placa/folio) de cada viaje para conciliar contra el banco
+// y el sindicato. La tabla agregada en pantalla (renderBancosTabla) NO se
+// tocó, solo el PDF. Mismos filtros de siempre (getBancosFiltradoBase):
+// banco + periodo (día/semana/mes/rango).
 function descargarPdfBancos() {
  // Fix 10-jul-2026 (v4) — Mismo try/catch de diagnóstico que descargarPdfResumen().
  try {
   const filtered = getBancosFiltradoBase();
   if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
 
-  const porBanco = construirJerarquiaBancos(filtered);
-  const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
-  const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+  const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const body = [];
-  const niveles = [];
-  ordenBancos.forEach(b => {
-    const bd = porBanco[b];
-    body.push([nombreBanco(b), String(bd.viajes), fmtTon(bd.ton), fmtProm(bd.ton, bd.viajes)]);
-    niveles.push(0);
-    const materiales = Object.keys(bd.materiales).sort((x,y) => nombreMaterial(x).localeCompare(nombreMaterial(y)));
-    materiales.forEach(m => {
-      const md = bd.materiales[m];
-      body.push(['   ' + nombreMaterial(m), String(md.viajes), fmtTon(md.ton), fmtProm(md.ton, md.viajes)]);
-      niveles.push(1);
-    });
+  // Orden: banco, luego fecha, luego placa — para que sea fácil de leer
+  // y cotejar viaje por viaje contra el ticket físico.
+  const filas = filtered.slice().sort((a, b) => {
+    const nb = nombreBanco(a.banco).localeCompare(nombreBanco(b.banco));
+    if (nb !== 0) return nb;
+    const nf = (a.fecha1 || '').localeCompare(b.fecha1 || '');
+    if (nf !== 0) return nf;
+    return (a.placas || '').localeCompare(b.placas || '');
   });
-  const totalViajes = filtered.length;
-  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
-  body.push(['TOTAL GENERAL', String(totalViajes), fmtTon(totalTon), fmtProm(totalTon, totalViajes)]);
-  niveles.push(-1);
 
+  const body = filas.map(r => {
+    const ton = r.ton || (r.neto_kg || 0) / 1000;
+    return [
+      nombreBanco(r.banco),
+      fmtFechaCorta(r.fecha1),
+      r.placas || '—',
+      r.folio || '—',
+      nombreMaterial(r.material),
+      '1',
+      fmtTon(ton),
+      fmtTon(ton) // Ton/Viaje de un solo viaje = su propia tonelada; el promedio real va en la fila de TOTAL GENERAL.
+    ];
+  });
+
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+  const promedioGeneral = totalViajes ? totalTon / totalViajes : 0;
+  body.push(['TOTAL GENERAL', '', '', '', '', String(totalViajes), fmtTon(totalTon), fmtTon(promedioGeneral)]);
+  const filaTotalIdx = body.length - 1;
+
+  // 11.2: encabezado del rango de fechas REAL que se está mostrando (no
+  // la fecha/hora de impresión). Si el filtro de periodo trae fechas
+  // explícitas se usan esas; si el usuario dejó "Rango de días" sin
+  // capturar desde/hasta, se calcula el rango real a partir de los datos
+  // filtrados (primer y último fecha1 encontrados), para que el
+  // encabezado nunca diga "todos los días" sin más.
+  const rangoPeriodo = getRangoPeriodoBancos();
+  let desdeTxt = rangoPeriodo.desde, hastaTxt = rangoPeriodo.hasta;
+  if (!desdeTxt || !hastaTxt) {
+    const fechasOrdenadas = filas.map(r => r.fecha1).filter(Boolean).sort();
+    desdeTxt = desdeTxt || fechasOrdenadas[0];
+    hastaTxt = hastaTxt || fechasOrdenadas[fechasOrdenadas.length - 1];
+  }
+  const tituloRango = (desdeTxt === hastaTxt)
+    ? `Viajes de camiones del día ${fmtFechaCorta(desdeTxt)}`
+    : `Viajes de camiones del día ${fmtFechaCorta(desdeTxt)} al día ${fmtFechaCorta(hastaTxt)}`;
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  // Landscape (antes portrait): con las 3 columnas nuevas (Placa, Folio,
+  // Viaje) el ancho de portrait (8.5") se queda corto; horizontal da más
+  // espacio útil para no truncar folios/placas dobles de góndola.
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'in', format: 'letter' });
+  const anchoHoja = 11, altoHoja = 8.5;
   const marginX = 0.6;
-  const anchoUtil = 8.5 - marginX * 2;
-  let y = 0.7;
+  const anchoUtil = anchoHoja - marginX * 2;
+  let y = 0.6;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', 8.5 / 2, y, { align: 'center' });
-  y += 0.25;
+  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', anchoHoja / 2, y, { align: 'center' });
+  y += 0.22;
   doc.setFontSize(11);
-  doc.text('Conciliación por banco', 8.5 / 2, y, { align: 'center' });
-  y += 0.3;
+  doc.text('Conciliación por banco — desglose por viaje', anchoHoja / 2, y, { align: 'center' });
+  y += 0.26;
+
+  // 11.2: rango de fechas filtrado, en vez de la fecha/hora de impresión.
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(tituloRango, marginX, y);
+  y += 0.18;
 
   const ahora = new Date();
   const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX', { hour12: false });
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);
-  y += 0.2;
+  doc.setFontSize(8);
+  doc.text(`Generado: ${fechaGen}`, marginX, y);
+  y += 0.18;
 
   const bancosSel = getMsSelected('bancos-banco').map(nombreBanco);
   if (bancosSel.length) {
     doc.setFont('helvetica', 'italic');
+    doc.setFontSize(9);
     const lineas = doc.splitTextToSize('Filtros activos: Banco: ' + bancosSel.join(', '), anchoUtil);
     doc.text(lineas, marginX, y);
     y += 0.15 * lineas.length + 0.05;
@@ -7100,30 +7630,33 @@ function descargarPdfBancos() {
   y += 0.05;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text(`Viajes totales: ${totalViajes}   ·   Toneladas totales: ${fmtTon(totalTon)} t`, marginX, y);
+  doc.text(`Viajes totales: ${totalViajes}   ·   Toneladas totales: ${fmtTon(totalTon)} t   ·   Promedio Ton/Viaje: ${fmtTon(promedioGeneral)} t`, marginX, y);
   y += 0.2;
 
   doc.autoTable({
     startY: y,
-    head: [['BANCO / MATERIAL', 'VIAJES', 'TON.', 'T/VIAJE']],
+    head: [['BANCO', 'FECHA', 'PLACA', 'FOLIO', 'MATERIAL', 'VIAJE', 'TONELADA', 'TON/VIAJE']],
     body: body,
-    // Fix 10-jul-2026 (v6) — mismo bug que en descargarPdfResumen(): ver
-    // el comentario ahí. cellPadding en pulgadas correctas (~3pt).
     styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak' },
     headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: anchoUtil - 2.1 },
-      1: { halign: 'right', cellWidth: 0.7 },
-      2: { halign: 'right', cellWidth: 0.75 },
-      3: { halign: 'right', cellWidth: 0.65 }
+      0: { cellWidth: 1.7 },                    // Banco
+      1: { cellWidth: 0.75, halign: 'center' }, // Fecha
+      2: { cellWidth: 1.35 },                   // Placa (dobles de góndola/articulado)
+      3: { cellWidth: 0.95 },                   // Folio
+      4: { cellWidth: 1.35 },                   // Material
+      5: { cellWidth: 0.55, halign: 'right' },  // Viaje
+      6: { cellWidth: 0.85, halign: 'right' },  // Tonelada
+      7: { cellWidth: 0.9, halign: 'right' }    // Ton/Viaje
     },
     margin: { left: marginX, right: marginX },
     didParseCell: (data) => {
       if (data.section !== 'body') return;
-      const nivel = niveles[data.row.index];
-      if (nivel === 0) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [225, 235, 245]; }
-      else if (nivel === 1) { data.cell.styles.fontSize = 7.5; }
-      else if (nivel === -1) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fillColor = [40, 40, 40]; data.cell.styles.textColor = 255; }
+      if (data.row.index === filaTotalIdx) {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fillColor = [40, 40, 40];
+        data.cell.styles.textColor = 255;
+      }
     }
   });
 

@@ -3679,7 +3679,8 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <div style="position:relative;height:320px;">
         <canvas id="chart-tendencia"></canvas>
       </div>
-      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Puntos azules: tonelaje real por día laborable (lunes a viernes). Línea: proyección lineal. Curva: proyección cuadrática. Ambas hasta tocar el objetivo.</p>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Puntos azules: tonelaje real por día laborable (lunes a viernes). Línea: proyección lineal. Curva: proyección cuadrática.</p>
+      <p id="tnd-nota-recorte" style="display:none;font-size:11px;color:var(--warning);margin-top:4px;">⚠️ La gráfica se recortó a un horizonte visual razonable — la fecha proyectada de arriba sigue siendo exacta aunque la línea/curva no llegue a tocar el objetivo en el dibujo.</p>
     </div>
   </div>
 </div>
@@ -5551,7 +5552,7 @@ window.usarVentanaRecienteEnResumen = function() {
 };
 
 window.cargarHistoricoCompletoResumen = async function() {
-  if (!resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
+  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
   const btn = document.getElementById('btn-resumen-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -7144,15 +7145,43 @@ window.generarAnalisisTendencia = async function() {
   const btn = document.getElementById('btn-generar-tendencia');
   const progreso = document.getElementById('tnd-progreso');
   const resultado = document.getElementById('tnd-resultado');
-  if (btn) btn.disabled = true;
   if (resultado) resultado.style.display = 'none';
-  if (progreso) progreso.textContent = 'Leyendo histórico completo…';
+
+  // 18-jul-2026: si Bancos/Reportes/Resumen/Gráficos ya cargaron el
+  // histórico completo en esta sesión (botón "Ver TODO el histórico"), se
+  // reutiliza esa misma copia en memoria — evita otra lectura completa de
+  // ~6,000+ documentos. Si nadie lo cargó todavía, se pide confirmación
+  // con el costo estimado (mismo diálogo que usan esos botones) antes de
+  // leer, en vez de disparar la lectura sola con cada clic en "Generar".
+  let todos = window.resumenHistoricoCompleto;
+  if (!todos) {
+    if (!(await confirmarLecturaCompleta(null, null))) return;
+    if (btn) btn.disabled = true;
+    if (progreso) progreso.textContent = 'Leyendo histórico completo…';
+    try {
+      todos = await window.traerTodoFirestore(null, null, (n) => {
+        if (progreso) progreso.textContent = `Leyendo histórico completo… ${n.toLocaleString('es-MX')} registro(s)`;
+      });
+      window.resumenHistoricoCompleto = todos; // queda cacheado para Bancos/Reportes/Resumen y para no repetir esta misma lectura
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      alert('Error al leer el histórico: ' + e.message);
+      return;
+    }
+  } else if (btn) {
+    btn.disabled = true;
+  }
 
   try {
-    const todos = await window.traerTodoFirestore(null, null, (n) => {
-      if (progreso) progreso.textContent = `Leyendo histórico completo… ${n.toLocaleString('es-MX')} registro(s)`;
+    // 18-jul-2026: filtrar por status==='completo' dejaba fuera casi todo
+    // el histórico — muchos registros migrados/antiguos no tienen ese
+    // campo poblado de forma consistente (el status pendiente/completo es
+    // de una fase posterior). Un ticket con toneladas > 0 ya implica que
+    // el 2do pesaje/destare se completó, sin depender de ese campo.
+    const completos = todos.filter(r => {
+      const ton = r.ton || ((r.neto_kg || 0) / 1000);
+      return ton > 0 && r.fecha1 && r.status !== 'pendiente' && r.status !== 'conflicto';
     });
-    const completos = todos.filter(r => r.status === 'completo' && r.fecha1);
     if (progreso) progreso.textContent = `${todos.length.toLocaleString('es-MX')} registro(s) leídos, ${completos.length.toLocaleString('es-MX')} completos usados para el análisis.`;
 
     const datosSerie = tnd_construirSerie(completos);
@@ -7190,15 +7219,28 @@ window.generarAnalisisTendencia = async function() {
     const tFinLineal = resLineal.alcanzada ? ultimoT : (resLineal.referencial ? ultimoT + 2600 : (objetivo - modeloLineal.a) / modeloLineal.b);
     const tFinCuadratico = resCuadratico.alcanzada ? ultimoT : (resCuadratico.referencial ? ultimoT + 2600 : Math.max(ultimoT, tFinLineal));
     const tFinGrafica = Math.max(ultimoT, tFinLineal, tFinCuadratico, ultimoT + 1);
-    const pasoProyeccion = Math.max(1, Math.round((tFinGrafica - ultimoT) / 60));
+    // 18-jul-2026: la fecha proyectada en TEXTO (resLineal.fecha/resCuadratico.fecha)
+    // sigue siendo exacta sin importar qué tan lejos caiga, pero la GRÁFICA
+    // se limita a un horizonte visual razonable — si no, con pocos días de
+    // historial reales (los puntos azules) la proyección los deja invisibles
+    // al estirar el eje X hasta una fecha años en el futuro (visto en
+    // capturas de Jesús, 18-jul-2026: eje llegando a t=800 con datos reales
+    // solo hasta t=5).
+    const HORIZONTE_VISUAL_MIN = 40; // ~2 meses de días laborables, piso para que la gráfica no se vea vacía con pocos datos
+    const horizonteVisualMax = Math.max(HORIZONTE_VISUAL_MIN, ultimoT * 4);
+    const graficaRecortada = tFinGrafica > ultimoT + horizonteVisualMax;
+    const tFinGraficaVisual = graficaRecortada ? (ultimoT + horizonteVisualMax) : tFinGrafica;
+    const pasoProyeccion = Math.max(1, Math.round((tFinGraficaVisual - ultimoT) / 60));
 
     const puntosReales = serie.map(p => ({ x: p.t, y: +p.y.toFixed(2) }));
     const lineaLineal = [];
     const curvaCuadratica = [];
-    for (let t = 1; t <= tFinGrafica; t += (t < ultimoT ? Math.max(1, Math.round(ultimoT / 40)) : pasoProyeccion)) {
+    for (let t = 1; t <= tFinGraficaVisual; t += (t < ultimoT ? Math.max(1, Math.round(ultimoT / 40)) : pasoProyeccion)) {
       lineaLineal.push({ x: t, y: +(modeloLineal.a + modeloLineal.b * t).toFixed(2) });
       curvaCuadratica.push({ x: t, y: +(modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t).toFixed(2) });
     }
+
+    document.getElementById('tnd-nota-recorte').style.display = graficaRecortada ? 'block' : 'none';
 
     if (typeof Chart !== 'undefined') {
       const ctx = document.getElementById('chart-tendencia').getContext('2d');
@@ -7210,7 +7252,7 @@ window.generarAnalisisTendencia = async function() {
             { type: 'scatter', label: 'Tonelaje real diario', data: puntosReales, backgroundColor: '#1a4f8a', pointRadius: 3 },
             { type: 'line', label: 'Proyección lineal', data: lineaLineal, borderColor: '#0f6e56', borderWidth: 2, pointRadius: 0, fill: false, tension: 0 },
             { type: 'line', label: 'Proyección cuadrática', data: curvaCuadratica, borderColor: '#a32d2d', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.25 },
-            { type: 'line', label: 'Objetivo', data: [{ x: 1, y: objetivo }, { x: tFinGrafica, y: objetivo }], borderColor: '#854f0b', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false }
+            { type: 'line', label: 'Objetivo', data: [{ x: 1, y: objetivo }, { x: tFinGraficaVisual, y: objetivo }], borderColor: '#854f0b', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false }
           ]
         },
         options: {
@@ -7377,7 +7419,7 @@ window.usarVentanaRecienteEnBancos = function() {
 };
 
 window.cargarHistoricoCompletoBancos = async function() {
-  if (!resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
+  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
   const btn = document.getElementById('btn-bancos-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -7405,28 +7447,23 @@ function limpiarFiltrosBancos() {
 }
 window.limpiarFiltrosBancos = limpiarFiltrosBancos;
 
-// Estructura: banco -> material -> { viajes, ton }  (sin nivel de destino, a diferencia de Resumen)
-function construirJerarquiaBancos(filtered) {
-  const porBanco = {};
-  filtered.forEach(r => {
-    const ton = r.ton || (r.neto_kg || 0) / 1000;
-    const b = r.banco || 'SIN BANCO';
-    const m = r.material || 'SIN MATERIAL';
-    if (!porBanco[b]) porBanco[b] = { viajes: 0, ton: 0, materiales: {} };
-    porBanco[b].viajes += 1; porBanco[b].ton += ton;
-    if (!porBanco[b].materiales[m]) porBanco[b].materiales[m] = { viajes: 0, ton: 0 };
-    porBanco[b].materiales[m].viajes += 1;
-    porBanco[b].materiales[m].ton += ton;
-  });
-  return porBanco;
-}
-
 function renderBancosTabla(filtered) {
   const wrap = document.getElementById('bancos-tabla');
   if (!wrap) return;
   if (!filtered.length) { wrap.innerHTML = ''; return; }
-
   const porBanco = construirJerarquiaBancos(filtered);
+  const totalViajes = filtered.length;
+  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon);
+}
+
+// 18-jul-2026: HTML de la tabla, ahora separado de construirJerarquiaBancos()
+// para poder alimentarla también desde el resumen por agregados mensuales
+// (calcularResumenBancosAgregado), sin necesitar los registros fila por fila.
+function renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon) {
+  const wrap = document.getElementById('bancos-tabla');
+  if (!wrap) return;
+  if (!totalViajes) { wrap.innerHTML = ''; return; }
   const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
   const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
@@ -7469,8 +7506,6 @@ function renderBancosTabla(filtered) {
     });
   });
 
-  const totalViajes = filtered.length;
-  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   html += `
     <div style="${row('var(--text)','11px 12px','700','13px','white')}">
       <div>TOTAL GENERAL</div>
@@ -7482,14 +7517,102 @@ function renderBancosTabla(filtered) {
   wrap.innerHTML = html;
 }
 
-function renderBancos() {
-  const filtered = getBancosFiltradoBase();
+// 18-jul-2026 (punto 11.1 de las observaciones) — resumen de Bancos exacto
+// y automático para CUALQUIER rango de fechas, sin depender de "Ver TODO
+// el histórico" ni de la ventana reciente cargada:
+//  - Meses COMPLETOS dentro del rango: 1 lectura por mes, del agregado
+//    resumenes/{YYYY-MM}.por_banco_material_rango que YA se mantiene con
+//    increment() en cada alta/edición/baja (gratis, no es lectura extra
+//    de mantenerlo — solo de leerlo aquí).
+//  - Meses PARCIALES en los extremos del rango: 1 consulta acotada SOLO a
+//    esos días exactos (traerTodoFirestore con fechas), nunca al
+//    histórico completo.
+// Costo típico: unos cuantos reads por mes + 0-2 consultas acotadas, en
+// vez de miles de lecturas de "Ver TODO".
+async function calcularResumenBancosAgregado(desde, hasta, bancosFiltro) {
+  const hoy = isoHoy();
+  const desdeEf = desde || '2025-01-01';
+  const hastaEf = hasta || hoy;
+  const resultado = {};
+  let totalViajes = 0, totalTon = 0;
+  const acumular = (banco, material, viajes, ton) => {
+    if (!banco) return;
+    if (bancosFiltro && bancosFiltro.length && !bancosFiltro.includes(banco)) return;
+    if (!resultado[banco]) resultado[banco] = { viajes: 0, ton: 0, materiales: {} };
+    resultado[banco].viajes += viajes; resultado[banco].ton += ton;
+    const m = material || 'SIN MATERIAL';
+    if (!resultado[banco].materiales[m]) resultado[banco].materiales[m] = { viajes: 0, ton: 0 };
+    resultado[banco].materiales[m].viajes += viajes;
+    resultado[banco].materiales[m].ton += ton;
+    totalViajes += viajes; totalTon += ton;
+  };
+
+  const meses = [];
+  let [ay, am] = desdeEf.split('-').map(Number);
+  const [by, bm] = hastaEf.split('-').map(Number);
+  while (ay < by || (ay === by && am <= bm)) {
+    meses.push(`${ay}-${String(am).padStart(2,'0')}`);
+    am++; if (am > 12) { am = 1; ay++; }
+  }
+
+  for (const mes of meses) {
+    const primerDia = `${mes}-01`;
+    const [my, mm] = mes.split('-').map(Number);
+    const ultimoDiaNum = new Date(my, mm, 0).getDate();
+    const ultimoDia = `${mes}-${String(ultimoDiaNum).padStart(2,'0')}`;
+    const cubreTodoElMes = desdeEf <= primerDia && hastaEf >= ultimoDia;
+
+    if (cubreTodoElMes) {
+      try {
+        const snap = await window.leerDocResumen(mes);
+        if (snap.exists()) {
+          const d = snap.data();
+          Object.values(d.por_banco_material_rango || {}).forEach(item => {
+            acumular(item.banco, item.material, item.viajes || 0, item.ton || 0);
+          });
+        }
+      } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
+    } else {
+      const subDesde = desdeEf > primerDia ? desdeEf : primerDia;
+      const subHasta = hastaEf < ultimoDia ? hastaEf : ultimoDia;
+      try {
+        const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
+        registrosMes.forEach(r => {
+          const ton = r.ton || (r.neto_kg||0)/1000;
+          acumular(r.banco || 'SIN BANCO', r.material || 'SIN MATERIAL', 1, ton);
+        });
+      } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
+    }
+  }
+  return { porBanco: resultado, totalViajes, totalTon };
+}
+
+async function renderBancos() {
+  const { desde, hasta } = getRangoPeriodoBancos();
+  const bancos = getMsSelected('bancos-banco');
   const emptyState = document.getElementById('bancos-empty-state');
-  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
-  document.getElementById('bancos-kpi-viajes').textContent    = filtered.length;
-  document.getElementById('bancos-kpi-toneladas').textContent = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
-  if (emptyState) emptyState.style.display = filtered.length ? 'none' : 'block';
-  renderBancosTabla(filtered);
+  const wrap = document.getElementById('bancos-tabla');
+  const kpiViajes = document.getElementById('bancos-kpi-viajes');
+  const kpiTon = document.getElementById('bancos-kpi-toneladas');
+  if (wrap) wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">Calculando…</p>';
+
+  try {
+    const { porBanco, totalViajes, totalTon } = await calcularResumenBancosAgregado(desde, hasta, bancos);
+    kpiViajes.textContent = totalViajes;
+    kpiTon.textContent = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+    if (emptyState) emptyState.style.display = totalViajes ? 'none' : 'block';
+    renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon);
+  } catch (e) {
+    console.warn('No se pudo calcular el resumen de Bancos por agregados mensuales, usando ventana cargada:', e);
+    // Respaldo: si algo falla (p.ej. sin conexión momentánea), se cae al
+    // comportamiento anterior con lo que ya esté cargado en memoria.
+    const filtered = getBancosFiltradoBase();
+    const totalTonFallback = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+    kpiViajes.textContent = filtered.length;
+    kpiTon.textContent = totalTonFallback.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+    if (emptyState) emptyState.style.display = filtered.length ? 'none' : 'block';
+    renderBancosTabla(filtered);
+  }
 }
 window.renderBancos = renderBancos;
 
@@ -7531,22 +7654,45 @@ window.renderBancosFolio = renderBancosFolio;
 // y el sindicato. La tabla agregada en pantalla (renderBancosTabla) NO se
 // tocó, solo el PDF. Mismos filtros de siempre (getBancosFiltradoBase):
 // banco + periodo (día/semana/mes/rango).
-function descargarPdfBancos() {
+async function descargarPdfBancos() {
  // Fix 10-jul-2026 (v4) — Mismo try/catch de diagnóstico que descargarPdfResumen().
  try {
-  const filtered = getBancosFiltradoBase();
+  const rangoPeriodo = getRangoPeriodoBancos();
+  const btnPdf = document.getElementById('btn-bancos-pdf');
+  const btnHtmlPdf = btnPdf ? btnPdf.innerHTML : '';
+  let filtered;
+  if (rangoPeriodo.desde && rangoPeriodo.hasta) {
+    // 18-jul-2026: lectura acotada EXACTA al rango seleccionado — nunca
+    // depende de "Ver TODO el histórico" ni de la ventana reciente
+    // cargada, así el PDF siempre sale completo con solo fijar Desde/Hasta.
+    if (btnPdf) { btnPdf.disabled = true; btnPdf.innerHTML = '<span class="spin"></span> Leyendo…'; }
+    try {
+      const registros = await window.traerTodoFirestore(rangoPeriodo.desde, rangoPeriodo.hasta);
+      const bancosSelPdf = getMsSelected('bancos-banco');
+      filtered = bancosSelPdf.length ? registros.filter(r => bancosSelPdf.includes(r.banco)) : registros;
+    } finally {
+      if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = btnHtmlPdf; }
+    }
+  } else {
+    // Sin rango fijado (p.ej. "Día"/"Semana"/"Mes" con selección puntual,
+    // o el usuario dejó "Rango" vacío): se usa lo ya cargado en memoria,
+    // igual que antes.
+    filtered = getBancosFiltradoBase();
+  }
   if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
 
   const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // Orden: banco, luego fecha, luego placa — para que sea fácil de leer
-  // y cotejar viaje por viaje contra el ticket físico.
+  // Orden: banco, luego fecha, luego folio (ascendente, numérico) — antes
+  // ordenaba por placa, lo que dejaba los folios sin ningún orden útil
+  // para cotejar contra el talonario físico.
+  const folioNum = (r) => parseInt(String(r.folio || '').replace(/\D/g, ''), 10) || 0;
   const filas = filtered.slice().sort((a, b) => {
     const nb = nombreBanco(a.banco).localeCompare(nombreBanco(b.banco));
     if (nb !== 0) return nb;
     const nf = (a.fecha1 || '').localeCompare(b.fecha1 || '');
     if (nf !== 0) return nf;
-    return (a.placas || '').localeCompare(b.placas || '');
+    return folioNum(a) - folioNum(b);
   });
 
   const body = filas.map(r => {
@@ -7554,6 +7700,7 @@ function descargarPdfBancos() {
     return [
       nombreBanco(r.banco),
       fmtFechaCorta(r.fecha1),
+      r.boleta || '—',
       r.placas || '—',
       r.folio || '—',
       nombreMaterial(r.material),
@@ -7566,7 +7713,7 @@ function descargarPdfBancos() {
   const totalViajes = filtered.length;
   const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
   const promedioGeneral = totalViajes ? totalTon / totalViajes : 0;
-  body.push(['TOTAL GENERAL', '', '', '', '', String(totalViajes), fmtTon(totalTon), fmtTon(promedioGeneral)]);
+  body.push(['TOTAL GENERAL', '', '', '', '', '', String(totalViajes), fmtTon(totalTon), fmtTon(promedioGeneral)]);
   const filaTotalIdx = body.length - 1;
 
   // 11.2: encabezado del rango de fechas REAL que se está mostrando (no
@@ -7575,7 +7722,6 @@ function descargarPdfBancos() {
   // capturar desde/hasta, se calcula el rango real a partir de los datos
   // filtrados (primer y último fecha1 encontrados), para que el
   // encabezado nunca diga "todos los días" sin más.
-  const rangoPeriodo = getRangoPeriodoBancos();
   let desdeTxt = rangoPeriodo.desde, hastaTxt = rangoPeriodo.hasta;
   if (!desdeTxt || !hastaTxt) {
     const fechasOrdenadas = filas.map(r => r.fecha1).filter(Boolean).sort();
@@ -7635,19 +7781,20 @@ function descargarPdfBancos() {
 
   doc.autoTable({
     startY: y,
-    head: [['BANCO', 'FECHA', 'PLACA', 'FOLIO', 'MATERIAL', 'VIAJE', 'TONELADA', 'TON/VIAJE']],
+    head: [['BANCO', 'FECHA', 'BOLETA', 'PLACA', 'FOLIO', 'MATERIAL', 'VIAJE', 'TONELADA', 'TON/VIAJE']],
     body: body,
     styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak' },
     headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 1.7 },                    // Banco
-      1: { cellWidth: 0.75, halign: 'center' }, // Fecha
-      2: { cellWidth: 1.35 },                   // Placa (dobles de góndola/articulado)
-      3: { cellWidth: 0.95 },                   // Folio
-      4: { cellWidth: 1.35 },                   // Material
-      5: { cellWidth: 0.55, halign: 'right' },  // Viaje
-      6: { cellWidth: 0.85, halign: 'right' },  // Tonelada
-      7: { cellWidth: 0.9, halign: 'right' }    // Ton/Viaje
+      0: { cellWidth: 1.5 },                    // Banco
+      1: { cellWidth: 0.7, halign: 'center' },  // Fecha
+      2: { cellWidth: 0.7, halign: 'center' },  // Boleta
+      3: { cellWidth: 1.2 },                    // Placa (dobles de góndola/articulado)
+      4: { cellWidth: 0.85 },                   // Folio
+      5: { cellWidth: 1.2 },                    // Material
+      6: { cellWidth: 0.5, halign: 'right' },   // Viaje
+      7: { cellWidth: 0.8, halign: 'right' },   // Tonelada
+      8: { cellWidth: 0.85, halign: 'right' }   // Ton/Viaje
     },
     margin: { left: marginX, right: marginX },
     didParseCell: (data) => {

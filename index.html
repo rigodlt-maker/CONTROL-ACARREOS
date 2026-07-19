@@ -1698,6 +1698,11 @@ window.editRecord = async function() {
   } else {
     document.getElementById('f-fila-bascula-id').value = '';
     await poblarPlacasDisponibles();
+    // poblarPlacasDisponibles() borra f-fecha1 a la fuerza (es su
+    // comportamiento normal para captura NUEVA, donde la fecha se
+    // auto-llena al elegir placas). En edición eso no aplica: se
+    // restaura aquí el valor real del ticket para que no se pierda.
+    document.getElementById('f-fecha1').value = r.fecha1 || '';
   }
   toggleVertido(); // FASE 10: muestra/oculta el campo según destino, y resetea vertido
   document.getElementById('f-vertido').value = r.vertido || '';
@@ -2780,11 +2785,11 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <div class="field-row two-col">
       <div>
         <label>Fecha 1er pesaje * <span id="f-fecha1-hint" style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
-        <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);"/>
+        <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);" oninput="calcCiclo()"/>
       </div>
       <div>
         <label>Hora 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(la del ticket que da la báscula)</span></label>
-        <input type="time" id="f-hora1" oninput="pintarEcoHora('f-hora1','f-hora1-eco')"/>
+        <input type="time" id="f-hora1" oninput="pintarEcoHora('f-hora1','f-hora1-eco'); calcCiclo()"/>
         <span id="f-hora1-eco" style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;"></span>
       </div>
     </div>
@@ -2961,21 +2966,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   <div style="font-size:11.5px;color:var(--text-muted);background:var(--info-light);border-radius:var(--radius);padding:8px 12px;margin-bottom:10px;">
     ℹ️ Esta pestaña muestra únicamente el material que salió de un <strong>Banco de materiales</strong>, sin importar su destino final (Acopio o Rompeolas). Sirve para conciliar contra el banco de materiales y el sindicato.
   </div>
-  <div class="slicers-card" style="margin-bottom:10px;">
-    <h3>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      Fuente de datos del dashboard
-    </h3>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button class="btn btn-primary" id="btn-dash-historico" onclick="cargarHistoricoCompletoDash()" style="font-size:12px;">
-        📊 Ver TODO el histórico
-      </button>
-      <button class="btn btn-secondary" id="btn-dash-ventana" onclick="usarVentanaRecienteEnDashboard()" style="font-size:12px;">
-        Volver a ventana
-      </button>
-    </div>
-    <div id="dash-historico-nota" style="font-size:11px;color:var(--text-muted);"></div>
-  </div>
+  <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);margin-bottom:10px;"></div>
 
   <div class="slicers-card">
     <h3>
@@ -5276,43 +5267,66 @@ function getDashboardFiltered() {
   });
 }
 
-function renderDashboard() {
+async function renderDashboard() {
   if (typeof Chart === 'undefined') return;
   asegurarHistoricoGlobal('banner-historico-global-graficos');
-  const filtered = getDashboardFiltered();
   const emptyState = document.getElementById('dash-empty-state');
 
+  // 18-jul-2026: Suministros dejó de depender de la ventana reciente /
+  // "Ver TODO el histórico" (igual que ya se hizo con Resumen, Reportes y
+  // Bancos) — ahora usa calcularResumenGenericoAgregado con
+  // soloOrigenBanco:true (esta pestaña solo cuenta material que salió de
+  // un Banco de materiales, ver FASE 6 / getDashboardFiltered). Costo:
+  // unas decenas de lecturas (meses del rango), nunca miles.
+  const desde      = document.getElementById('dash-fecha-desde').value;
+  const hasta      = document.getElementById('dash-fecha-hasta').value;
+  const filtros = {
+    bancos:      getMsSelected('banco'),
+    materiales:  getMsSelected('material'),
+    destinos:    getMsSelected('cuerpo')
+  };
+
   const fuenteEl = document.getElementById('dash-fuente-actual');
-  const btnVentana = document.getElementById('btn-dash-ventana');
-  const btnHistorico = document.getElementById('btn-dash-historico');
-  if (fuenteEl) {
-    if (window.usandoHistoricoDash && window.dashHistoricoCompleto) {
-      fuenteEl.textContent = '📊 Mostrando TODO el histórico: ' + window.dashHistoricoCompleto.length.toLocaleString('es-MX') + ' registro(s) en total';
-      if (btnVentana)   btnVentana.className   = 'btn btn-secondary';
-      if (btnHistorico) btnHistorico.className = 'btn btn-primary';
-    } else {
-      fuenteEl.textContent = '🕐 Mostrando solo la ventana reciente (' + (window.db||[]).length.toLocaleString('es-MX') + ' registro(s))';
-      if (btnVentana)   btnVentana.className   = 'btn btn-primary';
-      if (btnHistorico) btnHistorico.className = 'btn btn-secondary';
-    }
+  if (fuenteEl) fuenteEl.textContent = '📊 Total histórico filtrado (agregado mensual, no depende de ninguna ventana)';
+
+  let porBancoAgg = {}, totalViajes = 0, totalTon = 0, porMesAgg = {};
+  try {
+    ({ porBanco: porBancoAgg, totalViajes, totalTon, porMes: porMesAgg } =
+      await calcularResumenGenericoAgregado(desde, hasta, filtros, { soloOrigenBanco: true }));
+  } catch (e) {
+    console.warn('No se pudo calcular Suministros por agregados mensuales, usando ventana cargada:', e);
+    // Respaldo: si algo falla, se cae al comportamiento anterior con lo
+    // que ya esté cargado en memoria (ventana reciente / Ver TODO).
+    const filtered = getDashboardFiltered();
+    totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+    totalViajes = filtered.length;
+    filtered.forEach(r => {
+      const banco = r.banco || 'Sin banco';
+      const material = r.material || 'Sin material';
+      const ton = r.ton || (r.neto_kg || 0) / 1000;
+      if (!porBancoAgg[banco]) porBancoAgg[banco] = { ton: 0, materiales: {} };
+      porBancoAgg[banco].ton += ton;
+      porBancoAgg[banco].materiales[material] = { ton: (porBancoAgg[banco].materiales[material]?.ton || 0) + ton };
+      if (r.fecha1) {
+        const mesKey = r.fecha1.slice(0, 7);
+        porMesAgg[mesKey] = (porMesAgg[mesKey] || 0) + ton;
+      }
+    });
   }
 
-  const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
-  document.getElementById('dash-kpi-viajes').textContent    = filtered.length;
+  document.getElementById('dash-kpi-viajes').textContent    = totalViajes;
   document.getElementById('dash-kpi-toneladas').textContent = totalTon.toFixed(2) + ' t';
-  emptyState.style.display = filtered.length ? 'none' : 'block';
+  emptyState.style.display = totalViajes ? 'none' : 'block';
 
   const porMaterial = {};
-  filtered.forEach(r => {
-    const key = r.material || 'Sin material';
-    porMaterial[key] = (porMaterial[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
+  Object.values(porBancoAgg).forEach(b => {
+    Object.entries(b.materiales || {}).forEach(([mat, info]) => {
+      porMaterial[mat] = (porMaterial[mat] || 0) + (info.ton || 0);
+    });
   });
 
   const porBanco = {};
-  filtered.forEach(r => {
-    const key = r.banco || 'Sin banco';
-    porBanco[key] = (porBanco[key] || 0) + (r.ton || (r.neto_kg || 0) / 1000);
-  });
+  Object.entries(porBancoAgg).forEach(([banco, info]) => { porBanco[banco] = info.ton || 0; });
 
   const colores = ['#0f6e56','#1d9e75','#1a4f8a','#854f0b','#a32d2d','#5f5e5a','#2c8fb3','#8a5fb0'];
 
@@ -5361,22 +5375,15 @@ function renderDashboard() {
   }
 
   const porMes = {};
-  filtered.forEach(r => {
-    if (!r.fecha1) return;
-    const [y, m] = r.fecha1.split('-');
-    const ton = r.ton || (r.neto_kg || 0) / 1000;
+  Object.entries(porMesAgg).forEach(([key, ton]) => {
+    const [y, m] = key.split('-');
     if (vistaMeses === 'anual') {
-      const key = y;
-      const label = `${y}`;
-      if (!porMes[key]) porMes[key] = { label, val: 0 };
-      porMes[key].val += ton;
+      if (!porMes[y]) porMes[y] = { label: y, val: 0 };
+      porMes[y].val += ton;
     } else {
-      const key = `${y}-${m}`;
       const dObj = new Date(parseInt(y), parseInt(m) - 1, 1, 0, 0, 0);
       const mesStr = dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase();
-      const label = `${mesStr}\n${y}`;
-      if (!porMes[key]) porMes[key] = { label, val: 0 };
-      porMes[key].val += ton;
+      porMes[key] = { label: `${mesStr}\n${y}`, val: ton };
     }
   });
 
@@ -5554,6 +5561,24 @@ function renderAcopios(datos) {
   const ac = computeAcopios(datos);
   const alertas = computeAlertasAvanceAcopio(av, ac);
 
+  // 18-jul-2026 (punto 18.2, reabierto a petición de Jesús): el "no es
+  // bug" de la sesión anterior asumía que resumenes/avance_acopio ya
+  // estaba sincronizado con el histórico real. Este botón lo verifica
+  // en vivo, comparando "entradas" de este resumen contra un cálculo
+  // independiente (mismo criterio que usa Suministros/Gráficos:
+  // calcularResumenGenericoAgregado con soloOrigenBanco:true) — si no
+  // coinciden, el resumen está desfasado (posible causa: incrementos
+  // perdidos antes del fix de updateDoc de la Fase 14.2, ver comentario
+  // en aplicarAgregadoAvanceAcopio) y hace falta correr "Recalcular
+  // totales de Avances/Acopios" en Admin.
+  const verificarHtml = `
+    <div class="chart-card">
+      <button class="btn btn-secondary" style="width:100%;" onclick="verificarConsistenciaAcopios()">
+        🔍 Verificar consistencia (Suministrado vs. Acopios)
+      </button>
+      <div id="acopios-verificacion" style="font-size:12px;margin-top:8px;"></div>
+    </div>`;
+
   const alertasHtml = alertas.length ? `
     <div class="chart-card">
       <h3>⚠️ Alertas de suministro vs. colocación</h3>
@@ -5585,9 +5610,57 @@ function renderAcopios(datos) {
     </div>`;
   }).join('');
 
-  wrap.innerHTML = alertasHtml + html;
+  wrap.innerHTML = verificarHtml + alertasHtml + html;
+  // Se guarda para que verificarConsistenciaAcopios() compare contra las
+  // mismas cifras ya renderizadas, sin recalcular computeAcopios de nuevo.
+  window._acopiosUltimoDatos = ac;
 }
 window.renderAcopios = renderAcopios;
+
+// Compara, para cada Acopio, "entradas" del resumen agregado
+// (resumenes/avance_acopio, mantenido con increment()) contra un
+// recálculo independiente y barato (calcularResumenGenericoAgregado,
+// mismos meses/agregados que ya usa Suministros/Gráficos — NO lee el
+// histórico completo). Si difieren más de una tolerancia chica
+// (redondeo), es señal de que el resumen incremental quedó desfasado
+// respecto al dato real y hace falta "Recalcular totales" en Admin.
+window.verificarConsistenciaAcopios = async function() {
+  const out = document.getElementById('acopios-verificacion');
+  if (!out) return;
+  out.innerHTML = '⏳ Verificando…';
+  try {
+    const ac = window._acopiosUltimoDatos;
+    if (!ac) { out.innerHTML = '⚠️ Primero carga la pestaña Acopios.'; return; }
+    const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
+    const TOLERANCIA_TON = 1; // margen chico por redondeo, no por error real
+    let filas = [];
+    for (const acopio of ACOPIOS) {
+      const entradasResumen = (ac.porAcopio[acopio] || []).reduce((s,f)=>s+f.entradas,0);
+      const real = await calcularResumenGenericoAgregado(null, null, { destinos: [acopio] }, { soloOrigenBanco: true });
+      const diff = real.totalTon - entradasResumen;
+      const ok = Math.abs(diff) <= TOLERANCIA_TON;
+      filas.push({ acopio, entradasResumen, real: real.totalTon, diff, ok });
+    }
+    const fmt = n => (n||0).toLocaleString('es-MX',{maximumFractionDigits:2});
+    const hayDesfase = filas.some(f => !f.ok);
+    out.innerHTML = filas.map(f => `
+      <div style="padding:6px 0;border-top:0.5px solid var(--border);">
+        <strong>${f.acopio}</strong><br>
+        Resumen (avance_acopio): ${fmt(f.entradasResumen)} t &nbsp;·&nbsp;
+        Real (recalculado): ${fmt(f.real)} t &nbsp;·&nbsp;
+        Diferencia: <span style="color:${f.ok?'var(--accent)':'var(--danger)'};font-weight:700">${fmt(f.diff)} t</span>
+      </div>`).join('') + (hayDesfase
+        ? `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);">
+             ⚠️ El resumen está desfasado respecto al dato real. La "existencia disponible" que se muestra arriba NO es confiable hasta corregirlo.
+             Ve a <strong>Admin → Herramientas de base de datos → "Recalcular totales de Avances/Acopios"</strong> y vuelve a esta pestaña.
+           </div>`
+        : `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">
+             ✅ El resumen está al corriente — la existencia disponible mostrada arriba es confiable.
+           </div>`);
+  } catch (e) {
+    out.innerHTML = '❌ Error al verificar: ' + e.message;
+  }
+};
 
 // ══════════════════════════════════════════════════════
 // PENDIENTES
@@ -7221,10 +7294,13 @@ window.descargarExcelSixSigma = async function() {
 //    decisión explícita de Jesús (18-jul-2026) igual se muestra una
 //    fecha, no un mensaje bloqueante de "no se alcanza". Como
 //    matemáticamente no existe una fecha real de cruce en ese caso, se
-//    usa un horizonte de referencia de 10 años (≈2,600 días laborables)
-//    desde el último día real, marcado explícitamente como
-//    "(referencial)" para no presentarlo como si fuera un cálculo exacto
-//    — no se inventa un número de toneladas falso, se es transparente en
+//    usa como horizonte de referencia el FIN DE OBRA real (6/6/29, ver
+//    TND_FIN_OBRA) desde el último día real — 18-jul-2026: reemplaza al
+//    horizonte fijo de 10 años (~2,600 días laborables) que se usaba
+//    antes, que no tenía relación con el programa y mandaba la fecha
+//    muy lejos. Se marca explícitamente como "(referencial)" para no
+//    presentarlo como si fuera un cálculo exacto — no se inventa un
+//    número de toneladas falso, se es transparente en
 //    el texto de que la tendencia actual no cruza.
 window.initTendenciaTab = function() {
   // Intencionalmente vacío: no dispara ninguna lectura de Firestore. El
@@ -7235,6 +7311,29 @@ window.initTendenciaTab = function() {
 function tnd_esDiaLaborable(fecha) {
   const dow = fecha.getDay();
   return dow !== 0 && dow !== 6;
+}
+
+// 18-jul-2026: fin de obra real del programa (confirmado por Jesús:
+// "el fin de mi obra es el 6/6/29"). Se usa como TOPE del horizonte de
+// proyección en vez del horizonte fijo de 10 años (~2,600 días
+// laborables) que se usaba antes para el caso "no hay cruce matemático
+// real" — ese fijo no tenía relación con el programa de obra y estiraba
+// la fecha mostrada mucho más allá de cualquier fecha útil para Jesús.
+const TND_FIN_OBRA = new Date(2029, 5, 6); // mes 0-index: 5 = junio
+
+// Cuenta días LABORABLES estrictos entre fechaBase (exclusivo) y
+// fechaObjetivo (inclusivo). Regresa 0 si fechaObjetivo ya pasó.
+function tnd_diasLaborablesEntre(fechaBase, fechaObjetivo) {
+  if (fechaObjetivo <= fechaBase) return 0;
+  const d = new Date(fechaBase.getTime());
+  let n = 0;
+  let tope = 20000;
+  while (d < fechaObjetivo && tope > 0) {
+    d.setDate(d.getDate() + 1);
+    if (tnd_esDiaLaborable(d)) n++;
+    tope--;
+  }
+  return n;
 }
 
 // Avanza `n` días LABORABLES (enteros, redondeado hacia arriba) a partir
@@ -7399,8 +7498,8 @@ async function calcularTendenciaAgregada() {
 
 // Despeja t para el modelo lineal (a + b t = objetivo) y arma el
 // resultado a mostrar: fecha proyectada, "ya se alcanzó", o referencial
-// a 10 años si la pendiente no cruza. `ultimoT`/`ultimaFecha` son el
-// último punto real de la serie.
+// acotado al fin de obra (TND_FIN_OBRA) si la pendiente no cruza.
+// `ultimoT`/`ultimaFecha` son el último punto real de la serie.
 function tnd_resolverLineal(modelo, objetivo, ultimoT, ultimaFecha) {
   const yActual = modelo.a + modelo.b * ultimoT;
   if (yActual >= objetivo) {
@@ -7409,14 +7508,17 @@ function tnd_resolverLineal(modelo, objetivo, ultimoT, ultimaFecha) {
   if (modelo.b > 1e-9) {
     const t = (objetivo - modelo.a) / modelo.b;
     const fecha = tnd_avanzarDiasLaborables(ultimaFecha, t - ultimoT);
-    return { alcanzada: false, referencial: false, fecha, t };
+    return { alcanzada: false, referencial: false, fecha, t, excedeFinObra: fecha > TND_FIN_OBRA };
   }
-  // Pendiente plana o negativa: no hay cruce matemático real. Por
-  // decisión de Jesús se muestra igual una fecha, marcada como
-  // referencial a 10 años (~2,600 días laborables) en vez de bloquear
-  // con un mensaje de "no se alcanza".
-  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
-  return { alcanzada: false, referencial: true, fecha, t: ultimoT + 2600 };
+  // Pendiente plana o negativa: no hay cruce matemático real. 18-jul-2026:
+  // en vez de un horizonte fijo de 10 años (~2,600 días laborables, sin
+  // relación con el programa real), se acota al FIN DE OBRA real
+  // (6/6/29, ver TND_FIN_OBRA) — la fecha mostrada nunca rebasa el
+  // programa, y se marca `referencial` para dejar claro que es un tope,
+  // no un cálculo exacto.
+  const diasHastaFinObra = tnd_diasLaborablesEntre(ultimaFecha, TND_FIN_OBRA);
+  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, diasHastaFinObra);
+  return { alcanzada: false, referencial: true, fecha, t: ultimoT + diasHastaFinObra, excedeFinObra: true };
 }
 
 // Igual que el lineal pero para c t² + b t + (a - objetivo) = 0.
@@ -7443,10 +7545,15 @@ function tnd_resolverCuadratico(modelo, objetivo, ultimoT, ultimaFecha) {
   }
   if (raizValida !== null) {
     const fecha = tnd_avanzarDiasLaborables(ultimaFecha, raizValida - ultimoT);
-    return { alcanzada: false, referencial: false, fecha, t: raizValida };
+    return { alcanzada: false, referencial: false, fecha, t: raizValida, excedeFinObra: fecha > TND_FIN_OBRA };
   }
-  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
-  return { alcanzada: false, referencial: true, fecha, t: ultimoT + 2600 };
+  // Sin raíz válida hacia adelante (vértice de la parábola ya quedó
+  // atrás, o el discriminante es negativo): mismo criterio que en
+  // tnd_resolverLineal, se acota al FIN DE OBRA real (6/6/29) en vez del
+  // horizonte fijo de 10 años.
+  const diasHastaFinObra = tnd_diasLaborablesEntre(ultimaFecha, TND_FIN_OBRA);
+  const fecha = tnd_avanzarDiasLaborables(ultimaFecha, diasHastaFinObra);
+  return { alcanzada: false, referencial: true, fecha, t: ultimoT + diasHastaFinObra, excedeFinObra: true };
 }
 
 function tnd_formatearFecha(fecha) {
@@ -7532,7 +7639,9 @@ window.generarAnalisisTendencia = async function() {
       if (res.alcanzada) {
         el.textContent = `✅ Meta ya superada por ${res.exceso.toFixed(1)} ton/día (con la tendencia actual)`;
       } else if (res.referencial) {
-        el.textContent = `⚠️ Con la pendiente actual no hay un cruce matemático real — fecha referencial (horizonte de 10 años): ${tnd_formatearFecha(res.fecha)}`;
+        el.textContent = `🔴 Con la pendiente actual NO se alcanza la meta antes del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`;
+      } else if (res.excedeFinObra) {
+        el.textContent = `🔴 Se alcanzaría hasta el ${tnd_formatearFecha(res.fecha)} — después del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`;
       } else {
         el.textContent = `📅 Se alcanzaría el ${tnd_formatearFecha(res.fecha)}`;
       }
@@ -7692,30 +7801,44 @@ window.initMetasTab = async function(forzar) {
         <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap;">
         <thead><tr style="text-align:left;color:var(--text-muted);">
           <th style="padding:4px 6px;">Material</th>
+          <th style="padding:4px 6px;text-align:right;">Meta acum. a la fecha</th>
+          <th style="padding:4px 6px;text-align:right;">Real acum.</th>
+          <th style="padding:4px 6px;text-align:right;">% acum. (semáforo)</th>
+          <th style="padding:4px 6px;text-align:right;">Meta total</th>
           <th style="padding:4px 6px;text-align:right;">Meta mes</th>
           <th style="padding:4px 6px;text-align:right;">Real mes</th>
-          <th style="padding:4px 6px;text-align:right;">% mes</th>
-          <th style="padding:4px 6px;text-align:right;">Meta total</th>
-          <th style="padding:4px 6px;text-align:right;">Real acum.</th>
-          <th style="padding:4px 6px;text-align:right;">% acum.</th>
+          <th style="padding:4px 6px;text-align:right;">% mes (ritmo)</th>
         </tr></thead><tbody>`;
       Object.entries(mats).forEach(([material, datos]) => {
         const k = cuerpo + '||' + material;
-        const metaMes  = (datos.meses || {})[mesActual] || 0;
+        const meses = datos.meses || {};
+        // 18-jul-2026 (punto 18.3, confirmado por Jesús: "Diste en el
+        // clavo, hazlo así"): el semáforo real de avance debe comparar
+        // ACUMULADOS a la fecha, no la meta AISLADA del mes en curso —
+        // comparar contra "Meta mes" castiga a la obra los primeros días
+        // de cada mes aunque vaya adelantada desde meses anteriores.
+        // Meta acumulada a la fecha = suma de la meta de todos los meses
+        // <= mesActual (comparación lexicográfica funciona porque la
+        // clave es 'YYYY-MM').
+        const metaAcumFecha = Object.entries(meses)
+          .filter(([m]) => m <= mesActual)
+          .reduce((s, [, v]) => s + (v || 0), 0);
+        const metaMes  = meses[mesActual] || 0;
         const realMes  = realMesPorCM[k] || 0;
         const pctMes   = metaMes > 0 ? (realMes / metaMes * 100) : (realMes > 0 ? 100 : null);
         const metaTot  = datos.cantidad_total || 0;
         const realAcum = realAcumPorCM[k] || 0;
-        const pctAcum  = metaTot > 0 ? (realAcum / metaTot * 100) : null;
-        const semaforo = pctMes === null ? '⚪' : pctMes >= 90 ? '🟢' : pctMes >= 60 ? '🟡' : '🔴';
+        const pctAcum  = metaAcumFecha > 0 ? (realAcum / metaAcumFecha * 100) : (realAcum > 0 ? 100 : null);
+        const semaforo = pctAcum === null ? '⚪' : pctAcum >= 90 ? '🟢' : pctAcum >= 60 ? '🟡' : '🔴';
         html += `<tr style="border-top:0.5px solid var(--border);">
           <td style="padding:4px 6px;">${semaforo} ${nombreMaterial(material)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaAcumFecha)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(realAcum)}</td>
+          <td style="padding:4px 6px;text-align:right;">${pctAcum === null ? '—' : pctAcum.toFixed(0) + '%'}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaTot)}</td>
           <td style="padding:4px 6px;text-align:right;">${fmtTon(metaMes)}</td>
           <td style="padding:4px 6px;text-align:right;">${fmtTon(realMes)}</td>
           <td style="padding:4px 6px;text-align:right;">${pctMes === null ? '—' : pctMes.toFixed(0) + '%'}</td>
-          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaTot)}</td>
-          <td style="padding:4px 6px;text-align:right;">${fmtTon(realAcum)}</td>
-          <td style="padding:4px 6px;text-align:right;">${pctAcum === null ? '—' : pctAcum.toFixed(0) + '%'}</td>
         </tr>`;
       });
       html += `</tbody></table></div></div>`;
@@ -7724,7 +7847,7 @@ window.initMetasTab = async function(forzar) {
     if (estadoEl) {
       estadoEl.textContent = '✅ Mes en curso: ' + mesActual +
         (programa.actualizado ? ' · programa actualizado el ' + new Date(programa.actualizado).toLocaleDateString('es-MX') : '') +
-        ' · 🟢 ≥90% del mes · 🟡 60-89% · 🔴 <60%';
+        ' · Semáforo por ACUMULADO a la fecha: 🟢 ≥90% · 🟡 60-89% · 🔴 <60% · "% mes" es solo ritmo del mes en curso, no afecta el semáforo';
     }
   } catch (e) {
     if (estadoEl) estadoEl.textContent = '';
@@ -7884,16 +8007,28 @@ function renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon) {
 //    completa.
 // Costo: igual que calcularResumenBancosAgregado (unos cuantos reads por
 // mes + 0-2 consultas acotadas a los meses parciales de los extremos).
-async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
+async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) {
   const { bancos = [], materiales = [], destinos = [], tiposCamion = [] } = filtros || {};
+  // 18-jul-2026: `soloOrigenBanco` lo usa Suministros (Gráficos) — esa
+  // pestaña, por definición (ver FASE 6), solo debe contar material que
+  // SALIÓ de un Banco de materiales (origen_tipo === 'BANCO'), nunca
+  // colocación que salió de un Acopio. `por_combinacion` no guarda
+  // origen_tipo, pero cuando el viaje sale de un Acopio, `banco` (el
+  // campo de origen) queda con el nombre del acopio — mismo criterio que
+  // ya usa computeAcopios()/ACOPIOS.includes(rec.banco) — así que basta
+  // con excluir esos para replicar el filtro exacto de getDashboardFiltered().
+  const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
+  const soloOrigenBanco = !!(opciones && opciones.soloOrigenBanco);
   const hoy = isoHoy();
   const desdeEf = desde || '2025-01-01';
   const hastaEf = hasta || hoy;
   const porBanco = {};
   const porBancoGrupo = {};
+  const porMes = {}; // 'YYYY-MM' -> toneladas (respeta los mismos filtros)
   let totalViajes = 0, totalTon = 0;
 
   const pasaFiltro = (banco, material, destino, tipoCamion) => {
+    if (soloOrigenBanco && ACOPIOS.includes(banco)) return false;
     if (bancos.length      && !bancos.includes(banco))      return false;
     if (materiales.length  && !materiales.includes(material)) return false;
     if (destinos.length    && !destinos.includes(destino))  return false;
@@ -7901,7 +8036,7 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
     return true;
   };
 
-  const acumular = (bancoRaw, materialRaw, destinoRaw, tipoCamionRaw, viajes, ton) => {
+  const acumular = (bancoRaw, materialRaw, destinoRaw, tipoCamionRaw, viajes, ton, mesKey) => {
     const banco = bancoRaw || 'SIN BANCO';
     const material = materialRaw || 'SIN MATERIAL';
     const destino = destinoRaw || 'SIN DESTINO';
@@ -7922,6 +8057,7 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
     const clave = material + '|||' + destino + '|||' + tipoCamion;
     porBancoGrupo[banco].grupos[clave] = (porBancoGrupo[banco].grupos[clave] || 0) + viajes;
 
+    if (mesKey) porMes[mesKey] = (porMes[mesKey] || 0) + ton;
     totalViajes += viajes; totalTon += ton;
   };
 
@@ -7952,7 +8088,7 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
             // 0 viajes en ese caso — solo afecta datos históricos hasta
             // que se corra el recálculo una vez.
             if (typeof item === 'number') return;
-            acumular(item.banco, item.material, item.destino, item.tipo_camion, item.viajes || 0, item.ton || 0);
+            acumular(item.banco, item.material, item.destino, item.tipo_camion, item.viajes || 0, item.ton || 0, mes);
           });
         }
       } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
@@ -7963,12 +8099,12 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
         const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
         registrosMes.forEach(r => {
           const ton = r.ton || (r.neto_kg||0)/1000;
-          acumular(r.banco, r.material, r.destino, r.tipo_camion, 1, ton);
+          acumular(r.banco, r.material, r.destino, r.tipo_camion, 1, ton, mes);
         });
       } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
     }
   }
-  return { porBanco, porBancoGrupo, totalViajes, totalTon };
+  return { porBanco, porBancoGrupo, totalViajes, totalTon, porMes };
 }
 
 async function calcularResumenBancosAgregado(desde, hasta, bancosFiltro) {

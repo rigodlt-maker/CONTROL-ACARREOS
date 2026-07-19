@@ -1647,6 +1647,18 @@ window.editRecord = async function() {
   Object.entries(flds).forEach(([id, v]) => {
     const el = document.getElementById(id); if (el) el.value = v || '';
   });
+  // 18-jul-2026 (reportado por Jesús): "f-fecha1" está bloqueado (readonly)
+  // en modo captura nueva porque ahí se auto-llena solo desde Fila
+  // Báscula. Pero EDITAR un ticket ya existente es una sección aparte, no
+  // una captura nueva — si al ticket le falta la fecha (registros viejos,
+  // o que nunca pasaron por Fila Báscula), aquí sí se debe poder escribir
+  // a mano con libertad. Se relockea de vuelta a solo-lectura en
+  // clearForm(), que es lo que deja el formulario listo para el
+  // SIGUIENTE ticket nuevo.
+  const fecha1El = document.getElementById('f-fecha1');
+  if (fecha1El) { fecha1El.readOnly = false; fecha1El.style.background = ''; }
+  const fecha1Hint = document.getElementById('f-fecha1-hint');
+  if (fecha1Hint) fecha1Hint.textContent = '(editando ticket — corrígela libremente)';
   document.getElementById('f-material').value = r.material || '';
   // 18-jul-2026: aplica el filtro de destinos permitidos para ESTE
   // material antes de fijar el destino guardado. Si el registro es
@@ -2767,7 +2779,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </h3>
     <div class="field-row two-col">
       <div>
-        <label>Fecha 1er pesaje * <span style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
+        <label>Fecha 1er pesaje * <span id="f-fecha1-hint" style="font-weight:400;color:var(--text-muted);">(de Fila Báscula)</span></label>
         <input type="date" id="f-fecha1" readonly style="background:var(--surface-muted);"/>
       </div>
       <div>
@@ -4883,6 +4895,13 @@ function clearForm() {
   ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-bruto','f-tara'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
+  // Deja fecha1 de vuelta en modo "captura nueva": bloqueada y automática
+  // desde Fila Báscula (ver nota en editRecord() de por qué se desbloquea
+  // solo al editar un ticket ya existente).
+  const fecha1El = document.getElementById('f-fecha1');
+  if (fecha1El) { fecha1El.readOnly = true; fecha1El.style.background = 'var(--surface-muted)'; }
+  const fecha1Hint = document.getElementById('f-fecha1-hint');
+  if (fecha1Hint) fecha1Hint.textContent = '(de Fila Báscula)';
   document.getElementById('f-fila-bascula-id').value = '';
   document.getElementById('f-material').selectedIndex = 0;
   filtrarDestinosPorMaterial(); // sin material elegido, todos los destinos quedan habilitados de nuevo

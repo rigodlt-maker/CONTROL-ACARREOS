@@ -3791,6 +3791,22 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   </div>
 
   <div class="chart-card">
+    <h3>🔍 Auditoría de rangos (material vs. rango capturado)</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+      Compara el <strong>rango</strong> capturado en cada ticket contra los
+      rangos válidos por material (tabla <code>RANGOS_ACOPIO</code>). Detecta
+      combinaciones que no existen — típico de errores al exportar/importar
+      CSV. Es una consulta puntual acotada por fecha, no un listener.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <input type="date" id="aud-fecha-desde" style="flex:1;min-width:130px;">
+      <input type="date" id="aud-fecha-hasta" style="flex:1;min-width:130px;">
+    </div>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarRangosMaterial()">🔍 Auditar rangos</button>
+    <div id="aud-rangos-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
+  <div class="chart-card">
     <h3>Descarga para Minitab</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Consulta puntual acotada por rango de fecha (no es un listener, no lee toda la colección).</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
@@ -3826,6 +3842,17 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <label>Objetivo de TON / DÍA</label>
       <input type="number" id="tnd-objetivo" placeholder="Ej: 10000" min="0" step="1" inputmode="numeric"/>
     </div>
+    <div class="field-row">
+      <label>Excluir arranque — analizar desde (opcional)</label>
+      <input type="date" id="tnd-fecha-desde-analisis"/>
+    </div>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:-4px;margin-bottom:6px;">
+      Black Belt: si dejas esto vacío, la regresión mezcla la fase de
+      movilización/arranque de obra (tonelaje bajo al inicio) con la
+      operación ya estabilizada — eso distorsiona la curva, sobre todo la
+      cuadrática. Si tu proceso ya está estable desde cierta fecha, captúrala
+      aquí para que el análisis solo use datos de la fase estable.
+    </p>
     <button id="btn-generar-tendencia" class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="generarAnalisisTendencia()">Generar Análisis</button>
     <p id="tnd-progreso" style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:center;"></p>
   </div>
@@ -3843,6 +3870,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
           <div class="lbl">R² — Modelo cuadrático</div>
         </div>
       </div>
+      <div id="tnd-confiabilidad" style="display:none;margin-top:10px;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.5;"></div>
       <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo lineal (Y = a + bt)</div>
         <div id="tnd-meta-lineal" style="font-weight:700;font-size:15px;">—</div>
@@ -3850,6 +3878,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo cuadrático (Y = a + bt + ct²)</div>
         <div id="tnd-meta-cuadratico" style="font-weight:700;font-size:15px;">—</div>
+        <div id="tnd-vertice-nota" style="display:none;font-size:11.5px;color:var(--warning);margin-top:6px;line-height:1.4;"></div>
       </div>
     </div>
 
@@ -6993,6 +7022,26 @@ function puedoVerRegistroFila(r) {
   return r.creadoPor === window._currentUserUid;
 }
 
+// 18-jul-2026 — Pedido por Jesús: el Master necesita poder sacar de la fila
+// un camión mal capturado (duplicado, camión que se fue sin avisar, error de
+// captura) directo desde el celular en campo, sin tener que entrar a Firebase
+// desde la computadora. Solo rol master ve el botón (misma regla que el resto
+// de acciones destructivas de la app, ver puedeEliminar en línea ~722).
+window.eliminarRegistroFilaBascula = async function(id, btn) {
+  if (window._currentUserRol !== 'master') return;
+  if (!confirm('¿Eliminar este camión de la fila de báscula? Esta acción no se puede deshacer.')) return;
+  if (btn) btn.disabled = true;
+  try {
+    await deleteDoc(doc(db_f, COL_FILA_BASCULA, id));
+    // No hace falta repintar a mano: el listener global de fila_bascula
+    // (línea ~620) detecta el borrado y dispara onFilaBasculaCambio() solo.
+  } catch (e) {
+    console.warn('No se pudo eliminar el registro de fila_bascula:', e);
+    alert('No se pudo eliminar. Revisa tu conexión e intenta de nuevo.');
+    if (btn) btn.disabled = false;
+  }
+};
+
 window.renderFilaBascula = function() {
   // "Camiones con Material" — en fila o rumbo a tiro, todavía sin 1er pesaje.
   const lista = document.getElementById('fb-lista');
@@ -7000,6 +7049,7 @@ window.renderFilaBascula = function() {
     const enTransito = (window._filaBasculaEnTransito || []).filter(c => puedoVerRegistroFila(c.data));
     if (!enTransito.length) { lista.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No hay vehículos en fila ahora mismo.</p>'; }
     else {
+      const esMasterFila = window._currentUserRol === 'master';
       lista.innerHTML = enTransito.map(({ id, data: r }) => {
         const minEnFila = Math.round((Date.now() - r.t1_fila_ts) / 60000);
         const estado = r.t3_salida_ts ? 'Rumbo a tiro / esperando 1er pesaje' : 'En fila o pesándose (bruto)';
@@ -7009,7 +7059,10 @@ window.renderFilaBascula = function() {
             <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''}</span><br>
             <span style="font-size:12px;color:var(--text-muted);">${estado} · hace ${minEnFila} min</span>
           </div>
-          ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}')">Sale a tiro</button>`}
+          <div style="display:flex;gap:6px;align-items:center;">
+            ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}')">Sale a tiro</button>`}
+            ${esMasterFila ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
+          </div>
         </div>`;
       }).join('');
     }
@@ -7026,6 +7079,7 @@ window.filtrarBuscadorDestare = function() {
   const todos = (window._filaBasculaEsperandoDestare || []).filter(c => puedoVerRegistroFila(c.data));
   const filtrados = q ? todos.filter(c => (c.data.placas || '').includes(q)) : todos;
   if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin camiones pendientes de destare.</p>'; return; }
+  const esMasterDestare = window._currentUserRol === 'master';
   el.innerHTML = filtrados.map(({ id, data: r }) => {
     const estado = r.t3b_salida_ts ? '✅ Destarado — listo para capturar en Pendientes' : (r.t1b_fila_ts ? '⏳ En fila, falta "Destarado"' : '🚧 Falta "Entra a fila"');
     return `<div style="border-top:0.5px solid var(--border);padding:10px 0;">
@@ -7035,6 +7089,7 @@ window.filtrarBuscadorDestare = function() {
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}', this)">🟢 Entra a fila</button>
         <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
+        ${esMasterDestare ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -7154,7 +7209,63 @@ function formatearDuracionSeg(seg) {
   return m > 0 ? `${m} min ${s}s` : `${s}s`;
 }
 
-// Six Sigma Bloque B.1: pinta los KPIs desde resumenes/stats_analisis
+// 18-jul-2026 — Punto 2 (pedido por Jesús, ver observación del rango
+// 0.30-0.50 en NUCLEO): auditoría de calidad de datos para el Master.
+// Compara material+rango de cada ticket contra RANGOS_ACOPIO (única fuente
+// de verdad de qué rangos existen por material, línea ~4047). Cualquier
+// combinación que no aparezca ahí es un defecto de captura/importación
+// (ej. el exportador CSV mapeó mal la columna). Consulta puntual acotada
+// por fecha (mismo patrón de costo que descargarExcelSixSigma) — no es un
+// listener y no se dispara sola al entrar a la pestaña.
+window.auditarRangosMaterial = async function() {
+  const desdeStr = document.getElementById('aud-fecha-desde').value;
+  const hastaStr = document.getElementById('aud-fecha-hasta').value;
+  const out = document.getElementById('aud-rangos-resultado');
+  if (!out) return;
+  if (!desdeStr || !hastaStr) { alert('Selecciona el rango de fechas (desde y hasta).'); return; }
+  if (hastaStr < desdeStr) { alert('La fecha "hasta" no puede ser antes que "desde".'); return; }
+  out.innerHTML = '⏳ Auditando…';
+  try {
+    const registros = await window.traerTodoFirestore(desdeStr, hastaStr);
+    if (!registros.length) { out.innerHTML = 'No hay tickets en ese rango de fechas.'; return; }
+
+    const incidencias = {}; // clave: material||rango -> {material, rango, count, folios[]}
+    registros.forEach(r => {
+      const material = r.material || '';
+      const rango = r.rango || '';
+      if (!material) return; // sin material capturado, no es un problema de rango
+      const validos = RANGOS_ACOPIO[material];
+      const esValido = validos ? validos.includes(rango) : true; // material fuera de la tabla (ej. AREA DE PREFABRICADOS): no se audita
+      if (!validos || esValido) return;
+      const clave = material + '||' + rango;
+      if (!incidencias[clave]) incidencias[clave] = { material, rango, count: 0, folios: [] };
+      incidencias[clave].count++;
+      if (incidencias[clave].folios.length < 5) incidencias[clave].folios.push(r.folio || r._fid);
+    });
+
+    const lista = Object.values(incidencias).sort((a, b) => b.count - a.count);
+    if (!lista.length) {
+      out.innerHTML = `<div style="padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">✅ Sin inconsistencias — los ${registros.length.toLocaleString('es-MX')} ticket(s) revisados tienen combinaciones material/rango válidas.</div>`;
+      return;
+    }
+    const totalTickets = lista.reduce((s, i) => s + i.count, 0);
+    out.innerHTML = `
+      <div style="padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);margin-bottom:8px;">
+        ⚠️ ${totalTickets.toLocaleString('es-MX')} ticket(s) con rango que NO existe para su material (de ${registros.length.toLocaleString('es-MX')} revisados).
+      </div>
+      ${lista.map(i => `
+        <div style="padding:6px 0;border-top:0.5px solid var(--border);">
+          <strong>${escHtml(nombreMaterialLegible(i.material))}</strong> con rango <strong style="color:var(--danger)">${escHtml(i.rango || '(vacío)')}</strong>
+          — ${i.count.toLocaleString('es-MX')} ticket(s)<br>
+          <span style="font-size:11px;color:var(--text-muted)">Rangos válidos para ${escHtml(nombreMaterialLegible(i.material))}: ${(RANGOS_ACOPIO[i.material]||[]).join(', ')}</span><br>
+          <span style="font-size:11px;color:var(--text-muted)">Ejemplos de folio: ${i.folios.map(escHtml).join(', ')}${i.count > i.folios.length ? '…' : ''}</span>
+        </div>`).join('')}`;
+  } catch (e) {
+    out.innerHTML = '❌ Error al auditar: ' + e.message;
+  }
+};
+
+
 // (UNA sola lectura de un documento, nunca un getDocs() sobre toda la
 // colección stats_analisis — ver el comentario en dbStatsAnalisisPorRango).
 window.initSixSigmaTab = async function() {
@@ -7670,6 +7781,29 @@ window.generarAnalisisTendencia = async function() {
     return;
   }
 
+  // Punto 2/3 (18-jul-2026, pedido por Jesús) — "Excluir arranque": si se
+  // captura una fecha de inicio, se recorta la serie ANTES de esa fecha
+  // (fase de movilización/arranque de obra, con tonelaje bajo que no
+  // representa la operación estabilizada) y se renumera t=1..N sobre lo
+  // que queda. Los resolvers (tnd_resolverLineal/Cuadratico) solo usan
+  // ultimoT y fechaFin como referencia relativa — no dependen de que t
+  // arranque en el día 1 real del proyecto — así que renumerar es seguro.
+  const fechaDesdeAnalisisStr = document.getElementById('tnd-fecha-desde-analisis') ? document.getElementById('tnd-fecha-desde-analisis').value : '';
+  let notaArranque = '';
+  if (fechaDesdeAnalisisStr) {
+    const fechaCorteMs = window.parseDateForExcel(fechaDesdeAnalisisStr).getTime();
+    const serieOriginalLen = serie.length;
+    const serieRecortada = serie.filter(p => p.fecha.getTime() >= fechaCorteMs);
+    if (serieRecortada.length < 3) {
+      alert('Con esa fecha de inicio quedan muy pocos días (menos de 3) para una regresión confiable. Elige una fecha más temprana.');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    serie = serieRecortada.map((p, idx) => ({ t: idx + 1, fecha: p.fecha, y: p.y }));
+    notaArranque = ` Se excluyeron ${(serieOriginalLen - serieRecortada.length).toLocaleString('es-MX')} día(s) de arranque antes de ${fechaDesdeAnalisisStr}.`;
+    if (progreso) progreso.textContent = (progreso.textContent || '') + notaArranque;
+  }
+
   try {
     const ultimoT = serie[serie.length - 1].t;
 
@@ -7681,6 +7815,29 @@ window.generarAnalisisTendencia = async function() {
 
     document.getElementById('tnd-r2-lineal').textContent = (modeloLineal.r2 * 100).toFixed(1) + '%';
     document.getElementById('tnd-r2-cuadratico').textContent = (modeloCuadratico.r2 * 100).toFixed(1) + '%';
+
+    // Punto 3 (18-jul-2026) — Banner de confiabilidad estadística. Un
+    // Black Belt no publica una fecha calendario puntual con un ajuste
+    // débil: R² < 0.70 aquí se trata como "no confiable para comprometer
+    // fecha", solo como referencia direccional.
+    const UMBRAL_R2_CONFIABLE = 0.70;
+    const confiaEl = document.getElementById('tnd-confiabilidad');
+    if (confiaEl) {
+      const r2Bajo = [];
+      if (modeloLineal.r2 < UMBRAL_R2_CONFIABLE) r2Bajo.push('lineal');
+      if (modeloCuadratico.r2 < UMBRAL_R2_CONFIABLE) r2Bajo.push('cuadrático');
+      if (r2Bajo.length) {
+        confiaEl.style.display = 'block';
+        confiaEl.style.background = 'var(--warning-light)';
+        confiaEl.style.color = 'var(--warning)';
+        confiaEl.textContent = `⚠️ R² por debajo de ${(UMBRAL_R2_CONFIABLE*100).toFixed(0)}% en el modelo ${r2Bajo.join(' y ')}: la variabilidad diaria es alta y la fecha proyectada tiene incertidumbre importante. Trátala como referencia, no como fecha comprometida. Si el arranque de obra sigue mezclado en los datos, prueba capturando una "fecha de inicio del análisis" arriba.`;
+      } else {
+        confiaEl.style.display = 'block';
+        confiaEl.style.background = 'var(--accent-light,rgba(15,110,86,0.08))';
+        confiaEl.style.color = 'var(--accent)';
+        confiaEl.textContent = `✅ Ambos modelos tienen R² ≥ ${(UMBRAL_R2_CONFIABLE*100).toFixed(0)}% — ajuste razonable, la fecha proyectada es más confiable.`;
+      }
+    }
 
     const pintarResultado = (elId, res) => {
       const el = document.getElementById(elId);
@@ -7696,6 +7853,26 @@ window.generarAnalisisTendencia = async function() {
     };
     pintarResultado('tnd-meta-lineal', resLineal);
     pintarResultado('tnd-meta-cuadratico', resCuadratico);
+
+    // Punto 3 (18-jul-2026) — Si la parábola ya pasó su vértice (c < 0 y
+    // el vértice cae ANTES del último día real), el modelo matemáticamente
+    // ya está en su tramo descendente: nunca va a cruzar el objetivo por
+    // más días que se proyecten hacia adelante, sin importar el fin de
+    // obra. Esto es lo que se ve en la gráfica como la curva "aplanándose"
+    // y bajando. Se avisa explícito en vez de dejar que solo se infiera
+    // del dibujo, con el máximo estimado por el propio modelo.
+    const verticeEl = document.getElementById('tnd-vertice-nota');
+    if (verticeEl) {
+      const { a: ac, b: bc, c: cc } = modeloCuadratico;
+      const verticeT = Math.abs(cc) > 1e-12 ? -bc / (2 * cc) : null;
+      if (cc < 0 && verticeT !== null && verticeT < ultimoT && !resCuadratico.alcanzada) {
+        const maxEstimado = ac + bc * verticeT + cc * verticeT * verticeT;
+        verticeEl.style.display = 'block';
+        verticeEl.textContent = `📉 Este modelo cuadrático ya pasó su punto máximo estimado (~${maxEstimado.toLocaleString('es-MX',{maximumFractionDigits:0})} t/día) y va de bajada según el ajuste actual — por eso no cruza el objetivo aunque se proyecte más adelante. Esto suele ser un artefacto de mezclar el arranque de obra con la operación estable en la misma regresión, no necesariamente el comportamiento real reciente. Prueba "Excluir arranque" arriba.`;
+      } else {
+        verticeEl.style.display = 'none';
+      }
+    }
 
     // Gráfico mixto: puntos reales + proyección de cada modelo.
     // 18-jul-2026 (tercera tanda) — Jesús pidió que la gráfica no se vea

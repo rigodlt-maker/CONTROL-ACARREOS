@@ -3829,11 +3829,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   <div class="chart-card" style="margin-bottom:14px;">
     <h3 style="margin:0;">📈 Análisis de Tendencias / Proyecciones</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
-      Regresión lineal y cuadrática sobre el tonelaje diario histórico
-      (lunes a viernes, sin sábado ni domingo), para proyectar cuándo se
-      alcanza una meta de capacidad diaria. Lee un resumen mensual ya
-      guardado (no el histórico completo) — úsalo cuando lo necesites, no
-      se actualiza solo.
+      Regresión lineal y cuadrática sobre tonelaje diario (L–V), estilo Minitab.
     </p>
   </div>
 
@@ -3843,52 +3839,46 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <input type="number" id="tnd-objetivo" placeholder="Ej: 10000" min="0" step="1" inputmode="numeric"/>
     </div>
     <div class="field-row">
-      <label>Excluir arranque — analizar desde (opcional)</label>
+      <label>Analizar desde (opcional — excluye arranque)</label>
       <input type="date" id="tnd-fecha-desde-analisis"/>
     </div>
-    <p style="font-size:11px;color:var(--text-muted);margin-top:-4px;margin-bottom:6px;">
-      Black Belt: si dejas esto vacío, la regresión mezcla la fase de
-      movilización/arranque de obra (tonelaje bajo al inicio) con la
-      operación ya estabilizada — eso distorsiona la curva, sobre todo la
-      cuadrática. Si tu proceso ya está estable desde cierta fecha, captúrala
-      aquí para que el análisis solo use datos de la fase estable.
-    </p>
     <button id="btn-generar-tendencia" class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="generarAnalisisTendencia()">Generar Análisis</button>
     <p id="tnd-progreso" style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:center;"></p>
   </div>
 
   <div id="tnd-resultado" style="display:none;">
-    <div class="chart-card" style="margin-bottom:14px;">
-      <h3>Resumen comparativo</h3>
-      <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="val" id="tnd-r2-lineal">—</div>
-          <div class="lbl">R² — Modelo lineal</div>
-        </div>
-        <div class="kpi-card">
-          <div class="val" id="tnd-r2-cuadratico">—</div>
-          <div class="lbl">R² — Modelo cuadrático</div>
-        </div>
+    <div class="chart-card" style="margin-bottom:14px;padding:14px;background:var(--bg);">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+        <h3 style="margin:0;font-size:14px;">Modelo lineal</h3>
+        <span id="tnd-meta-lineal" style="font-weight:700;font-size:13px;">—</span>
       </div>
-      <div id="tnd-confiabilidad" style="display:none;margin-top:10px;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.5;"></div>
-      <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo lineal (Y = a + bt)</div>
-        <div id="tnd-meta-lineal" style="font-weight:700;font-size:15px;">—</div>
+      <div id="tnd-eq-lineal" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
+      <div style="display:flex;gap:8px;text-align:center;">
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
       </div>
-      <div class="chart-card" style="margin:10px 0 0 0;padding:12px;background:var(--bg);">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Modelo cuadrático (Y = a + bt + ct²)</div>
-        <div id="tnd-meta-cuadratico" style="font-weight:700;font-size:15px;">—</div>
-        <div id="tnd-vertice-nota" style="display:none;font-size:11.5px;color:var(--warning);margin-top:6px;line-height:1.4;"></div>
+    </div>
+
+    <div class="chart-card" style="margin-bottom:14px;padding:14px;background:var(--bg);">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+        <h3 style="margin:0;font-size:14px;">Modelo cuadrático</h3>
+        <span id="tnd-meta-cuadratico" style="font-weight:700;font-size:13px;">—</span>
+      </div>
+      <div id="tnd-eq-cuadratico" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
+      <div style="display:flex;gap:8px;text-align:center;">
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
       </div>
     </div>
 
     <div class="chart-card">
-      <h3>Tonelaje diario y proyección</h3>
+      <h3>Tonelaje diario — Actual / Ajuste / Pronóstico</h3>
       <div style="position:relative;height:320px;">
         <canvas id="chart-tendencia"></canvas>
       </div>
-      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Puntos azules: tonelaje real por día laborable (lunes a viernes). Línea: proyección lineal. Curva: proyección cuadrática.</p>
-      <p id="tnd-nota-recorte" style="display:none;font-size:11px;color:var(--warning);margin-top:4px;">⚠️ La gráfica se recortó a un horizonte visual razonable — la fecha proyectada de arriba sigue siendo exacta aunque la línea/curva no llegue a tocar el objetivo en el dibujo.</p>
+      <p id="tnd-nota-recorte" style="display:none;font-size:11px;color:var(--warning);margin-top:4px;">⚠️ Gráfica recortada a un horizonte visual razonable — la fecha proyectada arriba sigue siendo exacta.</p>
     </div>
   </div>
 </div>
@@ -7229,10 +7219,17 @@ window.auditarRangosMaterial = async function() {
     const registros = await window.traerTodoFirestore(desdeStr, hastaStr);
     if (!registros.length) { out.innerHTML = 'No hay tickets en ese rango de fechas.'; return; }
 
-    const incidencias = {}; // clave: material||rango -> {material, rango, count, folios[]}
+    const incidencias = {}; // clave: material||rangoNorm -> {material, rango, count, folios[]}
     registros.forEach(r => {
       const material = r.material || '';
-      const rango = r.rango || '';
+      // BUG corregido (19-jul-2026, reportado por Jesús): comparaba r.rango
+      // crudo contra RANGOS_ACOPIO (siempre con sufijo " ton"), pero mucho
+      // del histórico guarda el rango SIN " ton" o con espacios distintos
+      // — por eso marcaba como "inválido" hasta rangos correctos como
+      // "0.02 a 0.20" de Núcleo. El resto de la app ya resuelve esto con
+      // normalizarRango() (línea ~974) antes de comparar/agrupar; aquí
+      // faltaba aplicarlo.
+      const rango = normalizarRango(r.rango || '');
       if (!material) return; // sin material capturado, no es un problema de rango
       const validos = RANGOS_ACOPIO[material];
       const esValido = validos ? validos.includes(rango) : true; // material fuera de la tabla (ej. AREA DE PREFABRICADOS): no se audita
@@ -7813,66 +7810,64 @@ window.generarAnalisisTendencia = async function() {
     const resLineal = tnd_resolverLineal(modeloLineal, objetivo, ultimoT, fechaFin);
     const resCuadratico = tnd_resolverCuadratico(modeloCuadratico, objetivo, ultimoT, fechaFin);
 
-    document.getElementById('tnd-r2-lineal').textContent = (modeloLineal.r2 * 100).toFixed(1) + '%';
-    document.getElementById('tnd-r2-cuadratico').textContent = (modeloCuadratico.r2 * 100).toFixed(1) + '%';
+    // Estilo Minitab (19-jul-2026, pedido por Jesús: menos texto, más
+    // visual): en vez de R²/banners de párrafo, se muestran la ecuación
+    // ajustada y las 3 medidas de precisión estándar de un Trend Analysis
+    // (MAPE/MAD/MSD), igual que la salida de Minitab.
+    const formatCoef = (n, dec) => {
+      const abs = Math.abs(n);
+      if (abs !== 0 && abs < 0.01) return n.toExponential(2);
+      return n.toFixed(dec);
+    };
+    document.getElementById('tnd-eq-lineal').textContent =
+      `Yₜ = ${formatCoef(modeloLineal.a,1)} + ${formatCoef(modeloLineal.b,3)}·t`;
+    document.getElementById('tnd-eq-cuadratico').textContent =
+      `Yₜ = ${formatCoef(modeloCuadratico.a,1)} + ${formatCoef(modeloCuadratico.b,3)}·t + ${formatCoef(modeloCuadratico.c,5)}·t²`;
 
-    // Punto 3 (18-jul-2026) — Banner de confiabilidad estadística. Un
-    // Black Belt no publica una fecha calendario puntual con un ajuste
-    // débil: R² < 0.70 aquí se trata como "no confiable para comprometer
-    // fecha", solo como referencia direccional.
-    const UMBRAL_R2_CONFIABLE = 0.70;
-    const confiaEl = document.getElementById('tnd-confiabilidad');
-    if (confiaEl) {
-      const r2Bajo = [];
-      if (modeloLineal.r2 < UMBRAL_R2_CONFIABLE) r2Bajo.push('lineal');
-      if (modeloCuadratico.r2 < UMBRAL_R2_CONFIABLE) r2Bajo.push('cuadrático');
-      if (r2Bajo.length) {
-        confiaEl.style.display = 'block';
-        confiaEl.style.background = 'var(--warning-light)';
-        confiaEl.style.color = 'var(--warning)';
-        confiaEl.textContent = `⚠️ R² por debajo de ${(UMBRAL_R2_CONFIABLE*100).toFixed(0)}% en el modelo ${r2Bajo.join(' y ')}: la variabilidad diaria es alta y la fecha proyectada tiene incertidumbre importante. Trátala como referencia, no como fecha comprometida. Si el arranque de obra sigue mezclado en los datos, prueba capturando una "fecha de inicio del análisis" arriba.`;
-      } else {
-        confiaEl.style.display = 'block';
-        confiaEl.style.background = 'var(--accent-light,rgba(15,110,86,0.08))';
-        confiaEl.style.color = 'var(--accent)';
-        confiaEl.textContent = `✅ Ambos modelos tienen R² ≥ ${(UMBRAL_R2_CONFIABLE*100).toFixed(0)}% — ajuste razonable, la fecha proyectada es más confiable.`;
-      }
-    }
+    // MAPE/MAD/MSD sobre los puntos reales usados en el ajuste.
+    const tnd_accuracy = (puntos, predFn) => {
+      let sumAbs = 0, sumSq = 0, sumPct = 0, nPct = 0;
+      puntos.forEach(p => {
+        const err = p.y - predFn(p.t);
+        sumAbs += Math.abs(err);
+        sumSq += err * err;
+        if (p.y !== 0) { sumPct += Math.abs(err / p.y); nPct++; }
+      });
+      const n = puntos.length;
+      return {
+        mape: nPct ? (sumPct / nPct) * 100 : null,
+        mad: sumAbs / n,
+        msd: sumSq / n
+      };
+    };
+    const accLineal = tnd_accuracy(puntosRegresion, t => modeloLineal.a + modeloLineal.b * t);
+    const accCuadratico = tnd_accuracy(puntosRegresion, t => modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t);
+    const fmtAcc = v => v == null ? '—' : v.toLocaleString('es-MX', { maximumFractionDigits: 1 });
+    document.getElementById('tnd-mape-lineal').textContent = accLineal.mape != null ? fmtAcc(accLineal.mape) + '%' : '—';
+    document.getElementById('tnd-mad-lineal').textContent = fmtAcc(accLineal.mad);
+    document.getElementById('tnd-msd-lineal').textContent = fmtAcc(accLineal.msd);
+    document.getElementById('tnd-mape-cuadratico').textContent = accCuadratico.mape != null ? fmtAcc(accCuadratico.mape) + '%' : '—';
+    document.getElementById('tnd-mad-cuadratico').textContent = fmtAcc(accCuadratico.mad);
+    document.getElementById('tnd-msd-cuadratico').textContent = fmtAcc(accCuadratico.msd);
 
     const pintarResultado = (elId, res) => {
       const el = document.getElementById(elId);
       if (res.alcanzada) {
-        el.textContent = `✅ Meta ya superada por ${res.exceso.toFixed(1)} ton/día (con la tendencia actual)`;
+        el.textContent = `✅ +${res.exceso.toFixed(0)} t/día`;
       } else if (res.referencial) {
-        el.textContent = `🔴 Con la pendiente actual NO se alcanza la meta antes del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`;
+        el.textContent = `🔴 No alcanza (fin de obra)`;
       } else if (res.excedeFinObra) {
-        el.textContent = `🔴 Se alcanzaría hasta el ${tnd_formatearFecha(res.fecha)} — después del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`;
+        el.textContent = `🔴 ${tnd_formatearFecha(res.fecha)} (excede obra)`;
       } else {
-        el.textContent = `📅 Se alcanzaría el ${tnd_formatearFecha(res.fecha)}`;
+        el.textContent = `📅 ${tnd_formatearFecha(res.fecha)}`;
       }
+      el.title = res.alcanzada ? `Meta ya superada por ${res.exceso.toFixed(1)} ton/día`
+        : res.referencial ? `Con la pendiente actual no se alcanza la meta antes del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`
+        : res.excedeFinObra ? `Se alcanzaría hasta el ${tnd_formatearFecha(res.fecha)}, después del fin de obra (${tnd_formatearFecha(TND_FIN_OBRA)})`
+        : `Se alcanzaría el ${tnd_formatearFecha(res.fecha)}`;
     };
     pintarResultado('tnd-meta-lineal', resLineal);
     pintarResultado('tnd-meta-cuadratico', resCuadratico);
-
-    // Punto 3 (18-jul-2026) — Si la parábola ya pasó su vértice (c < 0 y
-    // el vértice cae ANTES del último día real), el modelo matemáticamente
-    // ya está en su tramo descendente: nunca va a cruzar el objetivo por
-    // más días que se proyecten hacia adelante, sin importar el fin de
-    // obra. Esto es lo que se ve en la gráfica como la curva "aplanándose"
-    // y bajando. Se avisa explícito en vez de dejar que solo se infiera
-    // del dibujo, con el máximo estimado por el propio modelo.
-    const verticeEl = document.getElementById('tnd-vertice-nota');
-    if (verticeEl) {
-      const { a: ac, b: bc, c: cc } = modeloCuadratico;
-      const verticeT = Math.abs(cc) > 1e-12 ? -bc / (2 * cc) : null;
-      if (cc < 0 && verticeT !== null && verticeT < ultimoT && !resCuadratico.alcanzada) {
-        const maxEstimado = ac + bc * verticeT + cc * verticeT * verticeT;
-        verticeEl.style.display = 'block';
-        verticeEl.textContent = `📉 Este modelo cuadrático ya pasó su punto máximo estimado (~${maxEstimado.toLocaleString('es-MX',{maximumFractionDigits:0})} t/día) y va de bajada según el ajuste actual — por eso no cruza el objetivo aunque se proyecte más adelante. Esto suele ser un artefacto de mezclar el arranque de obra con la operación estable en la misma regresión, no necesariamente el comportamiento real reciente. Prueba "Excluir arranque" arriba.`;
-      } else {
-        verticeEl.style.display = 'none';
-      }
-    }
 
     // Gráfico mixto: puntos reales + proyección de cada modelo.
     // 18-jul-2026 (tercera tanda) — Jesús pidió que la gráfica no se vea
@@ -7901,13 +7896,25 @@ window.generarAnalisisTendencia = async function() {
     tFinGraficaVisual = Math.max(tFinGraficaVisual, ultimoT + 1);
     const pasoProyeccion = Math.max(1, Math.round((tFinGraficaVisual - ultimoT) / 60));
 
-    const puntosReales = serie.map(p => ({ x: p.t, y: +p.y.toFixed(2) }));
-    const lineaLineal = [];
-    const curvaCuadratica = [];
-    for (let t = 1; t <= tFinGraficaVisual; t += (t < ultimoT ? Math.max(1, Math.round(ultimoT / 40)) : pasoProyeccion)) {
-      lineaLineal.push({ x: t, y: +(modeloLineal.a + modeloLineal.b * t).toFixed(2) });
-      curvaCuadratica.push({ x: t, y: +(modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t).toFixed(2) });
+    // Estilo Minitab: "Fits" (ajuste, línea sólida) SOLO dentro del rango
+    // real de datos (t <= ultimoT) y "Forecasts" (pronóstico, línea
+    // punteada) SOLO más allá — dos series por modelo en vez de una sola,
+    // para que se vea de un vistazo dónde termina el dato real y empieza
+    // la proyección, sin depender de una nota de texto aparte.
+    const fitLineal = [], fcLineal = [], fitCuadratico = [], fcCuadratico = [];
+    for (let t = 1; t <= ultimoT; t += Math.max(1, Math.round(ultimoT / 40))) {
+      fitLineal.push({ x: t, y: +(modeloLineal.a + modeloLineal.b * t).toFixed(2) });
+      fitCuadratico.push({ x: t, y: +(modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t).toFixed(2) });
     }
+    fitLineal.push({ x: ultimoT, y: +(modeloLineal.a + modeloLineal.b * ultimoT).toFixed(2) });
+    fitCuadratico.push({ x: ultimoT, y: +(modeloCuadratico.a + modeloCuadratico.b * ultimoT + modeloCuadratico.c * ultimoT * ultimoT).toFixed(2) });
+    for (let t = ultimoT; t <= tFinGraficaVisual; t += pasoProyeccion) {
+      fcLineal.push({ x: t, y: +(modeloLineal.a + modeloLineal.b * t).toFixed(2) });
+      fcCuadratico.push({ x: t, y: +(modeloCuadratico.a + modeloCuadratico.b * t + modeloCuadratico.c * t * t).toFixed(2) });
+    }
+
+
+    const puntosReales = serie.map(p => ({ x: p.t, y: +p.y.toFixed(2) }));
 
     document.getElementById('tnd-nota-recorte').style.display = graficaRecortada ? 'block' : 'none';
 
@@ -7918,10 +7925,12 @@ window.generarAnalisisTendencia = async function() {
         type: 'scatter',
         data: {
           datasets: [
-            { type: 'scatter', label: 'Tonelaje real diario', data: puntosReales, backgroundColor: '#1a4f8a', pointRadius: 3 },
-            { type: 'line', label: 'Proyección lineal', data: lineaLineal, borderColor: '#0f6e56', borderWidth: 2, pointRadius: 0, fill: false, tension: 0 },
-            { type: 'line', label: 'Proyección cuadrática', data: curvaCuadratica, borderColor: '#a32d2d', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.25 },
-            { type: 'line', label: 'Objetivo', data: [{ x: 1, y: objetivo }, { x: tFinGraficaVisual, y: objetivo }], borderColor: '#854f0b', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false }
+            { type: 'scatter', label: 'Actual', data: puntosReales, backgroundColor: '#1a4f8a', pointRadius: 3 },
+            { type: 'line', label: 'Ajuste lineal', data: fitLineal, borderColor: '#0f6e56', borderWidth: 2, pointRadius: 0, fill: false, tension: 0 },
+            { type: 'line', label: 'Pronóstico lineal', data: fcLineal, borderColor: '#0f6e56', borderDash: [5, 4], borderWidth: 2, pointRadius: 0, fill: false, tension: 0 },
+            { type: 'line', label: 'Ajuste cuadrático', data: fitCuadratico, borderColor: '#a32d2d', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.2 },
+            { type: 'line', label: 'Pronóstico cuadrático', data: fcCuadratico, borderColor: '#a32d2d', borderDash: [5, 4], borderWidth: 2, pointRadius: 0, fill: false, tension: 0.2 },
+            { type: 'line', label: 'Objetivo', data: [{ x: 1, y: objetivo }, { x: tFinGraficaVisual, y: objetivo }], borderColor: '#854f0b', borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0, fill: false }
           ]
         },
         options: {

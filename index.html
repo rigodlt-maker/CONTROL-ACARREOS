@@ -1490,16 +1490,33 @@ window.procesarColaOffline = async function() {
 window.saveRecord = async function() {
   const data = getFormData();
   const esPendiente = data.status === 'pendiente';
-  
+
+  // 19-jul-2026 — Sección 17.2 (bug real, estaba PAUSADO): tickets viejos
+  // migrados desde Excel a veces solo traen fecha1 (sin hora1, o sin
+  // fecha2/hora2 — nunca pasaron por Fila Báscula con timestamps reales).
+  // Al editarlos (ej. para corregir material o rango), calcCiclo() no
+  // puede calcular el ciclo porque de verdad faltan esos datos — y antes
+  // esto bloqueaba el guardado para SIEMPRE, sin forma de salir salvo
+  // inventando una hora falsa (mala práctica de datos, Jesús no lo quería).
+  // Fix: si YA es una edición (window._editFid) Y el registro ORIGINAL
+  // (antes de tocar nada, window._editOriginal) ya le faltaba hora1,
+  // fecha2 u hora2, se permite guardar sin exigirlos de nuevo — se
+  // respeta el hueco histórico en vez de forzar un dato inventado. Esto
+  // NO afecta capturas nuevas (ahí no hay _editFid) ni edición de tickets
+  // que sí tienen su ciclo completo — solo destraba el caso real de datos
+  // legítimamente incompletos desde su origen.
+  const esEdicionHistoricaIncompleta = !!window._editFid && !!window._editOriginal &&
+    (!window._editOriginal.hora1 || !window._editOriginal.fecha2 || !window._editOriginal.hora2);
+
   if (!data.boleta)       { alert('Ingresa el número de boleta.'); return; }
   if (data.origen_tipo !== 'ACOPIO' && !data.folio) { alert('Ingresa el folio.'); return; }
   if (!data.economico)    { alert('Ingresa el # económico.'); return; }
   if (!data.fecha1)       { alert('Ingresa la fecha del 1er pesaje.'); return; }
-  if (!data.hora1)        { alert('Ingresa la hora del 1er pesaje.'); return; }
+  if (!data.hora1 && !esEdicionHistoricaIncompleta) { alert('Ingresa la hora del 1er pesaje.'); return; }
   if (!esPendiente) {
-    if (!data.fecha2)     { alert('Ingresa la fecha del 2do pesaje.'); return; }
-    if (!data.hora2)      { alert('Ingresa la hora del 2do pesaje.'); return; }
-    if (!data.ciclo)      { alert('El ciclo es requerido.'); return; }
+    if (!data.fecha2 && !esEdicionHistoricaIncompleta) { alert('Ingresa la fecha del 2do pesaje.'); return; }
+    if (!data.hora2 && !esEdicionHistoricaIncompleta)  { alert('Ingresa la hora del 2do pesaje.'); return; }
+    if (!data.ciclo && !esEdicionHistoricaIncompleta)  { alert('El ciclo es requerido.'); return; }
   }
   if (!data.placas)       { alert('Selecciona las placas del camión (debe estar registrado en Fila Báscula con salida hacia el frente ya hecha).'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }

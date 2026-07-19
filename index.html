@@ -3291,7 +3291,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <div style="display:none;margin-bottom:10px;" id="wrap-fb-placas-trasera">
         <input type="text" id="fb-placas-trasera" placeholder="Placas trasera" style="width:100%;height:40px;border:0.5px solid var(--border-strong);border-radius:var(--radius);padding:0 10px;font-size:14px;background:var(--surface);text-transform:uppercase;">
       </div>
-      <button class="btn btn-primary" style="width:100%;" onclick="registrarEntradaFila()">🚛 Registrar Entrada a fila</button>
+      <button class="btn btn-primary" style="width:100%;" onclick="registrarEntradaFila(this)">🚛 Registrar Entrada a fila</button>
     </div>
     <div class="chart-card">
       <h4 style="margin:0 0 10px;">En fila / rumbo a tiro (esperando 1er pesaje)</h4>
@@ -3897,6 +3897,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div id="tnd-eq-lineal" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
       <div style="display:flex;gap:8px;text-align:center;">
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">R²</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
@@ -3910,6 +3911,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div id="tnd-eq-cuadratico" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
       <div style="display:flex;gap:8px;text-align:center;">
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">R²</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
         <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
@@ -6936,7 +6938,16 @@ function toggleSegundaPlacaFila() {
 }
 window.toggleSegundaPlacaFila = toggleSegundaPlacaFila;
 
-window.registrarEntradaFila = async function() {
+// 19-jul-2026: mismo pokayoke de doble-clic aplicado a "Entra a fila"
+// (registrarEntradaFilaSegunda ya lo tenía desde antes en Destare). Aquí
+// hay varios `return` de validación a la mitad de la función (tipo de
+// camión vacío, placas vacías, económico duplicado, etc.) — se usa
+// try/finally para garantizar que el botón se reactive SIEMPRE al
+// salir, ya sea por una validación fallida o porque terminó bien, sin
+// tener que repetir `btn.disabled = false` en cada punto de salida.
+window.registrarEntradaFila = async function(btn) {
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
+  try {
   const tipoCamion = document.getElementById('fb-tipo-camion').value;
   const frontal     = document.getElementById('fb-placas').value.trim().toUpperCase();
   const trasera      = document.getElementById('fb-placas-trasera').value.trim().toUpperCase();
@@ -7015,13 +7026,24 @@ window.registrarEntradaFila = async function() {
   } catch (e) {
     alert('Error al registrar entrada: ' + e.message);
   }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 };
 
-window.registrarSalidaFrente = async function(filaId) {
+// 19-jul-2026: mismo pokayoke de doble-clic que ya tenían
+// registrarEntradaFilaSegunda/registrarSalidaFilaSegunda (Destare) —
+// faltaba aquí en "Sale a tiro" de Camiones con Material. Con latencia
+// de red normal, un doble-toque accidental en campo alcanzaba a mandar
+// la escritura 2 veces antes de que el snapshot de Firestore repintara
+// el botón. Ahora se deshabilita de inmediato al primer clic.
+window.registrarSalidaFrente = async function(filaId, btn) {
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await window.dbFilaBasculaActualizar(filaId, { t3_salida_ts: Date.now() });
     window.showSyncToast('✅', 'Sale a tiro registrado', 'ok');
   } catch (e) {
+    if (btn) btn.disabled = false;
     alert('Error al registrar salida: ' + e.message);
   }
 };
@@ -7093,7 +7115,7 @@ window.renderFilaBascula = function() {
             <span style="font-size:12px;color:var(--text-muted);">${estado} · hace ${minEnFila} min</span>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
-            ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}')">Sale a tiro</button>`}
+            ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}', this)">Sale a tiro</button>`}
             ${esMasterFila ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
           </div>
         </div>`;
@@ -7604,10 +7626,27 @@ function tnd_regresionCuadratica(puntos) {
 }
 
 // Dado un mapa {fecha1: toneladas}, arma la secuencia t=1..N de SOLO
-// días laborables (lunes a viernes) entre la primera y última fecha del
-// mapa, con 0 en los días laborables sin dato. Reutilizable tanto desde
-// registros crudos (tnd_construirSerie) como desde el agregado mensual
-// por fecha (calcularTendenciaAgregada, punto 7 — 18-jul-2026).
+// días laborables (lunes a viernes) que SÍ tienen un dato real en el
+// mapa. Reutilizable tanto desde registros crudos (tnd_construirSerie)
+// como desde el agregado mensual por fecha (calcularTendenciaAgregada,
+// punto 7 — 18-jul-2026).
+//
+// 19-jul-2026 (Jesús trajo su proceso real en Minitab, vía un prompt que
+// preparó con Gemini — ver PP.pptx): la versión anterior de esta función
+// metía un 0 en CADA día laborable entre la primera y última fecha que
+// no tuviera dato ("y: tonPorFecha[key] || 0"), y ese día SÍ contaba
+// como un punto más en la regresión. Eso es justo lo que la metodología
+// de Jesús en Minitab NO hace: en su Excel/Minitab, un día sin fila en
+// la base de datos simplemente NO EXISTE en la secuencia — no se
+// re-indexa como Y=0, se salta por completo. Esta es la causa real (no
+// solo el sábado, que ya se excluía bien) de que su R² cuadrático en
+// Minitab diera 72.00% y el de la app diera ~42%: la app estaba
+// contaminando la regresión con ceros de días que en realidad nunca
+// tuvieron una fila que capturar (huecos de datos, no paros reales
+// documentados como cero), inflando la variabilidad y aplanando el
+// ajuste. Fix: ahora solo se agrega un punto a la serie (y se avanza t)
+// si el día laborable SÍ tiene una llave en `tonPorFecha` — si no la
+// tiene, se salta igual que en Minitab, sin dejar hueco en el índice t.
 function tnd_serieDesdeMapaFechas(tonPorFecha) {
   const fechas = Object.keys(tonPorFecha).sort();
   if (!fechas.length) return null;
@@ -7619,9 +7658,11 @@ function tnd_serieDesdeMapaFechas(tonPorFecha) {
   const cursor = new Date(fechaInicio.getTime());
   while (cursor.getTime() <= fechaFin.getTime()) {
     if (tnd_esDiaLaborable(cursor)) {
-      t++;
       const key = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
-      serie.push({ t, fecha: new Date(cursor.getTime()), y: tonPorFecha[key] || 0 });
+      if (Object.prototype.hasOwnProperty.call(tonPorFecha, key)) {
+        t++;
+        serie.push({ t, fecha: new Date(cursor.getTime()), y: tonPorFecha[key] });
+      }
     }
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -7889,6 +7930,8 @@ window.generarAnalisisTendencia = async function() {
     document.getElementById('tnd-mape-lineal').textContent = accLineal.mape != null ? fmtAcc(accLineal.mape) + '%' : '—';
     document.getElementById('tnd-mad-lineal').textContent = fmtAcc(accLineal.mad);
     document.getElementById('tnd-msd-lineal').textContent = fmtAcc(accLineal.msd);
+    document.getElementById('tnd-r2-lineal').textContent = (modeloLineal.r2 * 100).toFixed(1) + '%';
+    document.getElementById('tnd-r2-cuadratico').textContent = (modeloCuadratico.r2 * 100).toFixed(1) + '%';
     document.getElementById('tnd-mape-cuadratico').textContent = accCuadratico.mape != null ? fmtAcc(accCuadratico.mape) + '%' : '—';
     document.getElementById('tnd-mad-cuadratico').textContent = fmtAcc(accCuadratico.mad);
     document.getElementById('tnd-msd-cuadratico').textContent = fmtAcc(accCuadratico.msd);

@@ -3869,6 +3869,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
      a la pestaña — mismo criterio de costo que "Ver TODO el histórico"
      (ver INSTRUCCIONESAPP.md sección 11.1/11.4). -->
 <div class="tab-content" id="tab-tendencia">
+  <div id="tnd-metric-tooltip" style="display:none;position:fixed;z-index:9999;max-width:260px;background:#1a1a1a;color:#fff;font-size:12.5px;line-height:1.4;padding:10px 12px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.3);"></div>
   <div class="chart-card" style="margin-bottom:14px;">
     <h3 style="margin:0;">📈 Análisis de Tendencias / Proyecciones</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
@@ -3897,10 +3898,10 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div id="tnd-eq-lineal" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
       <div style="display:flex;gap:8px;text-align:center;">
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">R²</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-lineal">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-lineal">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'r2')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">R² ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-lineal">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'mape')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MAPE ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-lineal">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'mad')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MAD ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-lineal">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'msd')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MSD ⓘ</div></div>
       </div>
     </div>
 
@@ -3911,10 +3912,10 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <div id="tnd-eq-cuadratico" style="font-family:ui-monospace,monospace;font-size:13px;color:var(--text-muted);margin-bottom:10px;">—</div>
       <div style="display:flex;gap:8px;text-align:center;">
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">R²</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAPE</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MAD</div></div>
-        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-cuadratico">—</div><div style="font-size:10px;color:var(--text-muted);">MSD</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-r2-cuadratico">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'r2')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">R² ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mape-cuadratico">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'mape')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MAPE ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-mad-cuadratico">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'mad')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MAD ⓘ</div></div>
+        <div style="flex:1;"><div style="font-weight:700;" id="tnd-msd-cuadratico">—</div><div class="tnd-metric-lbl" onclick="mostrarInfoMetrica(event,'msd')" style="font-size:10px;color:var(--text-muted);cursor:pointer;text-decoration:underline dotted;">MSD ⓘ</div></div>
       </div>
     </div>
 
@@ -7801,6 +7802,43 @@ function tnd_formatearFecha(fecha) {
 }
 
 let chartTendencia = null;
+
+// 19-jul-2026 (pedido por Jesús): en celular no hay "pasar el cursor" —
+// se implementa como tooltip al TOCAR la etiqueta (R²/MAPE/MAD/MSD).
+// Un solo div flotante compartido (#tnd-metric-tooltip, position:fixed)
+// se reposiciona y cambia de texto según qué etiqueta se tocó, en vez de
+// tener 4 tooltips distintos. Se cierra tocando de nuevo la misma
+// etiqueta, tocando otra, o tocando en cualquier otro lado de la
+// pantalla (listener de document con { once: true }).
+const TND_METRIC_INFO = {
+  r2: 'R² — % de la variación del tonelaje diario que el modelo alcanza a explicar. Entre más alto (cerca de 100%), mejor se ajusta la línea/curva a tus datos reales.',
+  mape: 'MAPE — error promedio en PORCENTAJE. Qué tanto se equivoca el modelo, en promedio, comparado con el valor real de cada día. Arriba de 100% significa que el error diario suele ser más grande que el propio dato real — sirve para ver la tendencia, no para predecir un día exacto.',
+  mad: 'MAD — error promedio en TONELADAS. En promedio, así de lejos cae la línea/curva del tonelaje real de cada día.',
+  msd: 'MSD — como el MAD, pero castigando más fuerte los días donde el modelo falló feo. Se usa sobre todo para COMPARAR los 2 modelos entre sí: el que tenga MSD más bajo ajusta mejor.'
+};
+window.mostrarInfoMetrica = function(ev, key) {
+  ev.stopPropagation();
+  const tip = document.getElementById('tnd-metric-tooltip');
+  if (!tip) return;
+  const yaAbiertoMismaEtiqueta = tip.style.display === 'block' && tip.dataset.key === key;
+  tip.style.display = 'none';
+  if (yaAbiertoMismaEtiqueta) return; // toca la misma etiqueta 2 veces = cerrar
+  tip.textContent = TND_METRIC_INFO[key] || '';
+  tip.dataset.key = key;
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const vw = window.innerWidth;
+  tip.style.display = 'block';
+  // Posicionar y luego ajustar si se sale de la pantalla (el ancho real
+  // del tooltip solo se conoce tras pintarlo con display:block).
+  const tipWidth = tip.offsetWidth;
+  let left = rect.left + rect.width / 2 - tipWidth / 2;
+  left = Math.max(8, Math.min(left, vw - tipWidth - 8));
+  tip.style.left = left + 'px';
+  tip.style.top = (rect.bottom + 8) + 'px';
+  setTimeout(() => {
+    document.addEventListener('click', () => { tip.style.display = 'none'; }, { once: true });
+  }, 0);
+};
 
 window.generarAnalisisTendencia = async function() {
   const objetivoInput = document.getElementById('tnd-objetivo');

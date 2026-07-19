@@ -1106,8 +1106,41 @@ async function aplicarResumen(rec, signo) {
   const destStr  = (rec.destino || 'SD').replace(/\s+/g, '_');
   const camStr   = (rec.tipo_camion || 'SD').replace(/\s+/g, '_');
   const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
-  
-  payload['por_combinacion.' + comboKey] = increment(signo * ton);
+
+  // 18-jul-2026 (tercera tanda, punto 2 de las observaciones — "urgente"):
+  // antes por_combinacion SOLO guardaba toneladas (un número plano), sin
+  // conteo de viajes. Reportes y Resumen necesitan también VIAJES por
+  // combinación banco+material+destino+tipo_camion para poder leer este
+  // mismo agregado mensual en vez de la ventana reciente / "Ver TODO el
+  // histórico" — igual que ya se hizo con por_banco_material_rango para
+  // Bancos (16.1). Se guarda como objeto {viajes, ton, banco, material,
+  // destino, tipo_camion} en vez de un número plano. Los campos de texto
+  // se reescriben en cada llamada (idempotente, no usan increment) — mismo
+  // patrón que ya usa por_banco_material_rango más abajo.
+  payload['por_combinacion.' + comboKey + '.viajes']      = increment(signo);
+  payload['por_combinacion.' + comboKey + '.ton']         = increment(signo * ton);
+  payload['por_combinacion.' + comboKey + '.banco']       = rec.banco       || 'SIN BANCO';
+  payload['por_combinacion.' + comboKey + '.material']    = rec.material    || 'SIN MATERIAL';
+  payload['por_combinacion.' + comboKey + '.destino']     = rec.destino     || 'SIN DESTINO';
+  payload['por_combinacion.' + comboKey + '.tipo_camion'] = rec.tipo_camion || 'SIN TIPO';
+
+  // 18-jul-2026 (tercera tanda, punto 7) — Agregado propio para la pestaña
+  // Tendencia, separado de todos los demás (Bancos/Sindicato/Avances SÍ
+  // deben seguir incluyendo el sábado, ese agregado no se toca). Antes
+  // Tendencia leía TODA la colección `acarreos` para poder armar su serie
+  // diaria (miles de lecturas, ~6,000 según reportó Jesús). Se guarda
+  // tonelaje+viajes POR DÍA (fecha1), EXCLUYENDO sábado desde que se
+  // escribe (no solo al leer) — así el agregado nace del tamaño correcto
+  // sin tener que filtrar nada después. Domingo casi nunca debería tener
+  // tickets, pero se excluye igual por si acaso.
+  if (rec.fecha1) {
+    const [fy, fm, fd] = rec.fecha1.split('-').map(Number);
+    const diaSemana = (fy && fm && fd) ? new Date(fy, fm - 1, fd).getDay() : -1;
+    if (diaSemana !== 6 && diaSemana !== 0) {
+      payload['tendencia_diaria.' + rec.fecha1 + '.viajes'] = increment(signo);
+      payload['tendencia_diaria.' + rec.fecha1 + '.ton']    = increment(signo * ton);
+    }
+  }
 
   // FASE — Resumen de ACARREOS para el bot de Telegram (12/07/2026, ver
   // BOT.MD sección 17). El bot necesitaba viajes+ton desglosados por
@@ -1144,7 +1177,7 @@ async function aplicarResumen(rec, signo) {
         await setDoc(ref, {
           total_viajes: 0, total_ton: 0,
           por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {},
-          por_banco_material_rango: {}
+          por_banco_material_rango: {}, tendencia_diaria: {}
         });
         await updateDoc(ref, payload);
       } catch (e2) {
@@ -1202,7 +1235,7 @@ window.recalcularResumen = async function() {
       const mes = mesKeyFromFecha(r.fecha1);
       if (!mes) return;
       const ton = r.ton || ((r.neto_kg || 0) / 1000);
-      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {}, por_banco_material_rango: {} };
+      if (!porMes[mes]) porMes[mes] = { total_viajes: 0, total_ton: 0, por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {}, por_banco_material_rango: {}, tendencia_diaria: {} };
       const m = porMes[mes];
       m.total_viajes += 1;
       m.total_ton    += ton;
@@ -1214,7 +1247,22 @@ window.recalcularResumen = async function() {
       const destStr  = (r.destino || 'SD').replace(/\s+/g, '_');
       const camStr   = (r.tipo_camion || 'SD').replace(/\s+/g, '_');
       const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
-      m.por_combinacion[comboKey] = (m.por_combinacion[comboKey] || 0) + ton;
+      if (!m.por_combinacion[comboKey]) {
+        m.por_combinacion[comboKey] = { viajes: 0, ton: 0, banco: r.banco || 'SIN BANCO', material: r.material || 'SIN MATERIAL', destino: r.destino || 'SIN DESTINO', tipo_camion: r.tipo_camion || 'SIN TIPO' };
+      }
+      m.por_combinacion[comboKey].viajes += 1;
+      m.por_combinacion[comboKey].ton    += ton;
+      // 18-jul-2026 (punto 7): tendencia_diaria, mismo criterio que
+      // aplicarResumen() en vivo — sin sábado ni domingo.
+      if (r.fecha1) {
+        const [fy, fm, fd] = r.fecha1.split('-').map(Number);
+        const diaSemana = (fy && fm && fd) ? new Date(fy, fm - 1, fd).getDay() : -1;
+        if (diaSemana !== 6 && diaSemana !== 0) {
+          if (!m.tendencia_diaria[r.fecha1]) m.tendencia_diaria[r.fecha1] = { viajes: 0, ton: 0 };
+          m.tendencia_diaria[r.fecha1].viajes += 1;
+          m.tendencia_diaria[r.fecha1].ton    += ton;
+        }
+      }
       // Mismo desglose que aplicarResumen() en vivo — ver FASE 12/07/2026.
       if (r.banco) {
         const rangoNorm = normalizarRango(r.rango);
@@ -1269,7 +1317,11 @@ window.recalcularHistoricoGlobal = async function() {
       const destStr  = (r.destino || 'SD').replace(/\s+/g, '_');
       const camStr   = (r.tipo_camion || 'SD').replace(/\s+/g, '_');
       const comboKey = `${bancoStr}__${matStr}__${destStr}__${camStr}`;
-      g.por_combinacion[comboKey] = (g.por_combinacion[comboKey] || 0) + ton;
+      if (!g.por_combinacion[comboKey]) {
+        g.por_combinacion[comboKey] = { viajes: 0, ton: 0, banco: r.banco || 'SIN BANCO', material: r.material || 'SIN MATERIAL', destino: r.destino || 'SIN DESTINO', tipo_camion: r.tipo_camion || 'SIN TIPO' };
+      }
+      g.por_combinacion[comboKey].viajes += 1;
+      g.por_combinacion[comboKey].ton    += ton;
       if (r.banco) {
         const rangoNorm = normalizarRango(r.rango);
         const keyBMR = claveAgregado(r.banco, r.material, rangoNorm);
@@ -1826,6 +1878,23 @@ async function traerTodoFirestore(desde, hasta, onProgreso) {
 }
 window.traerTodoFirestore = traerTodoFirestore;
 
+// 18-jul-2026 (tercera tanda, punto 3) — Búsqueda de folio EXACTA y
+// siempre completa, sin importar el rango de fechas cargado ni si se le
+// dio clic a "Ver TODO el histórico". Antes buscaba por coincidencia
+// parcial (.includes) mezclado sobre lo que ya estuviera en memoria
+// (window.db / la ventana reciente), así que un folio de hace 4 meses
+// simplemente no aparecía si no se había cargado ese rango. Un folio es
+// prácticamente único, así que una query exacta where('folio','==',X)
+// cuesta solo los pocos documentos que de verdad coinciden — no una
+// lectura del histórico completo. Trade-off: ya no permite folio
+// PARCIAL, tiene que ser el folio completo tal cual se capturó.
+window.dbBuscarPorFolio = async function (folioExacto) {
+  const snap = await getDocs(query(collection(db_f, COL), where('folio', '==', folioExacto), limit(20)));
+  const resultados = [];
+  snap.forEach(d => resultados.push({ _fid: d.id, ...d.data() }));
+  return resultados;
+};
+
 // Pendiente de auditoría de lecturas de Firestore (13/07/2026, ver BOT.MD
 // sección 20): antes de disparar cualquier lectura sin filtro de fecha
 // (potencialmente TODA la colección), esta función pregunta primero
@@ -2190,6 +2259,62 @@ window.dbFlotaBuscarPorEconomico = async function (economico) {
 };
 window.dbFlotaGuardar = async function (placasKey, campos) {
   await setDoc(doc(db_f, 'flota', placasKey), campos, { merge: true });
+};
+
+// 18-jul-2026 (tercera tanda) — Corrección de flota, reconstruida desde
+// cero (la versión anterior nunca quedó guardada en el index.html). Solo
+// visible en la pestaña "Base de datos" (coordinador/admin/master, ver
+// visibilidadPorTab). Corrige el DOCUMENTO flota/{placas} — no toca
+// viajes ya guardados en `acarreos`, solo lo que Fila Báscula va a
+// autorrellenar de ahora en adelante para esa placa.
+window.buscarFlotaParaCorregir = async function() {
+  const placasInput = document.getElementById('flota-buscar-placas');
+  const placas = (placasInput.value || '').trim().toUpperCase();
+  if (!placas) { alert('Captura las placas a buscar.'); return; }
+  const btn = document.getElementById('btn-flota-buscar');
+  if (btn) { btn.disabled = true; }
+  try {
+    const snap = await window.dbFlotaLeer(placas);
+    if (!snap.exists()) {
+      alert('No hay ningún registro de flota guardado para "' + placas + '". Solo existe un registro una vez que ese camión se capturó al menos una vez en Fila Báscula.');
+      document.getElementById('flota-resultado').style.display = 'none';
+      window._flotaEnEdicion = null;
+      return;
+    }
+    const data = snap.data();
+    window._flotaEnEdicion = placas;
+    document.getElementById('flota-tipo-actual').textContent = nombreTipoCamion(data.tipo_camion) || '—';
+    document.getElementById('flota-economico-actual').textContent = data.economico || '—';
+    document.getElementById('flota-economico-nuevo').value = '';
+    document.getElementById('flota-resultado').style.display = '';
+  } catch (e) {
+    alert('Error al buscar: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
+window.guardarCorreccionFlota = async function() {
+  const placas = window._flotaEnEdicion;
+  if (!placas) return;
+  const nuevo = (document.getElementById('flota-economico-nuevo').value || '').trim().toUpperCase();
+  if (!nuevo) { alert('Captura el económico correcto.'); return; }
+  if (!confirm(`¿Confirmas cambiar el económico guardado de "${placas}" a "${nuevo}"?\n\nEsto aplica para los PRÓXIMOS viajes de esa placa en Fila Báscula. No corrige viajes que ya se capturaron con el económico anterior — esos se editan individualmente desde su ticket.`)) return;
+  const btn = document.getElementById('btn-flota-guardar');
+  if (btn) { btn.disabled = true; }
+  try {
+    await window.dbFlotaGuardar(placas, {
+      economico: nuevo,
+      corregidoPor: window._currentUserUid || '',
+      corregidoTs: Date.now()
+    });
+    document.getElementById('flota-economico-actual').textContent = nuevo;
+    window.showSyncToast('✅', 'Económico corregido para ' + placas, 'ok');
+  } catch (e) {
+    alert('Error al guardar la corrección: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 };
 
 window.dbFilaBasculaActualizar = async function (filaId, campos) {
@@ -2768,6 +2893,41 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     Usa esto si necesitas ver/buscar entre el total de viajes ejecutados.
   </div>
 
+  <!-- 18-jul-2026 (tercera tanda) — Corrección de flota (placa → económico).
+       Reconstruido desde cero: la versión anterior nunca quedó guardada.
+       Solo coordinador/admin/master ven esta pestaña (ver visibilidadPorTab,
+       tab-db = esAdminOMaster || esCoordinador), así que no hace falta un
+       gate adicional aquí — capturista y visor ni siquiera llegan a esta
+       pantalla. -->
+  <div class="form-card" style="margin-bottom:10px;">
+    <h3 style="margin:0 0 6px;">🔧 Corrección de flota (placa → económico)</h3>
+    <p style="font-size:11.5px;color:var(--text-muted);margin:0 0 10px;line-height:1.4;">
+      Una vez que una placa queda registrada con un económico, Fila Báscula
+      SIEMPRE usa ese económico guardado al volver a capturar esa placa — ya
+      no deja escribir uno distinto, para que 2 capturistas no manden
+      económicos diferentes del mismo camión. Si el económico guardado está
+      mal, corrígelo aquí. <strong>Esto solo corrige la placa hacia
+      adelante</strong> — no modifica viajes ya capturados; para corregir un
+      viaje específico ya guardado, edítalo directo en su ticket.
+    </p>
+    <div class="field-row">
+      <label>Placas a corregir</label>
+      <input type="text" id="flota-buscar-placas" placeholder="Ej: ABC-1234"/>
+    </div>
+    <button class="btn btn-secondary" id="btn-flota-buscar" onclick="buscarFlotaParaCorregir()" style="width:100%;">Buscar</button>
+    <div id="flota-resultado" style="display:none;margin-top:12px;padding-top:10px;border-top:0.5px solid var(--border);">
+      <div style="font-size:12.5px;margin-bottom:10px;">
+        Tipo de camión: <strong id="flota-tipo-actual">—</strong><br/>
+        Económico guardado actualmente: <strong id="flota-economico-actual">—</strong>
+      </div>
+      <div class="field-row">
+        <label>Económico correcto</label>
+        <input type="text" id="flota-economico-nuevo" placeholder="Ej: V-12"/>
+      </div>
+      <button class="btn btn-primary" id="btn-flota-guardar" onclick="guardarCorreccionFlota()" style="width:100%;">Guardar corrección</button>
+    </div>
+  </div>
+
   <div style="padding:0 0 10px;">
     <button class="btn btn-secondary" id="btn-solo-barcaza" onclick="toggleSoloBarcaza()" style="width:100%;font-size:12px;">
       🚢 Ver solo tickets de Barcaza
@@ -3026,7 +3186,8 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 
   <div class="form-card">
     <h3 style="margin-bottom:6px;">🔎 Buscar por folio</h3>
-    <input type="text" id="bancos-folio-input" placeholder="Folio exacto o parcial (el que trae el personal del banco/sindicato)" oninput="renderBancosFolio()" style="width:100%;"/>
+    <input type="text" id="bancos-folio-input" placeholder="Folio completo (el que trae el personal del banco/sindicato)" style="width:100%;"/>
+    <button class="btn btn-secondary" onclick="buscarFolioBancos()" style="width:100%;margin-top:6px;font-size:12px;">🔍 Buscar folio</button>
     <div id="bancos-folio-resultados" style="margin-top:8px;"></div>
   </div>
 
@@ -3635,10 +3796,10 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <h3 style="margin:0;">📈 Análisis de Tendencias / Proyecciones</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
       Regresión lineal y cuadrática sobre el tonelaje diario histórico
-      (solo viajes completos), para proyectar cuándo se alcanza una meta
-      de capacidad diaria. Lee TODO el histórico de acarreos cada vez que
-      le das clic a "Generar Análisis" — úsalo cuando lo necesites, no se
-      actualiza solo.
+      (lunes a viernes, sin sábado ni domingo), para proyectar cuándo se
+      alcanza una meta de capacidad diaria. Lee un resumen mensual ya
+      guardado (no el histórico completo) — úsalo cuando lo necesites, no
+      se actualiza solo.
     </p>
   </div>
 
@@ -5048,7 +5209,7 @@ function onMsChange(key) {
   if (key.startsWith('excel-')) return;
   if (key.startsWith('resumen-')) { renderResumen(); return; }
   if (key.startsWith('reportes-')) { renderReportes(); return; }
-  if (key.startsWith('bancos-')) { renderBancos(); renderBancosFolio(); return; }
+  if (key.startsWith('bancos-')) { renderBancos(); buscarFolioBancos(); return; }
   renderDashboard();
 }
 
@@ -5762,37 +5923,40 @@ function descripcionFiltrosReportes() {
   return partes.length ? partes.join(' · ') : 'Acumulado global · sin filtro';
 }
 
-function renderReportesEstatus() {
+// 18-jul-2026 (tercera tanda, punto 2 — URGENTE): "Completados" pasó de
+// depender de la ventana reciente / "Ver TODO el histórico" a usar el
+// agregado mensual (calcularResumenGenericoAgregado), igual que Resumen y
+// Bancos. "Pendientes" NO se tocó — sigue viniendo de la ventana reciente
+// cargada (getReportesFiltradoBase/window.db) a propósito: un camión
+// pendiente de destare por definición es un asunto de HOY (nadie deja un
+// camión "pendiente" semanas — si el corte de báscula tarda tantos días
+// es un caso roto aparte, no algo que este reporte deba resolver con una
+// lectura completa del histórico), así que no tiene el problema de costo.
+//
+// Detalle importante para no duplicar/inflar el conteo: el agregado
+// mensual (por_combinacion) cuenta CADA ticket desde que se crea, aunque
+// siga "pendiente" (con 0 toneladas hasta que se destara — ver
+// aplicarResumen/moverResumen). Por eso el total de "Completados" que da
+// el agregado en crudo incluye también los pendientes actuales como
+// viajes con 0 t. Se restan aquí (por banco+material+destino+tipo_camion,
+// usando el mismo desglose ya calculado para la tarjeta de Pendientes)
+// para que "Completados" no cuente de más.
+async function renderReportesEstatus() {
   const card = document.getElementById('reportes-estatus-card');
   const cont = document.getElementById('reportes-estatus-contenido');
   if (!card || !cont) return;
+  cont.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px 0;text-align:center;">Calculando…</div>';
+  card.style.display = 'block';
 
-  // Usa los datos según los filtros seleccionados en la pestaña Reportes
-  // (periodo, banco, material, cuerpo y tipo de camión)
-  const todosLosDatos = getReportesFiltradoBase();
+  // Pendientes: siempre de la ventana reciente cargada (barato, siempre fresco).
+  const todosLosDatosRecientes = getReportesFiltradoBase();
+  const pendientes = todosLosDatosRecientes.filter(r => r.status === 'pendiente');
+  const totPend = pendientes.length;
 
-  if (!todosLosDatos.length) {
-    card.style.display = 'block';
-    cont.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">Sin datos para los filtros seleccionados.</div>';
-    return;
-  }
-
-  // Hora del corte
-  const ahora = new Date();
-  const horaCorte = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
-
-  const completados = todosLosDatos.filter(r => r.status !== 'pendiente');
-  const pendientes  = todosLosDatos.filter(r => r.status === 'pendiente');
-  const totalViajes = todosLosDatos.length;
-  const totPend     = pendientes.length;
-  const totComp     = completados.length;
-
-  // Conteo tipo camión en pendientes
   const pendGondolas = pendientes.filter(r => r.tipo_camion === 'GONDOLA').length;
-  const pendArticulados = pendientes.filter(r => r.tipo_camion === 'ARTICULADO').length; // 11.3 (18-jul-2026): antes se quedaba fuera de este resumen
+  const pendArticulados = pendientes.filter(r => r.tipo_camion === 'ARTICULADO').length;
   const pendVolteos  = pendientes.filter(r => r.tipo_camion === 'VOLTEO').length;
 
-  // ── Función auxiliar: agrupar lista por banco > grupos ──
   function agruparPorBanco(lista) {
     const map = {};
     lista.forEach(r => {
@@ -5807,6 +5971,53 @@ function renderReportesEstatus() {
     });
     return map;
   }
+  const bancosPend = agruparPorBanco(pendientes);
+
+  // Completados: agregado mensual, menos los pendientes actuales (ver
+  // comentario arriba).
+  const { desde, hasta } = getRangoPeriodoReportes();
+  const filtros = {
+    bancos:      getMsSelected('reportes-banco'),
+    materiales:  getMsSelected('reportes-material'),
+    destinos:    getMsSelected('reportes-cuerpo'),
+    tiposCamion: getMsSelected('reportes-tipocamion')
+  };
+
+  let bancosComp = {}, totComp = 0, totalViajes = totPend, totalTon = 0;
+  try {
+    const { porBancoGrupo, totalViajes: totalAgregado, totalTon: totalTonAgregado } = await calcularResumenGenericoAgregado(desde, hasta, filtros);
+    // Restar pendientes actuales de cada combo del agregado.
+    Object.keys(porBancoGrupo).forEach(b => {
+      const grupos = {};
+      let total = 0;
+      Object.entries(porBancoGrupo[b].grupos).forEach(([clave, count]) => {
+        const restar = (bancosPend[b] && bancosPend[b].grupos[clave]) || 0;
+        const neto = Math.max(0, count - restar);
+        if (neto > 0) { grupos[clave] = neto; total += neto; }
+      });
+      if (total > 0) bancosComp[b] = { total, grupos };
+    });
+    totComp = Math.max(0, totalAgregado - totPend);
+    totalViajes = totalAgregado; // el agregado ya incluye a los pendientes actuales (0 t), así que su total ES el total real
+    totalTon = totalTonAgregado;
+  } catch (e) {
+    console.warn('No se pudo calcular Reportes por agregados mensuales, usando ventana cargada:', e);
+    // Respaldo: comportamiento anterior con lo que ya esté cargado en memoria.
+    const completadosFallback = todosLosDatosRecientes.filter(r => r.status !== 'pendiente');
+    bancosComp = agruparPorBanco(completadosFallback);
+    totComp = completadosFallback.length;
+    totalViajes = todosLosDatosRecientes.length;
+    totalTon = todosLosDatosRecientes.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+  }
+
+  if (!totalViajes) {
+    cont.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">Sin datos para los filtros seleccionados.</div>';
+    return;
+  }
+
+  // Hora del corte
+  const ahora = new Date();
+  const horaCorte = ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
 
   // ── Función auxiliar: renderizar lista de bancos en HTML ──
   function htmlBancos(mapa, colorAcento, colorTexto) {
@@ -5834,9 +6045,6 @@ function renderReportesEstatus() {
     });
     return h;
   }
-
-  const bancosComp = agruparPorBanco(completados);
-  const bancosPend = agruparPorBanco(pendientes);
 
   const tipoPendStr = [
     pendGondolas > 0 ? `${pendGondolas} góndola${pendGondolas > 1 ? 's' : ''}` : '',
@@ -6033,11 +6241,10 @@ function construirJerarquiaResumen(filtered) {
   return porBanco;
 }
 
-function renderResumenTablaJerarquica(filtered) {
+function renderResumenTablaJerarquica(porBanco, totalViajes, totalTon) {
   const wrap = document.getElementById('resumen-tabla-jerarquica');
-  if (!filtered.length) { wrap.innerHTML = ''; return; }
+  if (!totalViajes) { wrap.innerHTML = ''; return; }
 
-  const porBanco = construirJerarquiaResumen(filtered);
   const ordenBancos = Object.keys(porBanco).sort((a,b) => nombreBanco(a).localeCompare(nombreBanco(b)));
   const fmtTon  = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtProm = (ton, viajes) => viajes ? (ton/viajes).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
@@ -6095,8 +6302,6 @@ function renderResumenTablaJerarquica(filtered) {
     });
   });
 
-  const totalViajes = filtered.length;
-  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
   html += `
     <div style="${row('var(--text)','11px 12px','700','13px','white')}">
       <div>TOTAL GENERAL</div>
@@ -6108,19 +6313,50 @@ function renderResumenTablaJerarquica(filtered) {
   wrap.innerHTML = html;
 }
 
-function renderResumen() {
-  const filtered = getResumenFiltradoBase();
+// 18-jul-2026 (tercera tanda, punto 2 — URGENTE): renderResumen pasó de
+// depender de la ventana reciente cargada / "Ver TODO el histórico" a
+// calcular siempre sobre el agregado mensual (calcularResumenGenericoAgregado),
+// exactamente la misma corrección que ya se hizo en Bancos (16.1). Los
+// filtros de banco/material/cuerpo/tipo de camión de la pantalla ahora se
+// mandan al agregado en vez de aplicarse sobre una lista ya cargada en
+// memoria. "Resumen del día" (renderResumenDia) NO se tocó — sigue usando
+// datos recientes porque por definición es información de HOY, no
+// histórica, así que no tiene el problema de costo.
+async function renderResumen() {
   const emptyState = document.getElementById('resumen-empty-state');
+  const wrap = document.getElementById('resumen-tabla-jerarquica');
+  const kpiViajes = document.getElementById('resumen-kpi-viajes');
+  const kpiTon = document.getElementById('resumen-kpi-toneladas');
+  if (wrap) wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">Calculando…</p>';
 
   renderResumenTitulo();
   renderResumenDia();
 
-  const totalTon = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
-  document.getElementById('resumen-kpi-viajes').textContent     = filtered.length;
-  document.getElementById('resumen-kpi-toneladas').textContent  = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
-  emptyState.style.display = filtered.length ? 'none' : 'block';
+  const { desde, hasta } = getRangoPeriodoResumen();
+  const filtros = {
+    bancos:      getMsSelected('resumen-banco'),
+    materiales:  getMsSelected('resumen-material'),
+    destinos:    getMsSelected('resumen-cuerpo'),
+    tiposCamion: getMsSelected('resumen-tipocamion')
+  };
 
-  renderResumenTablaJerarquica(filtered);
+  try {
+    const { porBanco, totalViajes, totalTon } = await calcularResumenGenericoAgregado(desde, hasta, filtros);
+    kpiViajes.textContent = totalViajes;
+    kpiTon.textContent = totalTon.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+    if (emptyState) emptyState.style.display = totalViajes ? 'none' : 'block';
+    renderResumenTablaJerarquica(porBanco, totalViajes, totalTon);
+  } catch (e) {
+    console.warn('No se pudo calcular Resumen por agregados mensuales, usando ventana cargada:', e);
+    // Respaldo: si algo falla (p.ej. sin conexión momentánea), se cae al
+    // comportamiento anterior con lo que ya esté cargado en memoria.
+    const filtered = getResumenFiltradoBase();
+    const totalTonFallback = filtered.reduce((s,r) => s + (r.ton || (r.neto_kg||0)/1000), 0);
+    kpiViajes.textContent = filtered.length;
+    kpiTon.textContent = totalTonFallback.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' t';
+    if (emptyState) emptyState.style.display = filtered.length ? 'none' : 'block';
+    renderResumenTablaJerarquica(construirJerarquiaResumen(filtered), filtered.length, totalTonFallback);
+  }
 }
 window.renderResumen = renderResumen;
 
@@ -7050,16 +7286,12 @@ function tnd_regresionCuadratica(puntos) {
   return { a, b, c, r2 };
 }
 
-// Construye la serie diaria (t=1..N, solo días laborables, con 0 en los
-// días sin registro completo) a partir de los registros ya filtrados por
-// status === 'completo'.
-function tnd_construirSerie(registrosCompletos) {
-  const tonPorFecha = {};
-  registrosCompletos.forEach(r => {
-    if (!r.fecha1) return;
-    const ton = r.ton != null ? r.ton : (r.neto_kg || 0) / 1000;
-    tonPorFecha[r.fecha1] = (tonPorFecha[r.fecha1] || 0) + ton;
-  });
+// Dado un mapa {fecha1: toneladas}, arma la secuencia t=1..N de SOLO
+// días laborables (lunes a viernes) entre la primera y última fecha del
+// mapa, con 0 en los días laborables sin dato. Reutilizable tanto desde
+// registros crudos (tnd_construirSerie) como desde el agregado mensual
+// por fecha (calcularTendenciaAgregada, punto 7 — 18-jul-2026).
+function tnd_serieDesdeMapaFechas(tonPorFecha) {
   const fechas = Object.keys(tonPorFecha).sort();
   if (!fechas.length) return null;
   const fechaInicio = window.parseDateForExcel(fechas[0]);
@@ -7079,6 +7311,73 @@ function tnd_construirSerie(registrosCompletos) {
   return { serie, fechaFin };
 }
 
+// Construye la serie diaria (t=1..N, SOLO lunes a viernes — sábado y
+// domingo quedan fuera del índice t y su tonelaje NO se cuenta en ningún
+// punto de la regresión, igual que Minitab según confirmó Jesús
+// 18-jul-2026) a partir de los registros ya filtrados (ton > 0).
+// `viajesSabado`/`tonSabado` se regresan solo para mostrar en pantalla
+// cuánto se excluyó — transparencia, no afecta el cálculo. SOLO se usa
+// como respaldo si el agregado tendencia_diaria todavía no existe (mes
+// no reconstruido con "Recalcular resumen" en Admin) — ver
+// calcularTendenciaAgregada() y generarAnalisisTendencia().
+function tnd_construirSerie(registrosCompletos) {
+  const tonPorFecha = {};
+  let viajesSabado = 0, tonSabado = 0;
+  registrosCompletos.forEach(r => {
+    if (!r.fecha1) return;
+    const ton = r.ton != null ? r.ton : (r.neto_kg || 0) / 1000;
+    const fechaReg = window.parseDateForExcel(r.fecha1);
+    if (fechaReg.getDay() === 6) { viajesSabado++; tonSabado += ton; return; } // sábado: se excluye desde aquí, no solo al no caer en el cursor de abajo
+    tonPorFecha[r.fecha1] = (tonPorFecha[r.fecha1] || 0) + ton;
+  });
+  const base = tnd_serieDesdeMapaFechas(tonPorFecha);
+  if (!base) return null;
+  return { serie: base.serie, fechaFin: base.fechaFin, viajesSabado, tonSabado };
+}
+
+// 18-jul-2026 (tercera tanda, punto 7) — Fuente de datos barata para
+// Tendencia: en vez de leer TODA la colección `acarreos` (miles de
+// documentos, ~6,000 lecturas reportadas por Jesús), lee 1 documento por
+// MES (resumenes/{YYYY-MM}.tendencia_diaria — el mismo agregado que ya
+// mantiene aplicarResumen()/recalcularResumen() con cada alta/edición,
+// SIN sábado ni domingo desde que se escribe). Costo típico: unos cuantos
+// reads (uno por mes de vida del proyecto), sin importar cuántos miles de
+// viajes tenga cada mes.
+// Nota importante — Bancos/Sindicato/Avances SÍ deben seguir incluyendo
+// el sábado, ese es un agregado DISTINTO (por_banco_material_rango,
+// por_combinacion) que no se tocó.
+async function calcularTendenciaAgregada() {
+  const hoy = isoHoy();
+  const desdeEf = '2025-01-01'; // mismo arranque por defecto que usan Bancos/Resumen para "todo el histórico"
+  const meses = [];
+  let [ay, am] = desdeEf.split('-').map(Number);
+  const [by, bm] = hoy.split('-').map(Number);
+  while (ay < by || (ay === by && am <= bm)) {
+    meses.push(`${ay}-${String(am).padStart(2,'0')}`);
+    am++; if (am > 12) { am = 1; ay++; }
+  }
+
+  const tonPorFecha = {};
+  let totalViajes = 0, mesesConDato = 0;
+  for (const mes of meses) {
+    try {
+      const snap = await window.leerDocResumen(mes);
+      if (!snap.exists()) continue;
+      const d = snap.data();
+      if (!d.tendencia_diaria) continue; // mes no reconstruido todavía con el nuevo campo
+      mesesConDato++;
+      Object.entries(d.tendencia_diaria).forEach(([fecha, val]) => {
+        const ton = (val && val.ton) || 0;
+        const viajes = (val && val.viajes) || 0;
+        tonPorFecha[fecha] = (tonPorFecha[fecha] || 0) + ton;
+        totalViajes += viajes;
+      });
+    } catch (e) { console.warn('No se pudo leer tendencia_diaria de', mes, e); }
+  }
+  return { tonPorFecha, totalViajes, mesesConDato, mesesTotales: meses.length };
+}
+
+
 // Despeja t para el modelo lineal (a + b t = objetivo) y arma el
 // resultado a mostrar: fecha proyectada, "ya se alcanzó", o referencial
 // a 10 años si la pendiente no cruza. `ultimoT`/`ultimaFecha` son el
@@ -7086,19 +7385,19 @@ function tnd_construirSerie(registrosCompletos) {
 function tnd_resolverLineal(modelo, objetivo, ultimoT, ultimaFecha) {
   const yActual = modelo.a + modelo.b * ultimoT;
   if (yActual >= objetivo) {
-    return { alcanzada: true, exceso: yActual - objetivo };
+    return { alcanzada: true, exceso: yActual - objetivo, t: ultimoT };
   }
   if (modelo.b > 1e-9) {
     const t = (objetivo - modelo.a) / modelo.b;
     const fecha = tnd_avanzarDiasLaborables(ultimaFecha, t - ultimoT);
-    return { alcanzada: false, referencial: false, fecha };
+    return { alcanzada: false, referencial: false, fecha, t };
   }
   // Pendiente plana o negativa: no hay cruce matemático real. Por
   // decisión de Jesús se muestra igual una fecha, marcada como
   // referencial a 10 años (~2,600 días laborables) en vez de bloquear
   // con un mensaje de "no se alcanza".
   const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
-  return { alcanzada: false, referencial: true, fecha };
+  return { alcanzada: false, referencial: true, fecha, t: ultimoT + 2600 };
 }
 
 // Igual que el lineal pero para c t² + b t + (a - objetivo) = 0.
@@ -7106,7 +7405,7 @@ function tnd_resolverCuadratico(modelo, objetivo, ultimoT, ultimaFecha) {
   const { a, b, c } = modelo;
   const yActual = a + b * ultimoT + c * ultimoT * ultimoT;
   if (yActual >= objetivo) {
-    return { alcanzada: true, exceso: yActual - objetivo };
+    return { alcanzada: true, exceso: yActual - objetivo, t: ultimoT };
   }
   let raizValida = null;
   if (Math.abs(c) > 1e-12) {
@@ -7125,10 +7424,10 @@ function tnd_resolverCuadratico(modelo, objetivo, ultimoT, ultimaFecha) {
   }
   if (raizValida !== null) {
     const fecha = tnd_avanzarDiasLaborables(ultimaFecha, raizValida - ultimoT);
-    return { alcanzada: false, referencial: false, fecha };
+    return { alcanzada: false, referencial: false, fecha, t: raizValida };
   }
   const fecha = tnd_avanzarDiasLaborables(ultimaFecha, 2600);
-  return { alcanzada: false, referencial: true, fecha };
+  return { alcanzada: false, referencial: true, fecha, t: ultimoT + 2600 };
 }
 
 function tnd_formatearFecha(fecha) {
@@ -7146,50 +7445,58 @@ window.generarAnalisisTendencia = async function() {
   const progreso = document.getElementById('tnd-progreso');
   const resultado = document.getElementById('tnd-resultado');
   if (resultado) resultado.style.display = 'none';
+  if (btn) btn.disabled = true;
+  if (progreso) progreso.textContent = 'Calculando…';
 
-  // 18-jul-2026: si Bancos/Reportes/Resumen/Gráficos ya cargaron el
-  // histórico completo en esta sesión (botón "Ver TODO el histórico"), se
-  // reutiliza esa misma copia en memoria — evita otra lectura completa de
-  // ~6,000+ documentos. Si nadie lo cargó todavía, se pide confirmación
-  // con el costo estimado (mismo diálogo que usan esos botones) antes de
-  // leer, en vez de disparar la lectura sola con cada clic en "Generar".
-  let todos = window.resumenHistoricoCompleto;
-  if (!todos) {
-    if (!(await confirmarLecturaCompleta(null, null))) return;
-    if (btn) btn.disabled = true;
-    if (progreso) progreso.textContent = 'Leyendo histórico completo…';
-    try {
-      todos = await window.traerTodoFirestore(null, null, (n) => {
+  // 18-jul-2026 (tercera tanda, punto 7 — URGENTE) — Ya NO lee la
+  // colección `acarreos` completa (los ~6,000 reads que reportó Jesús).
+  // Lee el agregado barato tendencia_diaria (1 doc por mes, ver
+  // calcularTendenciaAgregada() y aplicarResumen()). Si algún mes todavía
+  // no tiene ese campo (no se ha corrido "Recalcular resumen" en Admin
+  // después de este cambio), se avisa y se cae al método anterior SOLO
+  // como respaldo, con el mismo diálogo de costo de siempre.
+  let serie, fechaFin, viajesSabado = 0, tonSabado = 0, totalViajesUsados = 0;
+  try {
+    const { tonPorFecha, totalViajes, mesesConDato, mesesTotales } = await calcularTendenciaAgregada();
+    const base = tnd_serieDesdeMapaFechas(tonPorFecha);
+    if (base && base.serie.length >= 3) {
+      serie = base.serie; fechaFin = base.fechaFin; totalViajesUsados = totalViajes;
+      if (progreso) progreso.textContent = `Análisis generado con ${serie.length.toLocaleString('es-MX')} día(s) laborables (lunes a viernes, ${totalViajesUsados.toLocaleString('es-MX')} viajes) — leído del agregado mensual (${mesesConDato}/${mesesTotales} mes(es)), sin leer el histórico completo.`;
+    } else if (mesesConDato === 0) {
+      // El agregado no existe todavía en ningún mes: falta correr
+      // "Recalcular resumen" una vez en Admin. Se avisa y se cae al
+      // método anterior (lectura completa con confirmación de costo).
+      if (!(await confirmarLecturaCompleta(null, null))) { if (btn) btn.disabled = false; return; }
+      if (progreso) progreso.textContent = 'El agregado mensual de Tendencia todavía no existe (falta correr "Recalcular resumen" una vez en Admin) — leyendo histórico completo…';
+      const todos = await window.traerTodoFirestore(null, null, (n) => {
         if (progreso) progreso.textContent = `Leyendo histórico completo… ${n.toLocaleString('es-MX')} registro(s)`;
       });
-      window.resumenHistoricoCompleto = todos; // queda cacheado para Bancos/Reportes/Resumen y para no repetir esta misma lectura
-    } catch (e) {
+      const completos = todos.filter(r => {
+        const ton = r.ton || ((r.neto_kg || 0) / 1000);
+        return ton > 0 && r.fecha1 && r.status !== 'pendiente' && r.status !== 'conflicto';
+      });
+      const datosSerie = tnd_construirSerie(completos);
+      if (!datosSerie || datosSerie.serie.length < 3) {
+        alert('No hay suficientes días con viajes completos para generar una regresión confiable (se necesitan al menos 3 días laborables con datos).');
+        if (btn) btn.disabled = false;
+        return;
+      }
+      serie = datosSerie.serie; fechaFin = datosSerie.fechaFin;
+      viajesSabado = datosSerie.viajesSabado; tonSabado = datosSerie.tonSabado;
+      totalViajesUsados = completos.length;
+      if (progreso) progreso.textContent = `Análisis generado con ${serie.length.toLocaleString('es-MX')} día(s) laborables (lunes a viernes, ${totalViajesUsados.toLocaleString('es-MX')} viajes completos). Excluidos ${viajesSabado.toLocaleString('es-MX')} viaje(s) de sábado (${tonSabado.toLocaleString('es-MX', {minimumFractionDigits:1,maximumFractionDigits:1})} t). ⚠️ Corre "Recalcular resumen" en Admin para que la próxima vez esto sea instantáneo y no vuelva a leer todo.`;
+    } else {
+      alert('No hay suficientes días con datos en el agregado mensual para generar una regresión confiable (se necesitan al menos 3 días laborables con datos).');
       if (btn) btn.disabled = false;
-      alert('Error al leer el histórico: ' + e.message);
       return;
     }
-  } else if (btn) {
-    btn.disabled = true;
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    alert('Error al calcular la tendencia: ' + e.message);
+    return;
   }
 
   try {
-    // 18-jul-2026: filtrar por status==='completo' dejaba fuera casi todo
-    // el histórico — muchos registros migrados/antiguos no tienen ese
-    // campo poblado de forma consistente (el status pendiente/completo es
-    // de una fase posterior). Un ticket con toneladas > 0 ya implica que
-    // el 2do pesaje/destare se completó, sin depender de ese campo.
-    const completos = todos.filter(r => {
-      const ton = r.ton || ((r.neto_kg || 0) / 1000);
-      return ton > 0 && r.fecha1 && r.status !== 'pendiente' && r.status !== 'conflicto';
-    });
-    if (progreso) progreso.textContent = `${todos.length.toLocaleString('es-MX')} registro(s) leídos, ${completos.length.toLocaleString('es-MX')} completos usados para el análisis.`;
-
-    const datosSerie = tnd_construirSerie(completos);
-    if (!datosSerie || datosSerie.serie.length < 3) {
-      alert('No hay suficientes días con viajes completos para generar una regresión confiable (se necesitan al menos 3 días laborables con datos).');
-      return;
-    }
-    const { serie, fechaFin } = datosSerie;
     const ultimoT = serie[serie.length - 1].t;
 
     const puntosRegresion = serie.map(p => ({ t: p.t, y: p.y }));
@@ -7214,22 +7521,31 @@ window.generarAnalisisTendencia = async function() {
     pintarResultado('tnd-meta-lineal', resLineal);
     pintarResultado('tnd-meta-cuadratico', resCuadratico);
 
-    // Gráfico mixto: puntos reales + proyección de cada modelo hasta su
-    // fecha de cruce (o hasta el horizonte referencial de 10 años).
-    const tFinLineal = resLineal.alcanzada ? ultimoT : (resLineal.referencial ? ultimoT + 2600 : (objetivo - modeloLineal.a) / modeloLineal.b);
-    const tFinCuadratico = resCuadratico.alcanzada ? ultimoT : (resCuadratico.referencial ? ultimoT + 2600 : Math.max(ultimoT, tFinLineal));
-    const tFinGrafica = Math.max(ultimoT, tFinLineal, tFinCuadratico, ultimoT + 1);
-    // 18-jul-2026: la fecha proyectada en TEXTO (resLineal.fecha/resCuadratico.fecha)
-    // sigue siendo exacta sin importar qué tan lejos caiga, pero la GRÁFICA
-    // se limita a un horizonte visual razonable — si no, con pocos días de
-    // historial reales (los puntos azules) la proyección los deja invisibles
-    // al estirar el eje X hasta una fecha años en el futuro (visto en
-    // capturas de Jesús, 18-jul-2026: eje llegando a t=800 con datos reales
-    // solo hasta t=5).
+    // Gráfico mixto: puntos reales + proyección de cada modelo.
+    // 18-jul-2026 (tercera tanda) — Jesús pidió que la gráfica no se vea
+    // "tan exagerada": antes se estiraba a un horizonte fijo (ultimoT×4)
+    // sin relación con dónde de verdad cruza el objetivo. Ahora se acota
+    // al día donde cruza el objetivo (el más lejano de los 2 modelos, si
+    // ambos cruzan de verdad — para que se alcancen a ver cruzando los
+    // dos) + 30 días laborables de margen. Si NINGÚN modelo cruza de
+    // verdad (ambos "referenciales" o ya alcanzados), se usa un horizonte
+    // visual razonable como respaldo, igual que antes.
     const HORIZONTE_VISUAL_MIN = 40; // ~2 meses de días laborables, piso para que la gráfica no se vea vacía con pocos datos
-    const horizonteVisualMax = Math.max(HORIZONTE_VISUAL_MIN, ultimoT * 4);
-    const graficaRecortada = tFinGrafica > ultimoT + horizonteVisualMax;
-    const tFinGraficaVisual = graficaRecortada ? (ultimoT + horizonteVisualMax) : tFinGrafica;
+    const crucesReales = [resLineal, resCuadratico]
+      .filter(r => !r.alcanzada && !r.referencial)
+      .map(r => r.t);
+    let tFinGraficaVisual, graficaRecortada;
+    if (crucesReales.length) {
+      const tCruceMasLejano = Math.max(...crucesReales);
+      const topeAbsoluto = ultimoT + Math.max(HORIZONTE_VISUAL_MIN, ultimoT * 8); // seguro de no-locura si el +30 aún así sale enorme
+      tFinGraficaVisual = Math.min(tCruceMasLejano + 30, topeAbsoluto);
+      graficaRecortada = tFinGraficaVisual < tCruceMasLejano + 30;
+    } else {
+      const horizonteVisualMax = Math.max(HORIZONTE_VISUAL_MIN, ultimoT * 4);
+      tFinGraficaVisual = ultimoT + horizonteVisualMax;
+      graficaRecortada = (resLineal.t > tFinGraficaVisual) || (resCuadratico.t > tFinGraficaVisual);
+    }
+    tFinGraficaVisual = Math.max(tFinGraficaVisual, ultimoT + 1);
     const pasoProyeccion = Math.max(1, Math.round((tFinGraficaVisual - ultimoT) / 60));
 
     const puntosReales = serie.map(p => ({ x: p.t, y: +p.y.toFixed(2) }));
@@ -7275,7 +7591,6 @@ window.generarAnalisisTendencia = async function() {
     }
 
     if (resultado) resultado.style.display = '';
-    if (progreso) progreso.textContent = `Análisis generado con ${serie.length.toLocaleString('es-MX')} día(s) laborables (${completos.length.toLocaleString('es-MX')} viajes completos).`;
   } catch (e) {
     alert('Error al generar el análisis: ' + e.message);
   } finally {
@@ -7319,12 +7634,18 @@ window.initMetasTab = async function(forzar) {
     // Real del mes por CUERPO+MATERIAL: por_combinacion trae claves
     // banco__material__destino__tipo_camion — se suma por destino+material,
     // sin importar banco ni tipo de camión.
+    // 18-jul-2026 (tercera tanda): por_combinacion pasó de ser un número
+    // plano (solo toneladas) a un objeto {viajes, ton, banco, material,
+    // destino, tipo_camion} — ver aplicarResumen(). Se lee `.ton` con
+    // compatibilidad hacia atrás (typeof number) por si algún mes viejo
+    // todavía no se ha reconstruido con "Recalcular resumen" en Admin.
     const realMesPorCM = {};
-    Object.entries(resumenMes.por_combinacion || {}).forEach(([key, ton]) => {
+    Object.entries(resumenMes.por_combinacion || {}).forEach(([key, val]) => {
       const p = key.split('__');
       if (p.length < 4) return;
       const material = p[1].replace(/_/g, ' ');
       const destino   = p[2].replace(/_/g, ' ');
+      const ton = typeof val === 'number' ? val : (val && val.ton) || 0;
       const k = destino + '||' + material;
       realMesPorCM[k] = (realMesPorCM[k] || 0) + ton;
     });
@@ -7410,7 +7731,7 @@ window.initBancosTab = function() {
     if (btnHist) btnHist.className = 'btn btn-primary';
   }
   cambiarPeriodoBancos(); // fija visibilidad del filtro de fecha y ya renderiza Bancos
-  renderBancosFolio();
+  buscarFolioBancos();
 };
 
 window.usarVentanaRecienteEnBancos = function() {
@@ -7443,7 +7764,7 @@ function limpiarFiltrosBancos() {
     if (el) el.value = '';
   });
   cambiarPeriodoBancos();
-  renderBancosFolio();
+  buscarFolioBancos();
 }
 window.limpiarFiltrosBancos = limpiarFiltrosBancos;
 
@@ -7529,6 +7850,108 @@ function renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon) {
 //    histórico completo.
 // Costo típico: unos cuantos reads por mes + 0-2 consultas acotadas, en
 // vez de miles de lecturas de "Ver TODO".
+// 18-jul-2026 (tercera tanda, punto 2 — URGENTE) — Extensión de la
+// corrección 16.1 (Bancos) a Resumen y Reportes: mismo patrón exacto,
+// pero leyendo `por_combinacion` (banco+material+destino+tipo_camion,
+// con viajes Y toneladas desde este cambio) en vez de
+// `por_banco_material_rango`. Acepta filtros de banco/material/destino/
+// tipo de camión (arrays vacíos = sin filtro) y regresa 2 formas del
+// mismo dato acumulado:
+//  - porBanco: jerarquía Banco→Material→Destino con {viajes, ton} en
+//    cada nivel — lo que necesita Resumen (renderResumenTablaJerarquica).
+//  - porBancoGrupo: Banco→{total, grupos:{material|||destino|||tipoCamion: count}}
+//    — mismo formato que ya usaba Reportes (agruparPorBanco) para su
+//    desglose de "completados", pero ahora sin leer la colección
+//    completa.
+// Costo: igual que calcularResumenBancosAgregado (unos cuantos reads por
+// mes + 0-2 consultas acotadas a los meses parciales de los extremos).
+async function calcularResumenGenericoAgregado(desde, hasta, filtros) {
+  const { bancos = [], materiales = [], destinos = [], tiposCamion = [] } = filtros || {};
+  const hoy = isoHoy();
+  const desdeEf = desde || '2025-01-01';
+  const hastaEf = hasta || hoy;
+  const porBanco = {};
+  const porBancoGrupo = {};
+  let totalViajes = 0, totalTon = 0;
+
+  const pasaFiltro = (banco, material, destino, tipoCamion) => {
+    if (bancos.length      && !bancos.includes(banco))      return false;
+    if (materiales.length  && !materiales.includes(material)) return false;
+    if (destinos.length    && !destinos.includes(destino))  return false;
+    if (tiposCamion.length && !tiposCamion.includes(tipoCamion)) return false;
+    return true;
+  };
+
+  const acumular = (bancoRaw, materialRaw, destinoRaw, tipoCamionRaw, viajes, ton) => {
+    const banco = bancoRaw || 'SIN BANCO';
+    const material = materialRaw || 'SIN MATERIAL';
+    const destino = destinoRaw || 'SIN DESTINO';
+    const tipoCamion = tipoCamionRaw || 'SIN_TIPO';
+    if (!pasaFiltro(banco === 'SIN BANCO' ? null : banco, material === 'SIN MATERIAL' ? null : material, destino === 'SIN DESTINO' ? null : destino, tipoCamion === 'SIN_TIPO' ? null : tipoCamion)) return;
+
+    if (!porBanco[banco]) porBanco[banco] = { viajes: 0, ton: 0, materiales: {} };
+    porBanco[banco].viajes += viajes; porBanco[banco].ton += ton;
+    if (!porBanco[banco].materiales[material]) porBanco[banco].materiales[material] = { viajes: 0, ton: 0, destinos: {} };
+    porBanco[banco].materiales[material].viajes += viajes;
+    porBanco[banco].materiales[material].ton += ton;
+    if (!porBanco[banco].materiales[material].destinos[destino]) porBanco[banco].materiales[material].destinos[destino] = { viajes: 0, ton: 0 };
+    porBanco[banco].materiales[material].destinos[destino].viajes += viajes;
+    porBanco[banco].materiales[material].destinos[destino].ton += ton;
+
+    if (!porBancoGrupo[banco]) porBancoGrupo[banco] = { total: 0, grupos: {} };
+    porBancoGrupo[banco].total += viajes;
+    const clave = material + '|||' + destino + '|||' + tipoCamion;
+    porBancoGrupo[banco].grupos[clave] = (porBancoGrupo[banco].grupos[clave] || 0) + viajes;
+
+    totalViajes += viajes; totalTon += ton;
+  };
+
+  const meses = [];
+  let [ay, am] = desdeEf.split('-').map(Number);
+  const [by, bm] = hastaEf.split('-').map(Number);
+  while (ay < by || (ay === by && am <= bm)) {
+    meses.push(`${ay}-${String(am).padStart(2,'0')}`);
+    am++; if (am > 12) { am = 1; ay++; }
+  }
+
+  for (const mes of meses) {
+    const primerDia = `${mes}-01`;
+    const [my, mm] = mes.split('-').map(Number);
+    const ultimoDiaNum = new Date(my, mm, 0).getDate();
+    const ultimoDia = `${mes}-${String(ultimoDiaNum).padStart(2,'0')}`;
+    const cubreTodoElMes = desdeEf <= primerDia && hastaEf >= ultimoDia;
+
+    if (cubreTodoElMes) {
+      try {
+        const snap = await window.leerDocResumen(mes);
+        if (snap.exists()) {
+          const d = snap.data();
+          Object.values(d.por_combinacion || {}).forEach(item => {
+            // Compatibilidad hacia atrás: meses no reconstruidos con
+            // "Recalcular resumen" todavía pueden traer el esquema viejo
+            // (número plano = solo toneladas, sin viajes). Se cuentan como
+            // 0 viajes en ese caso — solo afecta datos históricos hasta
+            // que se corra el recálculo una vez.
+            if (typeof item === 'number') return;
+            acumular(item.banco, item.material, item.destino, item.tipo_camion, item.viajes || 0, item.ton || 0);
+          });
+        }
+      } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
+    } else {
+      const subDesde = desdeEf > primerDia ? desdeEf : primerDia;
+      const subHasta = hastaEf < ultimoDia ? hastaEf : ultimoDia;
+      try {
+        const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
+        registrosMes.forEach(r => {
+          const ton = r.ton || (r.neto_kg||0)/1000;
+          acumular(r.banco, r.material, r.destino, r.tipo_camion, 1, ton);
+        });
+      } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
+    }
+  }
+  return { porBanco, porBancoGrupo, totalViajes, totalTon };
+}
+
 async function calcularResumenBancosAgregado(desde, hasta, bancosFiltro) {
   const hoy = isoHoy();
   const desdeEf = desde || '2025-01-01';
@@ -7616,36 +8039,47 @@ async function renderBancos() {
 }
 window.renderBancos = renderBancos;
 
-// Buscador de folio individual: SÍ se combina con el filtro de Banco de la tabla
-// agregada de arriba (decisión de Sikot, 10 jul 2026). Busca sobre el mismo
-// conjunto ya filtrado por banco (getBancosFiltradoBase), no sobre todo el
-// histórico/ventana sin filtrar.
-function renderBancosFolio() {
+// 18-jul-2026 (tercera tanda, punto 3) — Buscador de folio EXACTO, contra
+// Firestore directo (dbBuscarPorFolio), no contra lo que haya cargado en
+// memoria. Sigue combinándose con el filtro de Banco de la tabla de
+// arriba (decisión de Sikot, 10 jul 2026), pero ahora el filtro se aplica
+// DESPUÉS de la búsqueda exacta (los resultados de un folio real son
+// siempre pocos, así que filtrar en el cliente no cuesta nada extra).
+// Cambió de oninput (buscaba en cada tecleo) a botón "Buscar", porque una
+// query real a Firestore en cada tecleo sí generaría lecturas de más —
+// y de cualquier forma ya no es substring, así que hace falta el folio
+// completo.
+window.buscarFolioBancos = async function() {
   const cont = document.getElementById('bancos-folio-resultados');
   if (!cont) return;
-  const q = (document.getElementById('bancos-folio-input').value || '').trim().toLowerCase();
+  const q = (document.getElementById('bancos-folio-input').value || '').trim();
   if (!q) { cont.innerHTML = ''; return; }
+  cont.innerHTML = '<p style="font-size:12px;color:var(--text-muted);text-align:center;padding:10px 0;">Buscando…</p>';
 
-  const datos = getBancosFiltradoBase();
-  const encontrados = datos.filter(r => (r.folio || '').toLowerCase().includes(q)).slice(0, 30);
+  try {
+    let encontrados = await window.dbBuscarPorFolio(q);
+    const bancosSel = getMsSelected('bancos-banco');
+    if (bancosSel.length) encontrados = encontrados.filter(r => bancosSel.includes(r.banco));
 
-  if (!encontrados.length) {
-    const bancosSel = getMsSelected('bancos-banco').map(nombreBanco);
-    const filtroTxt = bancosSel.length ? ` (con el filtro de banco: ${escHtml(bancosSel.join(', '))})` : '';
-    cont.innerHTML = `<p style="font-size:12.5px;color:var(--text-muted);">Sin resultados para ese folio${filtroTxt}.</p>`;
-    return;
+    if (!encontrados.length) {
+      const bancosTxt = bancosSel.map(nombreBanco);
+      const filtroTxt = bancosTxt.length ? ` (con el filtro de banco: ${escHtml(bancosTxt.join(', '))})` : '';
+      cont.innerHTML = `<p style="font-size:12.5px;color:var(--text-muted);">Sin resultados para el folio "${escHtml(q)}"${filtroTxt}. Tiene que ser el folio completo, tal cual se capturó.</p>`;
+      return;
+    }
+
+    cont.innerHTML = encontrados.map(r => `
+      <div style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
+        <div style="font-weight:700;color:var(--accent);margin-bottom:3px;">Folio ${escHtml(r.folio || '—')} &nbsp;·&nbsp; Boleta #${escHtml(r.boleta || '—')}</div>
+        <div>Fecha: ${fmtFechaCorta(r.fecha1)} &nbsp;·&nbsp; Banco: ${escHtml(nombreBanco(r.banco))}</div>
+        <div>Material: ${escHtml(nombreMaterial(r.material))}${r.rango ? ' · ' + escHtml(r.rango) : ''} &nbsp;·&nbsp; Destino: ${escHtml(r.destino || '—')}</div>
+        <div>Camión: ${escHtml(nombreTipoCamion(r.tipo_camion))} ${r.placas ? '· ' + escHtml(r.placas) : ''} ${r.economico ? '· # ' + escHtml(r.economico) : ''}</div>
+        <div>Toneladas: <strong>${(r.ton || (r.neto_kg||0)/1000).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} t</strong></div>
+      </div>`).join('');
+  } catch (e) {
+    cont.innerHTML = `<p style="font-size:12.5px;color:var(--danger);">Error al buscar: ${escHtml(e.message)}</p>`;
   }
-
-  cont.innerHTML = encontrados.map(r => `
-    <div style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;">
-      <div style="font-weight:700;color:var(--accent);margin-bottom:3px;">Folio ${escHtml(r.folio || '—')} &nbsp;·&nbsp; Boleta #${escHtml(r.boleta || '—')}</div>
-      <div>Fecha: ${fmtFechaCorta(r.fecha1)} &nbsp;·&nbsp; Banco: ${escHtml(nombreBanco(r.banco))}</div>
-      <div>Material: ${escHtml(nombreMaterial(r.material))}${r.rango ? ' · ' + escHtml(r.rango) : ''} &nbsp;·&nbsp; Destino: ${escHtml(r.destino || '—')}</div>
-      <div>Camión: ${escHtml(nombreTipoCamion(r.tipo_camion))} ${r.placas ? '· ' + escHtml(r.placas) : ''} ${r.economico ? '· # ' + escHtml(r.economico) : ''}</div>
-      <div>Toneladas: <strong>${(r.ton || (r.neto_kg||0)/1000).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} t</strong></div>
-    </div>`).join('');
-}
-window.renderBancosFolio = renderBancosFolio;
+};
 
 // FASE 16.4.1 — Exportar PDF de la tabla de Bancos, mismo estándar que 16.2
 // 11.2 (18-jul-2026): rediseñado de resumen agregado (banco > material) a

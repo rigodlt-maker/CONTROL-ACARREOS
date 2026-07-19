@@ -1720,6 +1720,32 @@ window.editRecord = async function() {
     // auto-llena al elegir placas). En edición eso no aplica: se
     // restaura aquí el valor real del ticket para que no se pierda.
     document.getElementById('f-fecha1').value = r.fecha1 || '';
+    // 19-jul-2026 (bug reportado por Jesús, boleta 2603932233): mismo
+    // problema que fecha1, pero con placas. poblarPlacasDisponibles()
+    // SOLO ofrece camiones que están "libres" ahora mismo en Fila
+    // Báscula — un ticket viejo/ya completo (sin fila_bascula_id) casi
+    // nunca tiene su camión ahí, así que el select se quedaba vacío y
+    // saveRecord() lo bloqueaba exigiendo "selecciona placas", como si
+    // fuera una captura nueva. Eso está mal: al EDITAR, la placa ya
+    // capturada del ticket no debe desaparecer ni forzarse a elegir un
+    // camión de la fila — esa regla es solo para captura nueva. Se
+    // inyecta aquí la placa/económico ORIGINAL del ticket como opción
+    // extra, ya seleccionada, con un value sintético que no es un id
+    // real de fila_bascula (por eso f-fila-bascula-id se deja vacío
+    // arriba — no hay 2da salida de fila que validar para este caso). El
+    // usuario puede seguir cambiando a otro camión de la lista si de
+    // verdad se equivocó de placa.
+    if (r.placas) {
+      const selPlacas = document.getElementById('f-placas');
+      const opt = document.createElement('option');
+      opt.value = '__ticket_original__';
+      opt.dataset.placas = r.placas || '';
+      opt.dataset.economico = r.economico || '';
+      opt.textContent = r.placas + (r.economico ? ' · ' + r.economico : '') + ' (placa original del ticket)';
+      selPlacas.appendChild(opt);
+      selPlacas.value = '__ticket_original__';
+      selPlacas.disabled = false;
+    }
   }
   toggleVertido(); // FASE 10: muestra/oculta el campo según destino, y resetea vertido
   document.getElementById('f-vertido').value = r.vertido || '';

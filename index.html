@@ -3107,7 +3107,12 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Fuente de datos
     </h3>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
+    <!-- 18-jul-2026 (quinta tanda, 19.5): ocultos a petición de Jesús — la
+         tabla (16.1), el PDF (16.4.1) y el buscador de folio (tercera
+         tanda, punto 3) ya leen agregado/acotado automático, sin depender
+         de estos botones. Funciones JS se dejan intactas (fallback), solo
+         se oculta la UI para no confundir. -->
+    <div style="display:none;gap:8px;margin-bottom:6px;">
       <button class="btn btn-primary" id="btn-bancos-historico" onclick="cargarHistoricoCompletoBancos()" style="font-size:12px;">
         📊 Ver TODO el histórico
       </button>
@@ -3298,11 +3303,15 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Fuente de datos
     </h3>
+    <!-- 18-jul-2026 (quinta tanda, 19.5): "Ver TODO"/"Volver a ventana"
+         ocultos — la tabla (tercera tanda punto 2) y el PDF (19.5, recién
+         corregido) ya leen agregado/acotado automático. "Descargar PDF"
+         se deja visible, es la única acción real que sigue haciendo algo. -->
     <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button class="btn btn-primary" id="btn-resumen-historico" onclick="cargarHistoricoCompletoResumen()" style="font-size:12px;">
+      <button class="btn btn-primary" id="btn-resumen-historico" onclick="cargarHistoricoCompletoResumen()" style="font-size:12px;display:none;">
         📊 Ver TODO el histórico
       </button>
-      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;">
+      <button class="btn btn-secondary" id="btn-resumen-ventana" onclick="usarVentanaRecienteEnResumen()" style="font-size:12px;display:none;">
         Volver a ventana
       </button>
       <button class="btn btn-primary" id="btn-resumen-pdf" onclick="descargarPdfResumen()" style="font-size:12px;">
@@ -3474,7 +3483,13 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Fuente de datos
     </h3>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
+    <!-- 18-jul-2026 (quinta tanda, 19.5): ocultos — "Completados" ya lee
+         agregado mensual (tercera tanda, punto 2), "Pendientes" es
+         intencionalmente de la ventana reciente (es info de HOY, no
+         histórica, no tiene el problema de costo) y el Excel de esta
+         pestaña (descargarExcelDesdeTab) ya lee directo de Firestore con
+         sus propios filtros, independiente de estos botones. -->
+    <div style="display:none;gap:8px;margin-bottom:6px;">
       <button class="btn btn-primary" id="btn-reportes-historico" onclick="cargarHistoricoCompletoReportes()" style="font-size:12px;">
         📊 Ver TODO el histórico
       </button>
@@ -6566,7 +6581,7 @@ window.guardarPdfDescarga = guardarPdfDescarga;
 // ══════════════════════════════════════════════════════
 // FASE 16.2 — Exportar PDF de la tabla de "Resumen"
 // ══════════════════════════════════════════════════════
-function descargarPdfResumen() {
+async function descargarPdfResumen() {
  // Fix 10-jul-2026 (v4) — Toda la función se envuelve en try/catch. Antes,
  // si algo tronaba generando el PDF (autoTable, datos, etc.) el error solo
  // se veía en la consola del navegador — en el celular eso es invisible
@@ -6574,7 +6589,40 @@ function descargarPdfResumen() {
  // reaccionaba) aunque en realidad sí truena. Con este try/catch, cualquier
  // error se muestra en un alert() para poder diagnosticarlo sin devtools.
  try {
-  const filtered = getResumenFiltradoBase();
+  // 18-jul-2026 (quinta tanda, punto 19.5): mismo fix que ya tenía el PDF
+  // de Bancos (16.4.1/FASE 16.2) — antes este PDF salía de
+  // getResumenFiltradoBase() (ventana reciente cargada / "Ver TODO"), así
+  // que un PDF de un rango viejo podía salir incompleto si no se había
+  // dado clic a "Ver TODO el histórico" primero. Ahora, si hay un rango de
+  // fechas real (desde Y hasta), se lee acotado y exacto directo de
+  // Firestore — nunca depende de la ventana ni de "Ver TODO".
+  const rangoPeriodo = getRangoPeriodoResumen();
+  const btnPdf = document.getElementById('btn-resumen-pdf');
+  const btnHtmlPdf = btnPdf ? btnPdf.innerHTML : '';
+  let filtered;
+  if (rangoPeriodo.desde && rangoPeriodo.hasta) {
+    if (btnPdf) { btnPdf.disabled = true; btnPdf.innerHTML = '<span class="spin"></span> Leyendo…'; }
+    try {
+      const registros = await window.traerTodoFirestore(rangoPeriodo.desde, rangoPeriodo.hasta);
+      const bancosSel      = getMsSelected('resumen-banco');
+      const materialesSel  = getMsSelected('resumen-material');
+      const destinosSel    = getMsSelected('resumen-cuerpo');
+      const tiposCamionSel = getMsSelected('resumen-tipocamion');
+      filtered = registros.filter(r =>
+        (!bancosSel.length      || bancosSel.includes(r.banco)) &&
+        (!materialesSel.length  || materialesSel.includes(r.material)) &&
+        (!destinosSel.length    || destinosSel.includes(r.destino)) &&
+        (!tiposCamionSel.length || tiposCamionSel.includes(r.tipo_camion))
+      );
+    } finally {
+      if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = btnHtmlPdf; }
+    }
+  } else {
+    // Sin rango fijado (p.ej. "Día"/"Semana"/"Mes" con selección puntual):
+    // se usa lo ya cargado en memoria, igual que antes — esos periodos
+    // caen siempre dentro de la ventana reciente.
+    filtered = getResumenFiltradoBase();
+  }
   if (!filtered.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
 
   const porBanco = construirJerarquiaResumen(filtered);

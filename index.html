@@ -1528,7 +1528,15 @@ window.saveRecord = async function() {
   // camión ya debe tener registrada su 2da salida de fila ("Sale de fila")
   // en Fila Báscula — si no, se bloquea aquí en vez de guardar datos de
   // báscula incompletos.
-  if (!esPendiente && data.fila_bascula_id) {
+  // 19-jul-2026 (pedido explícito de Jesús, sección 26): esto es una regla
+  // de CAPTURA NUEVA — verifica que el flujo de báscula ya se completó
+  // antes de darle de alta a un ticket como "completo". Al EDITAR un
+  // ticket que YA está completo no tiene sentido volver a exigirlo: si el
+  // registro de Fila Báscula se borró después (limpieza, master quitó un
+  // duplicado, etc.), esto bloqueaba una simple corrección de texto en un
+  // ticket que de por sí ya pasó ese filtro cuando se creó. Se restringe
+  // con `!window._editFid` para que solo aplique a captura nueva.
+  if (!window._editFid && !esPendiente && data.fila_bascula_id) {
     try {
       const filaSnap = await window.dbFilaBasculaLeer(data.fila_bascula_id);
       const filaData = filaSnap.exists() ? filaSnap.data() : null;
@@ -1655,6 +1663,17 @@ window.editRecord = async function() {
   closeModalForce();
   window._editFid = r._fid;
   window._editOriginal = { ...r };
+  // 19-jul-2026 — Banner de "modo edición" (separación visual fuerte, ver
+  // comentario en el HTML de #tab-form). Botón de guardar cambia de texto
+  // para reforzar que esto sobrescribe, no crea un ticket nuevo.
+  const banner = document.getElementById('banner-modo-edicion');
+  if (banner) {
+    banner.style.display = 'block';
+    const boletaSpan = document.getElementById('banner-edicion-boleta');
+    if (boletaSpan) boletaSpan.textContent = r.boleta || '—';
+  }
+  const saveBtnLabel = document.getElementById('btn-guardar');
+  if (saveBtnLabel) saveBtnLabel.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar cambios';
   const flds = {
     'f-fecha1': r.fecha1, 'f-hora1': r.hora1,
     'f-fecha2': r.fecha2, 'f-hora2': r.hora2,
@@ -2625,7 +2644,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   <div class="nav-drawer-body">
 
     <div class="nav-group-title">Trabajo diario</div>
-    <button class="nav-item active" id="nd-form" onclick="showTab('form')">
+    <button class="nav-item active" id="nd-form" onclick="irACapturaNueva()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
       Captura
     </button>
@@ -2701,6 +2720,30 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
 </div>
 
 <div class="tab-content active" id="tab-form">
+  <!-- 19-jul-2026 (pedido explícito de Jesús) — Banner de "modo edición".
+       No es un tab-content aparte (ver razonamiento completo en
+       INSTRUCCIONESAPP.md sección 26: duplicar TODO el formulario de
+       captura en una segunda copia de ~200 campos era más riesgo de bugs
+       nuevos que beneficio real, dado el patrón ya documentado en la
+       sección 24 de este mismo archivo — "una función pensada para
+       captura nueva se reutiliza sin querer en edición"). En vez de eso,
+       se blindó la separación FUNCIONAL (showTab()/irACapturaNueva()
+       cancelan cualquier edición sin guardar antes de dejar entrar a una
+       captura nueva — cero fuga de datos entre las dos) y se hizo la
+       separación VISUAL inconfundible con este banner: color y mensaje
+       completamente distintos al formulario de captura normal, para que
+       nunca se sienta ni se vea como si se estuviera dando de alta un
+       ticket nuevo. -->
+  <div id="banner-modo-edicion" style="display:none;background:#7a4f01;color:white;border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;">
+    <div style="font-weight:700;font-size:14px;margin-bottom:3px;">✏️ EDITANDO TICKET — Boleta #<span id="banner-edicion-boleta">—</span></div>
+    <div style="font-size:12px;opacity:0.92;line-height:1.4;">
+      Esta NO es una captura nueva: estás corrigiendo un viaje que ya
+      existe. Todos los campos muestran los datos que el ticket ya trae —
+      cambia solo lo que necesites y dale "Guardar cambios". El viaje se
+      sobrescribe, no se crea uno nuevo.
+    </div>
+    <button class="btn" style="margin-top:8px;background:white;color:#7a4f01;border-color:white;font-size:12px;padding:6px 12px;" onclick="cancelarEdicion()">✕ Cancelar edición (descartar cambios)</button>
+  </div>
   <div class="form-card">
     <h3>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg>
@@ -3088,8 +3131,6 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </button>
     </div>
   </div>
-
-  <div id="dash-fuente-actual" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:8px;"></div>
 
   <div class="kpi-row">
     <div class="kpi-card">
@@ -4795,6 +4836,19 @@ document.addEventListener('DOMContentLoaded', initDateHints);
 document.addEventListener('DOMContentLoaded', () => { if (document.getElementById('f-banco')) updateOrigenOptions(); });
 
 function showTab(t) {
+  // 19-jul-2026 (pedido explícito de Jesús) — Bug real: si el usuario
+  // entraba a "Editar" un ticket y luego se salía SIN guardar (clic en
+  // cualquier otro botón del menú — incluido "Captura" para dar de alta
+  // un ticket nuevo), los valores del ticket que estaba editando se
+  // quedaban pegados en los campos del formulario y "se autorellenaban"
+  // en lo que debía ser una captura nueva, porque ambas comparten el
+  // mismo formulario físico (#tab-form). Ahora, CUALQUIER salida de
+  // 'form' con una edición activa (window._editFid) sin haber guardado
+  // cancela esa edición automáticamente y deja el formulario limpio,
+  // listo para lo que sea que el usuario abra después.
+  if (window._editFid && t !== 'form') {
+    clearForm();
+  }
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + t).classList.add('active');
@@ -4814,6 +4868,17 @@ function showTab(t) {
   if (t === 'form' && document.getElementById('f-tipo-camion').value) poblarPlacasDisponibles();
   initDateHints();
 }
+
+// 19-jul-2026 — Punto de entrada del nav "Captura" (antes llamaba a
+// showTab('form') directo). Si venías de una edición sin guardar, la
+// cancela primero (clearForm) ANTES de mostrar el formulario — así,
+// aunque ya estuvieras parado en 'form' mismo (showTab('form') solo no
+// hace nada si t === 'form'), dar clic explícito en "Captura" siempre
+// garantiza un formulario en blanco para un ticket nuevo.
+window.irACapturaNueva = function() {
+  if (window._editFid) clearForm();
+  showTab('form');
+};
 
 function calcCiclo() {
   const fecha1 = document.getElementById('f-fecha1').value;
@@ -4965,6 +5030,15 @@ function getFormData() {
   };
 }
 
+// 19-jul-2026 — Botón "Cancelar edición" del banner: descarta cualquier
+// cambio sin guardar y regresa a Base de Datos (de donde normalmente se
+// entra a editar). clearForm() ya se encarga de limpiar todo (_editFid,
+// _editOriginal, el banner, los campos).
+window.cancelarEdicion = function() {
+  clearForm();
+  showTab('db');
+};
+
 function clearForm() {
   window.tiempoInicioCaptura = null; // Six Sigma Bloque A: cada ticket arranca su propio reloj
   ['f-fecha1','f-hora1','f-fecha2','f-hora2','f-boleta','f-folio','f-economico','f-bruto','f-tara'].forEach(id => {
@@ -4997,6 +5071,11 @@ function clearForm() {
   document.getElementById('neto-display').textContent = '—';
   document.getElementById('ton-display').textContent  = '—';
   window._editFid = null;
+  window._editOriginal = null;
+  const banner = document.getElementById('banner-modo-edicion');
+  if (banner) banner.style.display = 'none';
+  const saveBtnLabel = document.getElementById('btn-guardar');
+  if (saveBtnLabel) saveBtnLabel.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Guardar registro';
 }
 
 
@@ -7137,7 +7216,18 @@ window.filtrarBuscadorDestare = function() {
   if (!el) return;
   const buscarEl = document.getElementById('destare-buscar-input');
   const q = buscarEl ? buscarEl.value.trim().toUpperCase() : '';
-  const todos = (window._filaBasculaEsperandoDestare || []).filter(c => puedoVerRegistroFila(c.data));
+  // 19-jul-2026 (pedido explícito de Jesús): "Camiones Destare" YA NO se
+  // filtra por quién capturó el camión — un camión se puede destarar en
+  // CUALQUIER báscula, con cualquier capturista, sin importar quién hizo
+  // el peso bruto. Antes usaba puedoVerRegistroFila() igual que "Camiones
+  // con Material", así que el capturista 2 no veía un camión que el
+  // capturista 1 había registrado y que ahora regresa a destararse con
+  // él — ya lo corregí. OJO: esto es SOLO para esta lista (destare). El
+  // resto de Fila Báscula ("Camiones con Material", arriba) y el
+  // desplegable de placas en Captura (poblarPlacasDisponibles) SÍ siguen
+  // filtrando por capturista — no se tocaron, es la regla original y
+  // sigue aplicando ahí.
+  const todos = window._filaBasculaEsperandoDestare || [];
   const filtrados = q ? todos.filter(c => (c.data.placas || '').includes(q)) : todos;
   if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin camiones pendientes de destare.</p>'; return; }
   const esMasterDestare = window._currentUserRol === 'master';

@@ -3055,6 +3055,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
             <div class="ms-option"><input type="checkbox" id="cb-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('material')"><label for="cb-mat-SEC1">Secundaria 1</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('material')"><label for="cb-mat-SEC2">Secundaria 2</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-mat-COR" value="CORAZA" onchange="onMsChange('material')"><label for="cb-mat-COR">Coraza</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-mat-REZ" value="REZAGA" onchange="onMsChange('material')"><label for="cb-mat-REZ">Rezaga</label></div>
           </div>
         </div>
       </div>
@@ -3438,6 +3439,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
             <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC1">Secundaria 1</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-SEC2">Secundaria 2</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-COR" value="CORAZA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-COR">Coraza</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-resumen-mat-REZ" value="REZAGA" onchange="onMsChange('resumen-material')"><label for="cb-resumen-mat-REZ">Rezaga</label></div>
           </div>
         </div>
       </div>
@@ -3617,6 +3619,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
             <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-SEC1">Secundaria 1</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-SEC2">Secundaria 2</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-COR" value="CORAZA" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-COR">Coraza</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-reportes-mat-REZ" value="REZAGA" onchange="onMsChange('reportes-material')"><label for="cb-reportes-mat-REZ">Rezaga</label></div>
           </div>
         </div>
       </div>
@@ -3729,6 +3732,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
             <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC1" value="SECUNDARIA 1" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC1">Secundaria 1</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-mat-SEC2" value="SECUNDARIA 2" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-SEC2">Secundaria 2</label></div>
             <div class="ms-option"><input type="checkbox" id="cb-excel-mat-COR" value="CORAZA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-COR">Coraza</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-excel-mat-REZ" value="REZAGA" onchange="onMsChange('excel-material')"><label for="cb-excel-mat-REZ">Rezaga</label></div>
           </div>
         </div>
       </div>
@@ -5609,7 +5613,7 @@ function renderAvances(datos) {
 window.renderAvances = renderAvances;
 
 function nombreMaterialLegible(m) {
-  return { 'NUCLEO':'Núcleo', 'SECUNDARIA 2':'Secundaria 2', 'SECUNDARIA 1':'Secundaria 1', 'CORAZA':'Coraza', 'BERMA':'Berma', 'BERMA DE APOYO':'Berma de apoyo' }[m] || m;
+  return { 'NUCLEO':'Núcleo', 'SECUNDARIA 2':'Secundaria 2', 'SECUNDARIA 1':'Secundaria 1', 'CORAZA':'Coraza', 'BERMA':'Berma', 'BERMA DE APOYO':'Berma de apoyo', 'REZAGA':'Rezaga' }[m] || m;
 }
 
 // ══════════════════════════════════════════════════════
@@ -6001,7 +6005,8 @@ const NOMBRES_BANCO = {
 };
 const NOMBRES_MATERIAL = {
   'NUCLEO': 'NÚCLEO', 'BERMA': 'BERMA', 'BERMA DE APOYO': 'BERMA DE APOYO',
-  'SECUNDARIA 1': 'SECUNDARIA 1', 'SECUNDARIA 2': 'SECUNDARIA 2', 'CORAZA': 'CORAZA'
+  'SECUNDARIA 1': 'SECUNDARIA 1', 'SECUNDARIA 2': 'SECUNDARIA 2', 'CORAZA': 'CORAZA',
+  'REZAGA': 'REZAGA'
 };
 function nombreBanco(b)    { return NOMBRES_BANCO[b]    || b || 'Sin banco'; }
 function nombreMaterial(m) { return NOMBRES_MATERIAL[m] || m || 'Sin material'; }
@@ -8630,31 +8635,53 @@ async function descargarPdfBancos() {
 
   const fmtTon = (v) => v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // Orden: banco, luego fecha, luego folio (ascendente, numérico) — antes
-  // ordenaba por placa, lo que dejaba los folios sin ningún orden útil
-  // para cotejar contra el talonario físico.
+  // 19-jul-2026 (pedido por Jesús): antes solo ordenaba banco → fecha →
+  // folio. Ahora también SEPARA por material dentro de cada banco (todos
+  // los folios de Núcleo juntos, luego todos los de Secundaria 1, etc.),
+  // con un renglón separador en negritas entre cada grupo banco+material
+  // que además trae el subtotal de viajes y toneladas de ese grupo — no
+  // solo orden silencioso, se ve la separación physicamente en el PDF.
+  // Orden de material fijo (mismo catálogo de negocio, sección 3 de
+  // INSTRUCCIONESAPP.md) en vez de alfabético, para que salga en el
+  // orden en que Jesús piensa el catálogo. Materiales fuera de catálogo
+  // (por si acaso) van al final, no se excluyen.
+  const ORDEN_MATERIAL_PDF = ['NUCLEO', 'SECUNDARIA 1', 'SECUNDARIA 2', 'BERMA', 'BERMA DE APOYO', 'CORAZA', 'REZAGA'];
+  const ordenMaterialPdf = (m) => { const i = ORDEN_MATERIAL_PDF.indexOf(m); return i === -1 ? ORDEN_MATERIAL_PDF.length : i; };
   const folioNum = (r) => parseInt(String(r.folio || '').replace(/\D/g, ''), 10) || 0;
   const filas = filtered.slice().sort((a, b) => {
     const nb = nombreBanco(a.banco).localeCompare(nombreBanco(b.banco));
     if (nb !== 0) return nb;
-    const nf = (a.fecha1 || '').localeCompare(b.fecha1 || '');
-    if (nf !== 0) return nf;
+    const om = ordenMaterialPdf(a.material) - ordenMaterialPdf(b.material);
+    if (om !== 0) return om;
     return folioNum(a) - folioNum(b);
   });
 
-  const body = filas.map(r => {
-    const ton = r.ton || (r.neto_kg || 0) / 1000;
-    return [
-      nombreBanco(r.banco),
-      fmtFechaCorta(r.fecha1),
-      r.boleta || '—',
-      r.placas || '—',
-      r.folio || '—',
-      nombreMaterial(r.material),
-      '1',
-      fmtTon(ton),
-      fmtTon(ton) // Ton/Viaje de un solo viaje = su propia tonelada; el promedio real va en la fila de TOTAL GENERAL.
-    ];
+  // Agrupa filas consecutivas (ya vienen ordenadas) por banco+material.
+  const grupos = [];
+  let grupoActual = null;
+  filas.forEach(r => {
+    const bancoNombre = nombreBanco(r.banco);
+    const matNombre = nombreMaterial(r.material);
+    if (!grupoActual || grupoActual.banco !== bancoNombre || grupoActual.material !== matNombre) {
+      grupoActual = { banco: bancoNombre, material: matNombre, registros: [] };
+      grupos.push(grupoActual);
+    }
+    grupoActual.registros.push(r);
+  });
+
+  const body = [];
+  const filasHeaderMaterial = [];
+  grupos.forEach(g => {
+    const tonGrupo = g.registros.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+    filasHeaderMaterial.push(body.length);
+    body.push([`${g.banco} — ${g.material}`, '', '', '', '', '', String(g.registros.length), fmtTon(tonGrupo), '']);
+    g.registros.forEach(r => {
+      const ton = r.ton || (r.neto_kg || 0) / 1000;
+      body.push([
+        nombreBanco(r.banco), fmtFechaCorta(r.fecha1), r.boleta || '—', r.placas || '—', r.folio || '—',
+        nombreMaterial(r.material), '1', fmtTon(ton), fmtTon(ton)
+      ]);
+    });
   });
 
   const totalViajes = filtered.length;
@@ -8750,6 +8777,9 @@ async function descargarPdfBancos() {
         data.cell.styles.fontStyle = 'bold';
         data.cell.styles.fillColor = [40, 40, 40];
         data.cell.styles.textColor = 255;
+      } else if (filasHeaderMaterial.includes(data.row.index)) {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fillColor = [225, 235, 245];
       }
     }
   });

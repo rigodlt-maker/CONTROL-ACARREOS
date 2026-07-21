@@ -691,6 +691,7 @@ onAuthStateChanged(auth, async (user) => {
       excel:      esAdminOMaster || esCoordinador || esVisor,
       sixsigma:   esMaster, // Six Sigma Bloque B.1: único rol con acceso, ver SIXSIGMA.md sección 1
       tendencia:  esMaster || esVisor, // 11.4 (18-jul-2026): análisis de tendencia R², visor y master
+      auditar:    esAdminOMaster || esCoordinador, // 32.7 (21-jul-2026): confirmado por Jesús — coordinador + admin + master
       admin:      esAdminOMaster
     };
     Object.entries(visibilidadPorTab).forEach(([t, cond]) => {
@@ -1626,7 +1627,16 @@ window.saveRecord = async function() {
   if (data.bruto_kg <= 0) { alert('Ingresa el peso bruto.'); return; }
   if (!esPendiente) {
     if (data.tara_kg  <= 0) { alert('Ingresa la tara.'); return; }
-    if (data.neto_kg  <= 0 && !confirm('El peso neto es 0 o negativo. ¿Guardar de todas formas?')) return;
+    // 21-jul-2026 (pedido explícito de Jesús, mismo criterio que boleta
+    // duplicada): antes era un confirm() que se podía pasar por alto.
+    // Un peso neto en cero o negativo es físicamente imposible para un
+    // camión cargado (típico: bruto y tara invertidos, o un dígito mal
+    // capturado en alguno de los dos) — ahora es bloqueo duro. A
+    // diferencia de boleta duplicada, esto SÍ aplica también al editar
+    // (no solo captura nueva): un ticket editado con bruto/tara mal
+    // corregidos es el mismo error físico, no hay razón para permitirlo
+    // solo porque ya existía.
+    if (data.neto_kg <= 0) { alert('El peso neto es 0 o negativo (bruto - tara). Revisa los pesos capturados — no se puede guardar así.'); return; }
   }
   // Caso excepcional: transferencia entre acopios (Acopio -> Acopio). Se permite, pero se pide confirmación
   // explícita para evitar que se genere por un error de selección en el formulario.
@@ -1660,7 +1670,13 @@ window.saveRecord = async function() {
         const dupSnap = await getDocs(query(collection(db_f, COL), where('boleta', '==', data.boleta), limit(1)));
         if (!dupSnap.empty) dup = { _fid: dupSnap.docs[0].id, ...dupSnap.docs[0].data() };
       }
-      if (dup && !confirm('Ya existe la boleta #' + data.boleta + '. ¿Guardar como duplicado?')) return;
+      // 21-jul-2026 (pedido explícito de Jesús): antes era un confirm()
+      // que se podía pasar por alto ("¿Guardar como duplicado?"). Ahora
+      // es un bloqueo duro — no puede existir una boleta repetida, punto.
+      // Solo aplica a captura NUEVA (!window._editFid), igual que antes,
+      // así que editar un ticket ya guardado no se detecta como "duplicado
+      // de sí mismo".
+      if (dup) { alert('Ya existe la boleta #' + data.boleta + '. No se puede guardar una boleta duplicada — verifica el número e inténtalo de nuevo.'); return; }
       
       payload.ts = serverTimestamp();
       payload.ediciones_contador = 0; // Six Sigma Bloque B.3: First Pass Yield
@@ -2352,6 +2368,18 @@ window.dbFlotaGuardar = async function (placasKey, campos) {
   await setDoc(doc(db_f, 'flota', placasKey), campos, { merge: true });
 };
 
+// Auditar (32.7, 21-jul-2026): ÚNICA lectura de TODA la colección `flota`
+// permitida — es un catálogo chico (1 doc por placa/camión que ya pasó
+// alguna vez por Fila Báscula, no por viaje), acotado por definición, y
+// solo se dispara con un botón explícito de Auditar (nunca listener). Las
+// dos auditorías de flota (económicos duplicados / camiones sin económico)
+// comparten esta misma lectura, cacheada en memoria del lado del cliente
+// (ver obtenerFlotaParaAuditar en el <script> normal).
+window.dbFlotaListarTodo = async function () {
+  const snap = await getDocs(collection(db_f, 'flota'));
+  return snap.docs.map(d => ({ placas: d.id, ...d.data() }));
+};
+
 // 18-jul-2026 (tercera tanda) — Corrección de flota, reconstruida desde
 // cero (la versión anterior nunca quedó guardada en el index.html). Solo
 // visible en la pestaña "Base de datos" (coordinador/admin/master, ver
@@ -2467,6 +2495,21 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   const snap = await getDocs(query(collection(db_f, 'stats_analisis'),
     where('captura_fin_ts', '>=', desdeTs),
     where('captura_fin_ts', '<=', hastaTs)));
+  return snap.docs.map(d => d.data());
+};
+
+// Auditar (32.7, 21-jul-2026): consulta puntual acotada por rango de fecha
+// sobre `fila_bascula` para "ciclos muy largos". Dos desigualdades sobre el
+// MISMO campo (t1_fila_ts), igual criterio de bajo costo/sin índice
+// compuesto nuevo que dbStatsAnalisisPorRango de arriba. Se necesita esta
+// colección (y no stats_analisis) porque t3b_salida_ts ("Destarado") vive
+// solo en fila_bascula — procesarFilaBasculaDeTicket() no lo copia a
+// stats_analisis. Se dispara solo con el botón "Revisar ciclos largos",
+// nunca como listener.
+window.dbFilaBasculaPorRango = async function (desdeTs, hastaTs) {
+  const snap = await getDocs(query(collection(db_f, 'fila_bascula'),
+    where('t1_fila_ts', '>=', desdeTs),
+    where('t1_fila_ts', '<=', hastaTs)));
   return snap.docs.map(d => d.data());
 };
 </script>
@@ -2720,6 +2763,10 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <button class="nav-item" id="nd-tendencia" style="display:none" onclick="showTab('tendencia'); initTendenciaTab();">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 16c2-6 4-6 6 0s4 6 6-2"/><circle cx="7" cy="13" r="1"/><circle cx="13" cy="15" r="1"/><circle cx="19" cy="8" r="1"/></svg>
       Tendencia
+    </button>
+    <button class="nav-item" id="nd-auditar" style="display:none" onclick="showTab('auditar'); initAuditarTab();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M9 11l1.5 1.5L14 9"/></svg>
+      Auditar
     </button>
 
     <div class="nav-group-title">Administración</div>
@@ -3912,22 +3959,6 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   </div>
 
   <div class="chart-card">
-    <h3>🔍 Auditoría de rangos (material vs. rango capturado)</h3>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
-      Compara el <strong>rango</strong> capturado en cada ticket contra los
-      rangos válidos por material (tabla <code>RANGOS_ACOPIO</code>). Detecta
-      combinaciones que no existen — típico de errores al exportar/importar
-      CSV. Es una consulta puntual acotada por fecha, no un listener.
-    </p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-      <input type="date" id="aud-fecha-desde" style="flex:1;min-width:130px;">
-      <input type="date" id="aud-fecha-hasta" style="flex:1;min-width:130px;">
-    </div>
-    <button class="btn btn-secondary" style="width:100%;" onclick="auditarRangosMaterial()">🔍 Auditar rangos</button>
-    <div id="aud-rangos-resultado" style="font-size:12px;margin-top:10px;"></div>
-  </div>
-
-  <div class="chart-card">
     <h3>Descarga para Minitab</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Consulta puntual acotada por rango de fecha (no es un listener, no lee toda la colección).</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
@@ -4004,6 +4035,82 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       </div>
       <p id="tnd-nota-recorte" style="display:none;font-size:11px;color:var(--warning);margin-top:4px;">⚠️ Gráfica recortada a un horizonte visual razonable — la fecha proyectada arriba sigue siendo exacta.</p>
     </div>
+  </div>
+</div>
+
+<!-- Auditar (32.7/32.8, 21-jul-2026): coordinador + admin + master (confirmado
+     por Jesús, ver visibilidadPorTab). Los 4 chequeos son consultas puntuales
+     acotadas (por colección chica o por rango de fecha), disparadas solo con
+     un botón — ninguno es un listener. "Rangos inválidos" es el mismo
+     análisis que antes vivía en 6 Sigma (auditarRangosMaterial, sin cambios
+     de lógica) — solo se reubicó aquí, no se duplicó. -->
+<div class="tab-content" id="tab-auditar">
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3 style="margin:0;">🔍 Auditar</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">Chequeos de calidad de datos, a demanda — ninguno se dispara solo al entrar a esta pestaña.</p>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3>Económicos duplicados</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Mismo # económico asignado a placas distintas (excluye vacío y "S/N"). Revisa el catálogo de flota completo (colección chica, 1 lectura).</p>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarEconomicosDuplicados()">🔍 Revisar duplicados</button>
+    <div id="aud-dup-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3>Camiones sin # económico</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Placas registradas en flota con el económico vacío o "S/N".</p>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarCamionesSinEconomico()">🔍 Revisar sin económico</button>
+    <div id="aud-sinnum-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3>Rangos inválidos</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+      Compara el <strong>rango</strong> capturado en cada ticket contra los
+      rangos válidos por material (tabla <code>RANGOS_ACOPIO</code>). Detecta
+      combinaciones que no existen — típico de errores al exportar/importar
+      CSV. Es una consulta puntual acotada por fecha, no un listener.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <input type="date" id="aud-fecha-desde" style="flex:1;min-width:130px;">
+      <input type="date" id="aud-fecha-hasta" style="flex:1;min-width:130px;">
+    </div>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarRangosMaterial()">🔍 Auditar rangos</button>
+    <div id="aud-rangos-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
+  <div class="chart-card" style="margin-bottom:14px;">
+    <h3>Material a destino no permitido</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+      Compara el <strong>material</strong> y el <strong>destino</strong> de
+      cada ticket contra las reglas de negocio confirmadas (tabla
+      <code>EXCLUSIONES_DESTINO_POR_MATERIAL</code> — ej. Coraza no puede
+      ir a Muro/Morro/Cuerpo 4/5). El formulario ya lo impide en captura
+      nueva; esto detecta tickets viejos, editados o importados que lo
+      hayan saltado. Consulta puntual acotada por fecha, no un listener.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <input type="date" id="aud-md-fecha-desde" style="flex:1;min-width:130px;">
+      <input type="date" id="aud-md-fecha-hasta" style="flex:1;min-width:130px;">
+    </div>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarMaterialDestino()">🔍 Auditar material/destino</button>
+    <div id="aud-md-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Ciclos muy largos</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+      Diferencia entre "Entra a fila" (peso bruto) y "Destarado" mayor a 3
+      horas. Es una consulta puntual acotada por fecha sobre Fila Báscula,
+      no un listener.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <input type="date" id="aud-ciclos-fecha-desde" style="flex:1;min-width:130px;">
+      <input type="date" id="aud-ciclos-fecha-hasta" style="flex:1;min-width:130px;">
+    </div>
+    <button class="btn btn-secondary" style="width:100%;" onclick="auditarCiclosLargos()">🔍 Revisar ciclos largos</button>
+    <div id="aud-ciclos-resultado" style="font-size:12px;margin-top:10px;"></div>
   </div>
 </div>
 
@@ -7635,6 +7742,121 @@ function formatearDuracionSeg(seg) {
   return m > 0 ? `${m} min ${s}s` : `${s}s`;
 }
 
+window.initAuditarTab = function() {
+  // Reservado — los 4 chequeos son a demanda (botón), nada que cargar al entrar.
+};
+
+// Auditar (32.7, 21-jul-2026): 1 sola lectura de la colección `flota`,
+// cacheada en memoria para que "Económicos duplicados" y "Camiones sin
+// económico" (los 2 botones que auditan flota) no la lean 2 veces si
+// Jesús da clic a ambos en la misma visita a la pestaña.
+window.obtenerFlotaParaAuditar = async function(forzar) {
+  if (window._auditFlotaCache && !forzar) return window._auditFlotaCache;
+  window._auditFlotaCache = await window.dbFlotaListarTodo();
+  return window._auditFlotaCache;
+};
+
+// Auditar (32.7): mismo # económico asignado a placas distintas. Excluye
+// vacío y "S/N" (un camión sin económico asignado no es un duplicado).
+window.auditarEconomicosDuplicados = async function() {
+  const out = document.getElementById('aud-dup-resultado');
+  if (!out) return;
+  out.innerHTML = '⏳ Auditando…';
+  try {
+    const flota = await window.obtenerFlotaParaAuditar();
+    const porEconomico = {};
+    flota.forEach(f => {
+      const eco = (f.economico || '').trim().toUpperCase();
+      if (!eco || eco === 'S/N') return;
+      if (!porEconomico[eco]) porEconomico[eco] = [];
+      porEconomico[eco].push(f.placas);
+    });
+    const dup = Object.entries(porEconomico).filter(([, placas]) => placas.length > 1);
+    if (!dup.length) {
+      out.innerHTML = `<div style="padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">✅ Sin económicos duplicados — ${flota.length.toLocaleString('es-MX')} registro(s) de flota revisados.</div>`;
+      return;
+    }
+    out.innerHTML = `
+      <div style="padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);margin-bottom:8px;">
+        ⚠️ ${dup.length} económico(s) asignado(s) a más de una placa (de ${flota.length.toLocaleString('es-MX')} registros de flota).
+      </div>
+      ${dup.map(([eco, placas]) => `
+        <div style="padding:6px 0;border-top:0.5px solid var(--border);">
+          Económico <strong style="color:var(--danger)">${escHtml(eco)}</strong> en ${placas.length} placas:
+          <span style="font-size:11px;color:var(--text-muted)">${placas.map(escHtml).join(', ')}</span>
+        </div>`).join('')}`;
+  } catch (e) {
+    out.innerHTML = '❌ Error al auditar: ' + e.message;
+  }
+};
+
+// Auditar (32.7): económico vacío o "S/N" en el catálogo de flota.
+window.auditarCamionesSinEconomico = async function() {
+  const out = document.getElementById('aud-sinnum-resultado');
+  if (!out) return;
+  out.innerHTML = '⏳ Auditando…';
+  try {
+    const flota = await window.obtenerFlotaParaAuditar();
+    const sinEco = flota.filter(f => {
+      const eco = (f.economico || '').trim().toUpperCase();
+      return !eco || eco === 'S/N';
+    });
+    if (!sinEco.length) {
+      out.innerHTML = `<div style="padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">✅ Todos los camiones de flota (${flota.length.toLocaleString('es-MX')}) tienen # económico.</div>`;
+      return;
+    }
+    out.innerHTML = `
+      <div style="padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);margin-bottom:8px;">
+        ⚠️ ${sinEco.length} camión(es) sin # económico (de ${flota.length.toLocaleString('es-MX')} registros de flota).
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">${sinEco.map(f => escHtml(f.placas)).join(', ')}</div>`;
+  } catch (e) {
+    out.innerHTML = '❌ Error al auditar: ' + e.message;
+  }
+};
+
+// Auditar (32.7): "Entra a fila" (peso bruto, t1_fila_ts) → "Destarado"
+// (t3b_salida_ts) mayor a 3 horas. Vive en fila_bascula, no en
+// stats_analisis (ver comentario de dbFilaBasculaPorRango).
+window.auditarCiclosLargos = async function() {
+  const desdeStr = document.getElementById('aud-ciclos-fecha-desde').value;
+  const hastaStr = document.getElementById('aud-ciclos-fecha-hasta').value;
+  const out = document.getElementById('aud-ciclos-resultado');
+  if (!out) return;
+  if (!desdeStr || !hastaStr) { alert('Selecciona el rango de fechas (desde y hasta).'); return; }
+  if (hastaStr < desdeStr) { alert('La fecha "hasta" no puede ser antes que "desde".'); return; }
+  const desdeTs = new Date(desdeStr + 'T00:00:00').getTime();
+  const hastaTs = new Date(hastaStr + 'T23:59:59').getTime();
+  out.innerHTML = '⏳ Auditando…';
+  try {
+    const docs = await window.dbFilaBasculaPorRango(desdeTs, hastaTs);
+    if (!docs.length) { out.innerHTML = 'No hay ciclos de Fila Báscula en ese rango de fechas.'; return; }
+    const LIMITE_SEG = 3 * 3600;
+    const largos = docs
+      .filter(d => d.t1_fila_ts && d.t3b_salida_ts)
+      .map(d => ({ ...d, duracionSeg: Math.round((d.t3b_salida_ts - d.t1_fila_ts) / 1000) }))
+      .filter(d => d.duracionSeg > LIMITE_SEG)
+      .sort((a, b) => b.duracionSeg - a.duracionSeg);
+    if (!largos.length) {
+      out.innerHTML = `<div style="padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">✅ Sin ciclos de más de 3 horas — ${docs.length.toLocaleString('es-MX')} ciclo(s) revisados.</div>`;
+      return;
+    }
+    out.innerHTML = `
+      <div style="padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);margin-bottom:8px;">
+        ⚠️ ${largos.length} ciclo(s) de más de 3 horas (de ${docs.length.toLocaleString('es-MX')} revisados).
+      </div>
+      ${largos.slice(0, 100).map(d => `
+        <div style="padding:6px 0;border-top:0.5px solid var(--border);">
+          <strong>${escHtml(d.placas || '(sin placas)')}${d.economico ? ' · ' + escHtml(d.economico) : ''}</strong>
+          — ${formatearHHMMSS(d.duracionSeg)}<br>
+          <span style="font-size:11px;color:var(--text-muted)">Entrada a fila: ${window.formatearFechaHoraTs(d.t1_fila_ts)} · Destarado: ${window.formatearFechaHoraTs(d.t3b_salida_ts)}</span>
+        </div>`).join('')}
+      ${largos.length > 100 ? `<p style="font-size:11px;color:var(--text-muted);margin-top:6px;">Mostrando los 100 más largos de ${largos.length}.</p>` : ''}`;
+  } catch (e) {
+    out.innerHTML = '❌ Error al auditar: ' + e.message;
+  }
+};
+
 // 18-jul-2026 — Punto 2 (pedido por Jesús, ver observación del rango
 // 0.30-0.50 en NUCLEO): auditoría de calidad de datos para el Master.
 // Compara material+rango de cada ticket contra RANGOS_ACOPIO (única fuente
@@ -7691,6 +7913,59 @@ window.auditarRangosMaterial = async function() {
           <strong>${escHtml(nombreMaterialLegible(i.material))}</strong> con rango <strong style="color:var(--danger)">${escHtml(i.rango || '(vacío)')}</strong>
           — ${i.count.toLocaleString('es-MX')} ticket(s)<br>
           <span style="font-size:11px;color:var(--text-muted)">Rangos válidos para ${escHtml(nombreMaterialLegible(i.material))}: ${(RANGOS_ACOPIO[i.material]||[]).join(', ')}</span><br>
+          <span style="font-size:11px;color:var(--text-muted)">Ejemplos de folio: ${i.folios.map(escHtml).join(', ')}${i.count > i.folios.length ? '…' : ''}</span>
+        </div>`).join('')}`;
+  } catch (e) {
+    out.innerHTML = '❌ Error al auditar: ' + e.message;
+  }
+};
+
+// Auditar (21-jul-2026, pedido por Jesús): mismo patrón que
+// auditarRangosMaterial — compara material+destino de cada ticket contra
+// EXCLUSIONES_DESTINO_POR_MATERIAL (única fuente de verdad, línea ~4335,
+// la misma que ya filtra el desplegable de Destino en captura nueva).
+// Un material sin entrada en el catálogo no se audita (sin restricción,
+// ej. AREA DE PREFABRICADOS como material). Consulta puntual acotada por
+// fecha, no un listener.
+window.auditarMaterialDestino = async function() {
+  const desdeStr = document.getElementById('aud-md-fecha-desde').value;
+  const hastaStr = document.getElementById('aud-md-fecha-hasta').value;
+  const out = document.getElementById('aud-md-resultado');
+  if (!out) return;
+  if (!desdeStr || !hastaStr) { alert('Selecciona el rango de fechas (desde y hasta).'); return; }
+  if (hastaStr < desdeStr) { alert('La fecha "hasta" no puede ser antes que "desde".'); return; }
+  out.innerHTML = '⏳ Auditando…';
+  try {
+    const registros = await window.traerTodoFirestore(desdeStr, hastaStr);
+    if (!registros.length) { out.innerHTML = 'No hay tickets en ese rango de fechas.'; return; }
+
+    const incidencias = {}; // clave: material||destino -> {material, destino, count, folios[]}
+    registros.forEach(r => {
+      const material = r.material || '';
+      const destino  = r.destino  || '';
+      if (!material || !destino) return; // sin material o destino capturado, no es este chequeo
+      const excluidos = EXCLUSIONES_DESTINO_POR_MATERIAL[material];
+      if (!excluidos || !excluidos.includes(destino)) return; // material fuera del catálogo, o combinación válida
+      const clave = material + '||' + destino;
+      if (!incidencias[clave]) incidencias[clave] = { material, destino, count: 0, folios: [] };
+      incidencias[clave].count++;
+      if (incidencias[clave].folios.length < 5) incidencias[clave].folios.push(r.folio || r._fid);
+    });
+
+    const lista = Object.values(incidencias).sort((a, b) => b.count - a.count);
+    if (!lista.length) {
+      out.innerHTML = `<div style="padding:8px 10px;border-radius:6px;background:var(--accent-light,rgba(15,110,86,0.08));color:var(--accent);">✅ Sin inconsistencias — los ${registros.length.toLocaleString('es-MX')} ticket(s) revisados tienen combinaciones material/destino permitidas.</div>`;
+      return;
+    }
+    const totalTickets = lista.reduce((s, i) => s + i.count, 0);
+    out.innerHTML = `
+      <div style="padding:8px 10px;border-radius:6px;background:var(--danger-light);color:var(--danger);margin-bottom:8px;">
+        ⚠️ ${totalTickets.toLocaleString('es-MX')} ticket(s) con material enviado a un destino no permitido (de ${registros.length.toLocaleString('es-MX')} revisados).
+      </div>
+      ${lista.map(i => `
+        <div style="padding:6px 0;border-top:0.5px solid var(--border);">
+          <strong>${escHtml(nombreMaterialLegible(i.material))}</strong> enviado a <strong style="color:var(--danger)">${escHtml(i.destino)}</strong>
+          — ${i.count.toLocaleString('es-MX')} ticket(s)<br>
           <span style="font-size:11px;color:var(--text-muted)">Ejemplos de folio: ${i.folios.map(escHtml).join(', ')}${i.count > i.folios.length ? '…' : ''}</span>
         </div>`).join('')}`;
   } catch (e) {

@@ -2,6 +2,23 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<!-- FASE 35 — Modo nocturno. Este script va aquí, ANTES de <style> y de
+     cualquier otra cosa, y a propósito NO es type="module" ni está al
+     final del <body>: tiene que correr de forma síncrona antes del primer
+     pintado para que la app no "parpadee" en claro un instante antes de
+     cambiar a oscuro. Lee la preferencia guardada (o el sistema, si es
+     "auto") y pone data-theme en <html> de inmediato. La función
+     completa de aplicar/alternar tema vive más abajo, junto al resto del
+     código de la app — esto es solo el arranque rápido. -->
+<script>
+(function () {
+  try {
+    var pref = localStorage.getItem('temaPreferencia') || 'auto';
+    var oscuro = pref === 'oscuro' || (pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', oscuro ? 'dark' : 'light');
+  } catch (e) { /* si falla (ej. localStorage bloqueado), se queda en claro por default */ }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -33,6 +50,28 @@
   --warning: #854f0b; --warning-light: #faeeda;
   --info: #1a4f8a; --info-light: #f0f7ff;
   --radius: 10px; --radius-lg: 14px;
+  /* FASE 35 — Modo nocturno. Tokens nuevos para las tarjetas que antes
+     tenían un color de fondo fijo en vez de variable (ver INSTRUCCIONESAPP.md
+     sección 35 para el detalle de cuáles eran y por qué se movieron aquí). */
+  --neutral-bg: #f8f8f6;
+  --alert-amber-bg: #fff8f0; --alert-amber-border: rgba(133,79,11,0.25);
+  --alert-amber2-bg: #fff3cd; --alert-amber2-border: #e0a800; --alert-amber2-text: #7a5c00;
+}
+/* FASE 35 — Paleta oscura. Mismos tokens, valores para tema oscuro.
+   Los "-light" de acento/estado usan rgba() en vez de hex sólido a propósito:
+   así se ven bien encima de --surface sin tener que calcular un hex distinto
+   para cada uno (transparencia hace el trabajo). */
+:root[data-theme="dark"] {
+  --bg: #121210; --surface: #1c1c1a;
+  --border: rgba(255,255,255,0.12); --border-strong: rgba(255,255,255,0.26);
+  --text: #f0efec; --text-muted: #a8a6a0;
+  --accent: #2bcf9e; --accent-light: rgba(43,207,158,0.16); --accent-mid: #21b088;
+  --danger: #ff6b6b; --danger-light: rgba(255,107,107,0.16);
+  --warning: #ffb74d; --warning-light: rgba(255,183,77,0.16);
+  --info: #64b5f6; --info-light: rgba(100,181,246,0.16);
+  --neutral-bg: #232320;
+  --alert-amber-bg: rgba(255,183,77,0.12); --alert-amber-border: rgba(255,183,77,0.3);
+  --alert-amber2-bg: rgba(255,183,77,0.14); --alert-amber2-border: rgba(255,183,77,0.4); --alert-amber2-text: #ffcc80;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 15px; }
 
@@ -86,7 +125,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 .field-row.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .field-row.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .calc-field { background: var(--accent-light) !important; color: var(--accent) !important; font-weight: 600; border-color: rgba(15,110,86,0.3) !important; }
-.calc-field-neutral { background: #f8f8f6 !important; color: var(--text-muted) !important; font-weight: 500; border-color: rgba(0,0,0,0.15) !important; }
+.calc-field-neutral { background: var(--neutral-bg) !important; color: var(--text-muted) !important; font-weight: 500; border-color: var(--border) !important; }
 .pesos-summary { background: var(--accent-light); border-radius: var(--radius); padding: 12px 14px; margin-top: 10px; border: 0.5px solid rgba(15,110,86,0.25); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .peso-item { text-align: center; }
 .peso-item .lbl { font-size: 11px; color: var(--accent); margin-bottom: 2px; font-weight: 500; }
@@ -165,6 +204,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-mid)
 .nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 700; }
 .nav-drawer-footer { padding: 14px 20px; border-top: 0.5px solid var(--border); flex-shrink: 0; }
 .nav-drawer-footer button { width: 100%; }
+/* FASE 35 — Modo nocturno: interruptor segmentado de 3 opciones en el menú */
+.theme-segmented { display: flex; background: var(--bg); border: 0.5px solid var(--border); border-radius: 999px; padding: 3px; gap: 2px; margin: 4px 20px 16px; }
+.theme-seg-btn { flex: 1; border: none; background: none; padding: 7px 0; font-size: 12.5px; font-weight: 600; color: var(--text-muted); border-radius: 999px; cursor: pointer; }
+.theme-seg-btn.active { background: var(--accent); color: #fff; }
 
 /* Escritorio / PWA Windows: hay espacio de sobra, el panel se ve más
    ancho y con esquinas menos pronunciadas — sigue siendo un overlay
@@ -667,7 +710,7 @@ onAuthStateChanged(auth, async (user) => {
     if (atajoBtn) {
       const atajos = {
         capturista:  { tab: 'form',      label: 'Nueva captura', icon: 'M12 5v14M5 12h14' },
-        coordinador: { tab: 'pendientes',label: 'Pendientes',    icon: 'M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 5v5l4 2' },
+        coordinador: { tab: 'pendientes',label: 'Capturar Destare',    icon: 'M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 5v5l4 2' },
         visor:       { tab: 'reportes',  label: 'Reportes',      icon: 'M7 4h8l4 4v13a1 1 0 01-1 1H7a1 1 0 01-1-1V5a1 1 0 011-1zM9 12h6M9 16h4' },
         admin:       { tab: 'db',        label: 'Base de datos', icon: 'M4 5c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2zm0 0v14c0 1.1 3.6 2 8 2s8-.9 8-2V5' },
         master:      { tab: 'resumen',   label: 'Resumen',       icon: 'M9 11l3 3L20 6M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9' }
@@ -1862,7 +1905,7 @@ window.openModal = function(fid) {
   const fmt    = (v, s='') => (v !== undefined && v !== null && v !== '') ? escHtml(v) + s : '—';
   const fmtNum = (v, s='') => v ? Number(v).toLocaleString('es-MX') + s : '—';
   document.getElementById('modal-body').innerHTML = `
-    ${r.status === 'pendiente' ? '<div class="banner banner-warning" style="margin-bottom:10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Pendiente de 2do pesaje y tara. Complétalo en la pestaña "Pendientes".</span></div>' : ''}
+    ${r.status === 'pendiente' ? '<div class="banner banner-warning" style="margin-bottom:10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Pendiente de 2do pesaje y tara. Complétalo en la pestaña "Capturar Destare".</span></div>' : ''}
     <div class="detail-section">Pesajes</div>
     <div class="detail-row"><span class="dk">1er pesaje</span><span class="dv">${fmtFecha(r.fecha1)} ${fmt(r.hora1)}</span></div>
     <div class="detail-row"><span class="dk">2do pesaje</span><span class="dv">${r.status === 'pendiente' ? '⏳ Pendiente' : fmtFecha(r.fecha2) + ' ' + fmt(r.hora2)}</span></div>
@@ -2613,11 +2656,15 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <div class="nav-group-title">Trabajo diario</div>
     <button class="nav-item active" id="nd-form" onclick="irACapturaNueva()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
-      Captura
+      Capturar Peso Bruto
+    </button>
+    <button class="nav-item" id="nd-bascula" style="display:none" onclick="showTab('bascula'); initFilaBasculaTab();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v4M4 6h16l-1.5 5a3 3 0 01-2.9 2.2H8.4A3 3 0 015.5 11L4 6z"/><path d="M12 13v9M8 22h8"/></svg>
+      Fila Báscula
     </button>
     <button class="nav-item" id="nd-pendientes" style="display:none" onclick="showTab('pendientes'); renderPendientes();">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      Pendientes
+      Capturar Destare
     </button>
 
     <div class="nav-group-title">Consulta</div>
@@ -2632,10 +2679,6 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     <button class="nav-item" id="nd-db" style="display:none" onclick="showTab('db')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
       Base de datos
-    </button>
-    <button class="nav-item" id="nd-bascula" style="display:none" onclick="showTab('bascula'); initFilaBasculaTab();">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v4M4 6h16l-1.5 5a3 3 0 01-2.9 2.2H8.4A3 3 0 015.5 11L4 6z"/><path d="M12 13v9M8 22h8"/></svg>
-      Fila Báscula
     </button>
 
     <div class="nav-group-title">Analítica</div>
@@ -2679,6 +2722,13 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
       Admin
     </button>
+
+    <div class="nav-group-title">Preferencias</div>
+    <div class="theme-segmented" id="theme-segmented" role="group" aria-label="Tema de la app">
+      <button type="button" class="theme-seg-btn" data-tema="auto" onclick="establecerTema('auto')">Auto</button>
+      <button type="button" class="theme-seg-btn" data-tema="claro" onclick="establecerTema('claro')">Claro</button>
+      <button type="button" class="theme-seg-btn" data-tema="oscuro" onclick="establecerTema('oscuro')">Oscuro</button>
+    </div>
 
   </div>
   <div class="nav-drawer-footer">
@@ -2843,7 +2893,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <input type="text" id="f-folio-barcaza" placeholder="Ej: BARCAZA-014"/>
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Agrupa todos los tickets que corresponden al mismo viaje de barcaza.</div>
     </div>
-    <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:#fff3cd;border:1px solid #e0a800;border-radius:var(--radius);color:#7a5c00;font-size:12px;">
+    <div id="alerta-transferencia-acopios" style="display:none;margin-top:10px;padding:10px 12px;background:var(--alert-amber2-bg);border:1px solid var(--alert-amber2-border);border-radius:var(--radius);color:var(--alert-amber2-text);font-size:12px;">
       ⚠️ Estás registrando un movimiento de <strong>Acopio → Acopio</strong> (transferencia entre acopios). Es un caso excepcional — confirma que es correcto antes de guardar.
     </div>
   </div>
@@ -3146,7 +3196,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
       <button class="btn btn-primary" id="btn-vista-mensual" style="font-size:11px;padding:5px 12px;" onclick="cambiarVistaMeses('mensual')">Mensual</button>
       <button class="btn btn-secondary" id="btn-vista-anual" style="font-size:11px;padding:5px 12px;" onclick="cambiarVistaMeses('anual')">Anual</button>
     </div>
-    <div class="chart-wrap" id="wrap-chart-meses" style="padding:20px 20px 20px 0;background:#f4f7f9;">
+    <div class="chart-wrap" id="wrap-chart-meses" style="padding:20px 20px 20px 0;background:var(--neutral-bg);">
       <canvas id="chart-meses"></canvas>
     </div>
   </div>
@@ -3694,7 +3744,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   </div>
 
   <!-- ── TABLA: ESTATUS OPERATIVO DE ACARREOS ── -->
-  <div id="reportes-estatus-card" class="form-card" style="display:none;background:#fff8f0;border-color:rgba(133,79,11,0.25);">
+  <div id="reportes-estatus-card" class="form-card" style="display:none;background:var(--alert-amber-bg);border-color:var(--alert-amber-border);">
     <h3 style="color:var(--warning);display:flex;align-items:center;gap:6px;">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       📊 Estatus Operativo de Acarreos
@@ -4087,6 +4137,42 @@ function cerrarMenuLateral() {
 }
 window.abrirMenuLateral = abrirMenuLateral;
 window.cerrarMenuLateral = cerrarMenuLateral;
+
+// ── FASE 35 — Modo nocturno: aplicar/alternar tema (Auto/Claro/Oscuro) ──
+// La detección rápida anti-parpadeo ya corrió en <head> (ver ahí el porqué);
+// esta es la versión completa que además: (a) refleja el botón activo en el
+// interruptor del menú, y (b) si está en "auto", escucha cambios en vivo del
+// tema del sistema operativo (ej. el celular cambia a oscuro a las 7pm) sin
+// necesidad de recargar la app.
+function aplicarTema() {
+  const pref = localStorage.getItem('temaPreferencia') || 'auto';
+  const prefiereOscuroSistema = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const oscuro = pref === 'oscuro' || (pref === 'auto' && prefiereOscuroSistema);
+  document.documentElement.setAttribute('data-theme', oscuro ? 'dark' : 'light');
+
+  const contenedor = document.getElementById('theme-segmented');
+  if (contenedor) {
+    contenedor.querySelectorAll('.theme-seg-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tema === pref);
+    });
+  }
+}
+function establecerTema(pref) {
+  localStorage.setItem('temaPreferencia', pref);
+  aplicarTema();
+}
+window.aplicarTema = aplicarTema;
+window.establecerTema = establecerTema;
+// Si el usuario está en "auto" y el sistema cambia de claro a oscuro (o
+// viceversa) con la app ya abierta, se refleja sin recargar.
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if ((localStorage.getItem('temaPreferencia') || 'auto') === 'auto') aplicarTema();
+  });
+}
+// Refleja el botón activo del interruptor en cuanto el menú existe en el DOM
+// (el script de <head> ya puso data-theme, esto solo sincroniza la UI).
+aplicarTema();
 
 // ── Auto-mayúsculas global: convierte a MAYÚSCULAS mientras se escribe en
 // CUALQUIER <input type="text"/"search"> o <textarea> de la app (boleta,
@@ -5701,7 +5787,7 @@ window.cambiarVistaMeses = cambiarVistaMeses;
 function barraHtml(pct, completo) {
   const pctClamp = Math.min(100, pct);
   const color = completo ? 'var(--accent)' : (pct > 85 ? 'var(--warning)' : 'var(--info)');
-  return `<div style="background:#eef1f0;border-radius:999px;height:8px;overflow:hidden;margin-top:4px;">
+  return `<div style="background:var(--neutral-bg);border-radius:999px;height:8px;overflow:hidden;margin-top:4px;">
     <div style="background:${color};height:100%;width:${pctClamp}%;"></div>
   </div>`;
 }
@@ -5965,8 +6051,8 @@ window.renderPendientes = function() {
       badgeHTML = `<span class="badge" style="background:var(--danger-light);color:var(--danger)">⚠️ Conflicto (Duplicado)</span>`;
       borderStyle = 'var(--danger)';
     } else if (estancado) {
-      badgeHTML = `<span class="badge" style="background:#fcebeb;color:#a32d2d">⏰ Estancado (+${Math.floor(diffHoras)}h)</span>`;
-      borderStyle = '#a32d2d';
+      badgeHTML = `<span class="badge" style="background:var(--danger-light);color:var(--danger)">⏰ Estancado (+${Math.floor(diffHoras)}h)</span>`;
+      borderStyle = 'var(--danger)';
     }
 
     return `
@@ -7351,34 +7437,51 @@ window.filtrarBuscadorDestare = function() {
   if (!el) return;
   const buscarEl = document.getElementById('destare-buscar-input');
   const q = buscarEl ? buscarEl.value.trim().toUpperCase() : '';
-  // 19-jul-2026 (pedido explícito de Jesús): "Camiones Destare" YA NO se
-  // filtra por quién capturó el camión — un camión se puede destarar en
-  // CUALQUIER báscula, con cualquier capturista, sin importar quién hizo
-  // el peso bruto. Antes usaba puedoVerRegistroFila() igual que "Camiones
-  // con Material", así que el capturista 2 no veía un camión que el
-  // capturista 1 había registrado y que ahora regresa a destararse con
-  // él — ya lo corregí. OJO: esto es SOLO para esta lista (destare). El
-  // resto de Fila Báscula ("Camiones con Material", arriba) y el
-  // desplegable de placas en Captura (poblarPlacasDisponibles) SÍ siguen
-  // filtrando por capturista — no se tocaron, es la regla original y
-  // sigue aplicando ahí.
-  const todos = window._filaBasculaEsperandoDestare || [];
-  const filtrados = q ? todos.filter(c => (c.data.placas || '').includes(q)) : todos;
+  const rol = window._currentUserRol;
+  const uid = window._currentUserUid;
+  const esAdminOMasterCoordDestare = rol === 'admin' || rol === 'coordinador' || rol === 'master';
+
+  // 32.1/32.4 (21-jul-2026, confirmado):
+  //  - Un camión "Destarado" (t3b_salida_ts) sale POR COMPLETO de esta
+  //    lista — ya vive en "Capturar Destare" (antes Pendientes) esperando
+  //    el peso real.
+  //  - Un camión con `reclamado_por` puesto solo lo ve quien lo reclamó
+  //    (y siempre admin/coordinador/master). Uno SIN reclamar se sigue
+  //    viendo por todos, para que cualquiera lo pueda tomar primero.
+  const sinDestarar = (window._filaBasculaEsperandoDestare || []).filter(c => !c.data.t3b_salida_ts);
+  const visibles = sinDestarar.filter(c => esAdminOMasterCoordDestare || !c.data.reclamado_por || c.data.reclamado_por === uid);
+  const filtrados = q ? visibles.filter(c => (c.data.placas || '').includes(q)) : visibles;
+
   if (!filtrados.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin camiones pendientes de destare.</p>'; return; }
-  const esMasterDestare = window._currentUserRol === 'master';
-  el.innerHTML = filtrados.map(({ id, data: r }) => {
-    const estado = r.t3b_salida_ts ? '✅ Destarado — listo para capturar en Pendientes' : (r.t1b_fila_ts ? '⏳ En fila, falta "Destarado"' : '🚧 Falta "Entra a fila"');
+
+  // 32.1: "Tus camiones" = los que TÚ registraste en peso bruto — mismo
+  // criterio que puedoVerRegistroFila() (r.creadoPor === tu uid).
+  const tuyos = filtrados.filter(c => c.data.creadoPor === uid);
+  const otros = filtrados.filter(c => c.data.creadoPor !== uid);
+  const esMasterDestare = rol === 'master';
+
+  const renderCamion = ({ id, data: r }) => {
+    const estado = r.t1b_fila_ts ? '⏳ En fila, falta "Destarado"' : '🚧 Falta "Entra a fila"';
+    const puedeLiberar = !!r.reclamado_por && (r.reclamado_por === uid || rol === 'admin' || rol === 'master');
     return `<div style="border-top:0.5px solid var(--border);padding:10px 0;">
       <strong>${r.placas || '(sin placas)'}${r.economico ? ' · ' + r.economico : ''}</strong><br>
       <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''} · Boleta ${r.boleta || '—'}</span><br>
-      <span style="font-size:12px;color:var(--text-muted);">${estado}</span>
-      <div style="display:flex;gap:8px;margin-top:8px;">
+      <span style="font-size:12px;color:var(--text-muted);">${estado}${r.reclamado_por ? (r.reclamado_por === uid ? ' · reclamado por ti' : ' · reclamado') : ''}</span>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
         <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}', this)">🟢 Entra a fila</button>
-        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts || r.t3b_salida_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
+        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
+        ${puedeLiberar ? `<button class="btn" style="font-size:12px;background:#546e7a;color:white;border-color:#546e7a;" onclick="liberarCamionFilaSegunda('${id}', this)">↩️ Liberar</button>` : ''}
         ${esMasterDestare ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
       </div>
     </div>`;
-  }).join('');
+  };
+
+  let html = '';
+  html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);margin:10px 0 2px;text-transform:uppercase;letter-spacing:0.03em;">Tus camiones (${tuyos.length})</div>`;
+  html += tuyos.length ? tuyos.map(renderCamion).join('') : '<p style="font-size:13px;color:var(--text-muted);padding:4px 0;">Ninguno.</p>';
+  html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);margin:16px 0 2px;text-transform:uppercase;letter-spacing:0.03em;">Otros camiones (${otros.length})</div>`;
+  html += otros.length ? otros.map(renderCamion).join('') : '<p style="font-size:13px;color:var(--text-muted);padding:4px 0;">Ninguno.</p>';
+  el.innerHTML = html;
 };
 
 // Six Sigma Bloque B.2 v3: se llama cada vez que cambia la caché global de
@@ -7403,13 +7506,39 @@ window.onFilaBasculaCambio = function() {
 // el segundo parámetro `btn`), sin esperar al round-trip de Firestore.
 // Si falla la escritura, se vuelve a habilitar para poder reintentar.
 window.registrarEntradaFilaSegunda = async function(filaId, btn) {
-  if (btn) { if (btn.disabled) return; btn.disabled = true; }
+  if (btn && btn.disabled) return;
+  // 32.1 (21-jul-2026, confirmado): diálogo de confirmación antes de
+  // reclamar CUALQUIER camión (no solo los ajenos) — pokayoke contra
+  // reclamos accidentales al tocar el botón equivocado en la lista.
+  const fila = (window._filaBasculaPorId || {})[filaId] || {};
+  const ok = confirm(`¿Reclamar el camión ${fila.placas || '(sin placas)'} para destare?\n\nQuedará exclusivo para ti hasta que lo destares o lo liberes.`);
+  if (!ok) return;
+  if (btn) btn.disabled = true;
   try {
-    await window.dbFilaBasculaActualizar(filaId, { t1b_fila_ts: Date.now() });
+    // 32.4: reclamado_por marca de quién es exclusivo este camión mientras
+    // dure el destare — ver filtrarBuscadorDestare() para la visibilidad
+    // y liberarCamionFilaSegunda() para deshacerlo.
+    await window.dbFilaBasculaActualizar(filaId, { t1b_fila_ts: Date.now(), reclamado_por: window._currentUserUid || '' });
     window.showSyncToast('✅', '2da entrada a fila registrada', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
     alert('Error al registrar entrada: ' + e.message);
+  }
+};
+// 32.4 (21-jul-2026) — "Autoliberar": quien reclamó el camión (además de
+// master/admin, ver botón condicionado en filtrarBuscadorDestare) puede
+// soltarlo si se equivocó. Limpia SOLO reclamado_por — t1b_fila_ts se
+// deja tal cual (el camión ya entró físicamente a la fila; liberar no
+// deshace ese hecho, solo quita la exclusividad de quién lo destara).
+window.liberarCamionFilaSegunda = async function(filaId, btn) {
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
+    await window.dbFilaBasculaActualizar(filaId, { reclamado_por: '' });
+    window.showSyncToast('↩️', 'Camión liberado — ya lo puede tomar cualquiera', 'ok');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    alert('Error al liberar el camión: ' + e.message);
   }
 };
 window.registrarSalidaFilaSegunda = async function(filaId, btn) {
@@ -8404,7 +8533,16 @@ window.initMetasTab = async function(forzar) {
           <th style="padding:4px 6px;text-align:right;">Real mes</th>
           <th style="padding:4px 6px;text-align:right;">% mes (ritmo)</th>
         </tr></thead><tbody>`;
-      Object.entries(mats).forEach(([material, datos]) => {
+      // 32.11 (21-jul-2026, confirmado por Jesús): orden fijo de materiales
+      // dentro de cada Cuerpo, en vez del orden que trae el objeto tal cual
+      // (alfabético/orden de carga del programa). Cualquier material que no
+      // esté en la lista (caso raro/futuro) se manda al final, sin excluirlo.
+      const ORDEN_MATERIALES_METAS = ['NUCLEO', 'BERMA DE APOYO', 'BERMA', 'SECUNDARIA 1', 'SECUNDARIA 2', 'CORAZA'];
+      const posMaterial = (m) => {
+        const i = ORDEN_MATERIALES_METAS.indexOf((m || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+        return i === -1 ? ORDEN_MATERIALES_METAS.length : i;
+      };
+      Object.entries(mats).sort((a, b) => posMaterial(a[0]) - posMaterial(b[0])).forEach(([material, datos]) => {
         const k = cuerpo + '||' + material;
         const meses = datos.meses || {};
         // 18-jul-2026 (punto 18.3, confirmado por Jesús: "Diste en el
@@ -8905,8 +9043,9 @@ async function descargarPdfBancos() {
   const filasHeaderMaterial = [];
   grupos.forEach(g => {
     const tonGrupo = g.registros.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
+    const promedioGrupo = g.registros.length ? tonGrupo / g.registros.length : 0;
     filasHeaderMaterial.push(body.length);
-    body.push([`${g.banco} — ${g.material}`, '', '', '', '', '', String(g.registros.length), fmtTon(tonGrupo), '']);
+    body.push([`${g.banco} — ${g.material}`, '', '', '', '', '', String(g.registros.length), fmtTon(tonGrupo), fmtTon(promedioGrupo)]);
     g.registros.forEach(r => {
       const ton = r.ton || (r.neto_kg || 0) / 1000;
       body.push([

@@ -4846,7 +4846,22 @@ function showTab(t) {
   if (t === 'bancos') initBancosTab();
   if (t === 'metas') initMetasTab();
   if (t === 'bascula') initFilaBasculaTab();
-  if (t === 'form' && document.getElementById('f-tipo-camion').value) poblarPlacasDisponibles();
+  // 20-jul-2026 (sección 27.3, reportado por Jesús con capturas de
+  // pantalla: económico y fecha1 en blanco al editar, tipo de camión y
+  // placas correctos). Esta línea es la causa real: refresca "placas
+  // disponibles" cada vez que se entra a la pestaña 'form' si ya hay un
+  // tipo de camión elegido (pensada para captura nueva, ej. al volver de
+  // otra pestaña sin haber limpiado el tipo de camión). El problema es que
+  // editRecord() llama a showTab('form') como SU ÚLTIMO PASO, después de
+  // ya haber puesto 'VOLTEO'/etc. en f-tipo-camion — así que esta línea se
+  // disparaba TAMBIÉN al editar, y poblarPlacasDisponibles() borra
+  // fila_bascula_id/económico/fecha1 sin condición al arrancar (ver su
+  // propio comentario). Como en edición el select de Placas real
+  // (wrap-placas-captura) está oculto, el síntoma no se veía en Placas —
+  // pero sí en económico y fecha1, que si se tocan. Se excluye el modo
+  // edición aquí, igual que ya se excluye en el onchange de tipo de camión
+  // (sección 27.1) — es el mismo patrón, otro punto de entrada.
+  if (t === 'form' && !window._editFid && document.getElementById('f-tipo-camion').value) poblarPlacasDisponibles();
   initDateHints();
 }
 

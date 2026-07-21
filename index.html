@@ -1745,7 +1745,10 @@ window.editRecord = async function() {
       } else { document.getElementById('f-rango').value = r.rango; }
     }
   }, 30);
-  showTab('form');
+  // sección 28: entrar a Editar mete una entrada nueva al historial del
+  // navegador, para que el gesto de "deslizar atrás" regrese a la pestaña
+  // de donde se vino (normalmente Base de Datos) en vez de cerrar la app.
+  showTab('form', { push: true });
 }
 
 window.deleteRecord = async function() {
@@ -1887,6 +1890,7 @@ window.openModal = function(fid) {
   `;
   document.getElementById('modal-overlay').classList.add('open');
   document.body.classList.add('modal-open'); // evita que el fondo se desplace/rompa el overlay al hacer zoom
+  _pushOverlayState('ticket');
   const btnDel = document.getElementById('btn-delete-record');
   if (btnDel) btnDel.style.display = (window._currentUserRol === 'master') ? '' : 'none';
 }
@@ -4071,6 +4075,7 @@ function abrirMenuLateral() {
   document.getElementById('nav-drawer').classList.add('open');
   document.getElementById('nav-drawer-backdrop').classList.add('open');
   document.body.classList.add('modal-open');
+  _pushOverlayState('menu');
 }
 function cerrarMenuLateral() {
   const drawer = document.getElementById('nav-drawer');
@@ -4078,6 +4083,7 @@ function cerrarMenuLateral() {
   const backdrop = document.getElementById('nav-drawer-backdrop');
   if (backdrop) backdrop.classList.remove('open');
   document.body.classList.remove('modal-open');
+  _cerrarOverlayHistorial('menu');
 }
 window.abrirMenuLateral = abrirMenuLateral;
 window.cerrarMenuLateral = cerrarMenuLateral;
@@ -4816,7 +4822,32 @@ window.initDateHints = initDateHints;
 document.addEventListener('DOMContentLoaded', initDateHints);
 document.addEventListener('DOMContentLoaded', () => { if (document.getElementById('f-banco')) updateOrigenOptions(); });
 
-function showTab(t) {
+function showTab(t, opts) {
+  opts = opts || {};
+  // 20-jul-2026 (sección 28, reportado por Jesús) — El gesto nativo de
+  // "deslizar para regresar" (Android/iOS, también el botón físico/virtual
+  // de "atrás" de Android) dispara navegación real del navegador, no algo
+  // que la app controle por sí sola. Como la app nunca metía nada al
+  // historial del navegador, no había a dónde "regresar" — el sistema
+  // simplemente cerraba la app. Fix: cada vez que se entra a una pantalla
+  // que se siente como "una tarea aparte" (por ahora: el formulario de
+  // Captura/Editar, sea nuevo o edición — `opts.push=true` desde
+  // `editRecord()`/`irACapturaNueva()`) se mete una entrada nueva al
+  // historial (`history.pushState`), así el gesto de regresar cae en la
+  // pestaña de donde salió en vez de salirse de la app. La navegación
+  // normal entre pestañas del menú NO apila (usa `history.replaceState`)
+  // a propósito — igual que en apps nativas, deslizar hacia atrás desde
+  // una pestaña principal del menú sí puede cerrar la app, solo NO debe
+  // pasar en medio de una tarea (como editar un viaje a medias).
+  // `opts.fromPopstate=true` (puesto por el listener de `popstate` más
+  // abajo) evita tocar el historial de nuevo cuando el cambio de pestaña
+  // YA vino de ese mismo gesto — si no, se pisaría la posición del
+  // historial y el gesto dejaría de funcionar bien al segundo intento.
+  if (!opts.fromPopstate) {
+    if (opts.push) history.pushState({ tab: t }, '', '#' + t);
+    else history.replaceState({ tab: t }, '', '#' + t);
+  }
+  window._currentTab = t;
   // 19-jul-2026 (pedido explícito de Jesús) — Bug real: si el usuario
   // entraba a "Editar" un ticket y luego se salía SIN guardar (clic en
   // cualquier otro botón del menú — incluido "Captura" para dar de alta
@@ -4826,7 +4857,9 @@ function showTab(t) {
   // mismo formulario físico (#tab-form). Ahora, CUALQUIER salida de
   // 'form' con una edición activa (window._editFid) sin haber guardado
   // cancela esa edición automáticamente y deja el formulario limpio,
-  // listo para lo que sea que el usuario abra después.
+  // listo para lo que sea que el usuario abra después. Esto también
+  // cubre el gesto de "deslizar atrás": al regresar así desde Editar, cae
+  // aquí igual que cualquier otra salida y cancela la edición sola.
   if (window._editFid && t !== 'form') {
     clearForm();
   }
@@ -4865,6 +4898,67 @@ function showTab(t) {
   initDateHints();
 }
 
+// 20-jul-2026 (sección 29, pedido explícito de Jesús: "hazlo con todas
+// las modales") — Generaliza lo de la sección 28 a CUALQUIER overlay de
+// la app: el modal de detalle de ticket, el de barcaza, el de económico
+// obligatorio, y el menú lateral. Mismo problema en el fondo: si no hay
+// una entrada de historial que "deshacer", el gesto de atrás del sistema
+// cierra la app entera en vez de solo el overlay que está abierto.
+//
+// `window._activeOverlay` guarda el nombre del overlay visualmente
+// abierto AHORA MISMO ('ticket' | 'barcaza' | 'economico' | 'menu' |
+// null). `_pushOverlayState()` se llama al ABRIR cada uno (mete una
+// entrada nueva al historial); `_cerrarOverlayHistorial()` se llama al
+// CERRARLO por cualquier vía normal (botón X, tocar fuera, elegir una
+// opción) y reemplaza esa entrada por una simple de la pestaña actual —
+// así no queda una entrada "fantasma" del overlay ya cerrado esperando
+// en el historial. Como `history.state` ya no apunta a ese overlay
+// cuando el cierre lo disparó el propio gesto de atrás (el navegador ya
+// se movió solo), `_cerrarOverlayHistorial()` se vuelve un no-op seguro
+// en ese caso — por eso las funciones de cierre normales (closeModalForce,
+// cerrarBarcazaModal, cerrarMenuLateral) se pueden reusar tal cual desde
+// el propio listener de popstate, sin duplicar lógica de cierre.
+window._activeOverlay = null;
+function _pushOverlayState(nombre) {
+  history.pushState({ overlay: nombre, tab: window._currentTab }, '');
+  window._activeOverlay = nombre;
+}
+function _cerrarOverlayHistorial(nombre) {
+  if (window._activeOverlay === nombre) window._activeOverlay = null;
+  if (history.state && history.state.overlay === nombre) {
+    history.replaceState({ tab: window._currentTab }, '');
+  }
+}
+function _cerrarOverlayDOM(nombre) {
+  if (nombre === 'ticket') closeModalForce();
+  else if (nombre === 'barcaza') window.cerrarBarcazaModal();
+  else if (nombre === 'menu') cerrarMenuLateral();
+  // 'economico' se maneja aparte abajo: es una decisión obligatoria del
+  // capturista (falta el # económico del camión) y NO tiene botón de
+  // cancelar ni tocar-fuera-para-cerrar a propósito — permitir que el
+  // gesto de atrás la salte sería dejar guardar un ticket sin ese dato
+  // por una puerta trasera. Se re-apila en vez de cerrarse.
+}
+window.addEventListener('popstate', function(e) {
+  const state = e.state;
+  if (window._activeOverlay === 'economico' && (!state || state.overlay !== 'economico')) {
+    history.pushState({ overlay: 'economico', tab: window._currentTab }, '');
+    return;
+  }
+  if (window._activeOverlay && (!state || state.overlay !== window._activeOverlay)) {
+    _cerrarOverlayDOM(window._activeOverlay);
+  }
+  if (state && state.overlay) {
+    // Gesto hacia ADELANTE (poco común): el overlay nunca llegó a
+    // cerrarse en el DOM si el usuario solo fue y vino, así que no hace
+    // falta reabrir nada — solo se retoma el seguimiento.
+    window._activeOverlay = state.overlay;
+    return;
+  }
+  const t = (state && state.tab) || 'db';
+  if (t !== window._currentTab) showTab(t, { fromPopstate: true });
+});
+
 // 19-jul-2026 — Punto de entrada del nav "Captura" (antes llamaba a
 // showTab('form') directo). Si venías de una edición sin guardar, la
 // cancela primero (clearForm) ANTES de mostrar el formulario — así,
@@ -4873,7 +4967,7 @@ function showTab(t) {
 // garantiza un formulario en blanco para un ticket nuevo.
 window.irACapturaNueva = function() {
   if (window._editFid) clearForm();
-  showTab('form');
+  showTab('form', { push: true });
 };
 
 function calcCiclo() {
@@ -5179,11 +5273,13 @@ window.abrirBarcazaModal = function(folio) {
   `;
   document.getElementById('barcaza-modal-overlay').classList.add('open');
   document.body.classList.add('modal-open');
+  _pushOverlayState('barcaza');
 }
 
 window.cerrarBarcazaModal = function() {
   document.getElementById('barcaza-modal-overlay').classList.remove('open');
   document.body.classList.remove('modal-open');
+  _cerrarOverlayHistorial('barcaza');
 }
 
 function cerrarBarcazaModalOutside(e) {
@@ -5277,6 +5373,7 @@ function closeModalForce() {
   document.getElementById('modal-overlay').classList.remove('open');
   document.body.classList.remove('modal-open');
   window._currentFid = null;
+  _cerrarOverlayHistorial('ticket');
 }
 
 let syncToastTimer = null;
@@ -7015,10 +7112,12 @@ window.combinarFechaHora = combinarFechaHora;
 let _resolverEconomicoModal = null;
 function abrirEconomicoModal() {
   document.getElementById('economico-modal-overlay').classList.add('open');
+  _pushOverlayState('economico');
   return new Promise(resolve => { _resolverEconomicoModal = resolve; });
 }
 window.resolverEconomicoModal = function(opcion) {
   document.getElementById('economico-modal-overlay').classList.remove('open');
+  _cerrarOverlayHistorial('economico');
   if (_resolverEconomicoModal) { _resolverEconomicoModal(opcion); _resolverEconomicoModal = null; }
 };
 

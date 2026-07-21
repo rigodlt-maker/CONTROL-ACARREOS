@@ -8520,6 +8520,47 @@ window.initMetasTab = async function(forzar) {
     });
 
     const fmtTon = n => (n || 0).toLocaleString('es-MX', { maximumFractionDigits: 0 });
+
+    // 32.13 (21-jul-2026, DEFINICIÓN FINAL confirmada por Jesús): "Meta
+    // acumulada hoy" prorratea el mes en curso por días hábiles transcurridos
+    // (no cuenta el mes completo hasta que cierre). Días hábiles = L-S,
+    // excluyendo domingos y festivos oficiales de México (Art. 74 LFT).
+    // 32.14 sigue abierto: festivos/paros LOCALES de obra, además de los
+    // oficiales, no bloquea — se agrega después si Jesús lo confirma.
+    const diaSemanaKey = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const nEsimoLunes = (anio, mesIdx, n) => {
+      const d = new Date(anio, mesIdx, 1);
+      let cont = 0;
+      while (true) {
+        if (d.getDay() === 1) { cont++; if (cont === n) return diaSemanaKey(d); }
+        d.setDate(d.getDate() + 1);
+      }
+    };
+    const festivosOficialesMX = (anio) => {
+      const lista = [
+        anio + '-01-01',                  // 1-ene
+        nEsimoLunes(anio, 1, 1),           // 1er lunes de febrero
+        nEsimoLunes(anio, 2, 3),           // 3er lunes de marzo
+        anio + '-05-01',                  // 1-may
+        anio + '-09-16',                  // 16-sep
+        nEsimoLunes(anio, 10, 3),          // 3er lunes de noviembre
+        anio + '-12-25',                  // 25-dic
+      ];
+      if (anio % 6 === 2) lista.push(anio + '-12-01'); // transmisión Ejecutivo Federal (2018, 2024, 2030...)
+      return lista;
+    };
+    const esDiaHabilMX = (d) => d.getDay() !== 0 && !festivosOficialesMX(d.getFullYear()).includes(diaSemanaKey(d));
+    const anioActual = hoy.getFullYear(), mesIdxActual = hoy.getMonth(), diaHoy = hoy.getDate();
+    const ultimoDiaMes = new Date(anioActual, mesIdxActual + 1, 0).getDate();
+    let diasHabTotalesMes = 0, diasHabTranscurridos = 0;
+    for (let d = 1; d <= ultimoDiaMes; d++) {
+      if (esDiaHabilMX(new Date(anioActual, mesIdxActual, d))) {
+        diasHabTotalesMes++;
+        if (d <= diaHoy) diasHabTranscurridos++;
+      }
+    }
+    const semaforoPct = (pct) => pct === null ? '⚪' : pct >= 90 ? '🟢' : pct >= 70 ? '🟡' : '🔴';
+
     let html = '';
     Object.keys(programa.cuerpos).sort().forEach(cuerpo => {
       const mats = programa.cuerpos[cuerpo];
@@ -8529,13 +8570,14 @@ window.initMetasTab = async function(forzar) {
         <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap;">
         <thead><tr style="text-align:left;color:var(--text-muted);">
           <th style="padding:4px 6px;">Material</th>
-          <th style="padding:4px 6px;text-align:right;">Meta acum. a la fecha</th>
-          <th style="padding:4px 6px;text-align:right;">Real acum.</th>
-          <th style="padding:4px 6px;text-align:right;">% acum. (semáforo)</th>
-          <th style="padding:4px 6px;text-align:right;">Meta total</th>
           <th style="padding:4px 6px;text-align:right;">Meta mes</th>
           <th style="padding:4px 6px;text-align:right;">Real mes</th>
-          <th style="padding:4px 6px;text-align:right;">% mes (ritmo)</th>
+          <th style="padding:4px 6px;text-align:right;">🚦 mes</th>
+          <th style="padding:4px 6px;text-align:right;">Meta acum. hoy</th>
+          <th style="padding:4px 6px;text-align:right;">Real acum. hoy</th>
+          <th style="padding:4px 6px;text-align:right;">🚦 hoy</th>
+          <th style="padding:4px 6px;text-align:right;">Meta total</th>
+          <th style="padding:4px 6px;text-align:right;">% Avance total</th>
         </tr></thead><tbody>`;
       // 32.11 (21-jul-2026, confirmado por Jesús): orden fijo de materiales
       // dentro de cada Cuerpo, en vez del orden que trae el objeto tal cual
@@ -8549,33 +8591,37 @@ window.initMetasTab = async function(forzar) {
       Object.entries(mats).sort((a, b) => posMaterial(a[0]) - posMaterial(b[0])).forEach(([material, datos]) => {
         const k = cuerpo + '||' + material;
         const meses = datos.meses || {};
-        // 18-jul-2026 (punto 18.3, confirmado por Jesús: "Diste en el
-        // clavo, hazlo así"): el semáforo real de avance debe comparar
-        // ACUMULADOS a la fecha, no la meta AISLADA del mes en curso —
-        // comparar contra "Meta mes" castiga a la obra los primeros días
-        // de cada mes aunque vaya adelantada desde meses anteriores.
-        // Meta acumulada a la fecha = suma de la meta de todos los meses
-        // <= mesActual (comparación lexicográfica funciona porque la
-        // clave es 'YYYY-MM').
-        const metaAcumFecha = Object.entries(meses)
-          .filter(([m]) => m <= mesActual)
+        const metaMes = meses[mesActual] || 0;
+        const realMes = realMesPorCM[k] || 0;
+        const pctMes  = metaMes > 0 ? (realMes / metaMes * 100) : (realMes > 0 ? 100 : null);
+
+        // 32.13 (21-jul-2026, DEFINICIÓN FINAL): "Meta acumulada hoy" = suma
+        // de meses YA CERRADOS (anteriores al actual) + la porción
+        // prorrateada del mes en curso (Meta mes × días hábiles
+        // transcurridos ÷ días hábiles totales del mes) — así compara justo
+        // contra "Real acumulado hoy", que también es del proyecto completo
+        // a la fecha (no solo del mes en curso).
+        const metaMesesCerrados = Object.entries(meses)
+          .filter(([m]) => m < mesActual)
           .reduce((s, [, v]) => s + (v || 0), 0);
-        const metaMes  = meses[mesActual] || 0;
-        const realMes  = realMesPorCM[k] || 0;
-        const pctMes   = metaMes > 0 ? (realMes / metaMes * 100) : (realMes > 0 ? 100 : null);
+        const prorrateoMesActual = diasHabTotalesMes > 0 ? (metaMes * diasHabTranscurridos / diasHabTotalesMes) : 0;
+        const metaAcumHoy = metaMesesCerrados + prorrateoMesActual;
+
         const metaTot  = datos.cantidad_total || 0;
         const realAcum = realAcumPorCM[k] || 0;
-        const pctAcum  = metaAcumFecha > 0 ? (realAcum / metaAcumFecha * 100) : (realAcum > 0 ? 100 : null);
-        const semaforo = pctAcum === null ? '⚪' : pctAcum >= 90 ? '🟢' : pctAcum >= 60 ? '🟡' : '🔴';
+        const pctHoy   = metaAcumHoy > 0 ? (realAcum / metaAcumHoy * 100) : (realAcum > 0 ? 100 : null);
+        const pctAvanceTotal = metaTot > 0 ? (realAcum / metaTot * 100) : (realAcum > 0 ? 100 : null);
+
         html += `<tr style="border-top:0.5px solid var(--border);">
-          <td style="padding:4px 6px;">${semaforo} ${nombreMaterial(material)}</td>
-          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaAcumFecha)}</td>
-          <td style="padding:4px 6px;text-align:right;">${fmtTon(realAcum)}</td>
-          <td style="padding:4px 6px;text-align:right;">${pctAcum === null ? '—' : pctAcum.toFixed(0) + '%'}</td>
-          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaTot)}</td>
+          <td style="padding:4px 6px;">${nombreMaterial(material)}</td>
           <td style="padding:4px 6px;text-align:right;">${fmtTon(metaMes)}</td>
           <td style="padding:4px 6px;text-align:right;">${fmtTon(realMes)}</td>
-          <td style="padding:4px 6px;text-align:right;">${pctMes === null ? '—' : pctMes.toFixed(0) + '%'}</td>
+          <td style="padding:4px 6px;text-align:right;">${semaforoPct(pctMes)} ${pctMes === null ? '—' : pctMes.toFixed(0) + '%'}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaAcumHoy)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(realAcum)}</td>
+          <td style="padding:4px 6px;text-align:right;">${semaforoPct(pctHoy)} ${pctHoy === null ? '—' : pctHoy.toFixed(0) + '%'}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtTon(metaTot)}</td>
+          <td style="padding:4px 6px;text-align:right;">${pctAvanceTotal === null ? '—' : pctAvanceTotal.toFixed(0) + '%'}</td>
         </tr>`;
       });
       html += `</tbody></table></div></div>`;
@@ -8584,7 +8630,7 @@ window.initMetasTab = async function(forzar) {
     if (estadoEl) {
       estadoEl.textContent = '✅ Mes en curso: ' + mesActual +
         (programa.actualizado ? ' · programa actualizado el ' + new Date(programa.actualizado).toLocaleDateString('es-MX') : '') +
-        ' · Semáforo por ACUMULADO a la fecha: 🟢 ≥90% · 🟡 60-89% · 🔴 <60% · "% mes" es solo ritmo del mes en curso, no afecta el semáforo';
+        ' · Semáforos 🚦 mes y 🚦 hoy: 🟢 ≥90% · 🟡 70-89% · 🔴 <70% · "Meta acum. hoy" prorratea el mes en curso por días hábiles transcurridos (L-S, sin festivos oficiales) · "% Avance total" es contra la Meta total del proyecto completo, no tiene semáforo';
     }
   } catch (e) {
     if (estadoEl) estadoEl.textContent = '';

@@ -1518,7 +1518,7 @@ window.saveRecord = async function() {
     if (!data.hora2 && !esEdicionHistoricaIncompleta)  { alert('Ingresa la hora del 2do pesaje.'); return; }
     if (!data.ciclo && !esEdicionHistoricaIncompleta)  { alert('El ciclo es requerido.'); return; }
   }
-  if (!data.placas)       { alert('Selecciona las placas del camión (debe estar registrado en Fila Báscula con salida hacia el frente ya hecha).'); return; }
+  if (!data.placas)       { alert(window._editFid ? 'Ingresa las placas del camión.' : 'Selecciona las placas del camión (debe estar registrado en Fila Báscula con salida hacia el frente ya hecha).'); return; }
   if (!data.material)     { alert('Selecciona el material.'); return; }
   if (!data.rango)        { alert('Selecciona el rango de material, o marca "pendiente" si aún no se conoce.'); return; }
   if (!data.banco)        { alert('Selecciona el origen (banco o acopio).'); return; }
@@ -1711,61 +1711,24 @@ window.editRecord = async function() {
   document.getElementById('f-banco').value    = r.banco    || '';
   document.getElementById('f-destino').value  = r.destino  || '';
   document.getElementById('f-tipo-camion').value = r.tipo_camion || '';
-  // Six Sigma Bloque B.2 v2: si este ticket ya está ligado a un camión de
-  // Fila Báscula (r.fila_bascula_id — típico al completar un pendiente),
-  // se inyecta ESA opción directo en vez de repoblar el desplegable
-  // completo — repoblar lo excluiría, porque ya está "usado" por este
-  // mismo ticket. Si no tiene liga (registro viejo, previo a este
-  // rediseño), se repuebla el desplegable normal.
-  if (r.fila_bascula_id) {
-    document.getElementById('f-fila-bascula-id').value = r.fila_bascula_id;
-    try {
-      const filaSnap = await window.dbFilaBasculaLeer(r.fila_bascula_id);
-      const sel = document.getElementById('f-placas');
-      if (filaSnap.exists()) {
-        const fd = filaSnap.data();
-        sel.innerHTML = `<option value="${r.fila_bascula_id}" data-placas="${(fd.placas||'').replace(/"/g,'&quot;')}" data-economico="${(fd.economico||'').replace(/"/g,'&quot;')}" selected>${fd.placas||''}${fd.economico ? ' · ' + fd.economico : ''}</option>`;
-        sel.disabled = false;
-      } else {
-        sel.innerHTML = `<option value="${r.fila_bascula_id}" data-placas="${(r.placas||'').replace(/"/g,'&quot;')}" data-economico="${(r.economico||'').replace(/"/g,'&quot;')}" selected>${r.placas||''}</option>`;
-        sel.disabled = false;
-      }
-    } catch (e) { /* deja el desplegable como esté */ }
-  } else {
-    document.getElementById('f-fila-bascula-id').value = '';
-    await poblarPlacasDisponibles();
-    // poblarPlacasDisponibles() borra f-fecha1 a la fuerza (es su
-    // comportamiento normal para captura NUEVA, donde la fecha se
-    // auto-llena al elegir placas). En edición eso no aplica: se
-    // restaura aquí el valor real del ticket para que no se pierda.
-    document.getElementById('f-fecha1').value = r.fecha1 || '';
-    // 19-jul-2026 (bug reportado por Jesús, boleta 2603932233): mismo
-    // problema que fecha1, pero con placas. poblarPlacasDisponibles()
-    // SOLO ofrece camiones que están "libres" ahora mismo en Fila
-    // Báscula — un ticket viejo/ya completo (sin fila_bascula_id) casi
-    // nunca tiene su camión ahí, así que el select se quedaba vacío y
-    // saveRecord() lo bloqueaba exigiendo "selecciona placas", como si
-    // fuera una captura nueva. Eso está mal: al EDITAR, la placa ya
-    // capturada del ticket no debe desaparecer ni forzarse a elegir un
-    // camión de la fila — esa regla es solo para captura nueva. Se
-    // inyecta aquí la placa/económico ORIGINAL del ticket como opción
-    // extra, ya seleccionada, con un value sintético que no es un id
-    // real de fila_bascula (por eso f-fila-bascula-id se deja vacío
-    // arriba — no hay 2da salida de fila que validar para este caso). El
-    // usuario puede seguir cambiando a otro camión de la lista si de
-    // verdad se equivocó de placa.
-    if (r.placas) {
-      const selPlacas = document.getElementById('f-placas');
-      const opt = document.createElement('option');
-      opt.value = '__ticket_original__';
-      opt.dataset.placas = r.placas || '';
-      opt.dataset.economico = r.economico || '';
-      opt.textContent = r.placas + (r.economico ? ' · ' + r.economico : '') + ' (placa original del ticket)';
-      selPlacas.appendChild(opt);
-      selPlacas.value = '__ticket_original__';
-      selPlacas.disabled = false;
-    }
-  }
+  // 20-jul-2026 (sección 27, reportado por Jesús): la versión anterior de
+  // este bloque consultaba `fila_bascula` (por ID, o repoblando "camiones
+  // disponibles") para armar el desplegable de Placas al editar. Un ticket
+  // ya completo YA salió del ciclo de Fila Báscula — su camión casi nunca
+  // sigue "disponible" ahí — así que esa consulta no tiene ningún sentido
+  // de negocio al editar, y de paso arrastraba el bug recurrente de la
+  // sección 24.1 (poblarPlacasDisponibles() borra fecha1/económico como
+  // efecto secundario, pensado solo para captura nueva). Ahora, editar NO
+  // toca fila_bascula para nada: se muestra el input de texto libre
+  // (wrap-placas-edit) con el valor que el ticket YA trae, y se mantiene
+  // fila_bascula_id tal cual estaba (no se re-liga ni se re-valida). Esto
+  // también corrige que el mensaje "selecciona las placas... debe estar
+  // registrado en Fila Báscula" apareciera al editar un viaje que, por
+  // definición, ya completó ese ciclo hace rato.
+  document.getElementById('wrap-placas-captura').style.display = 'none';
+  document.getElementById('wrap-placas-edit').style.display = 'block';
+  document.getElementById('f-placas-edit').value = r.placas || '';
+  document.getElementById('f-fila-bascula-id').value = r.fila_bascula_id || '';
   toggleVertido(); // FASE 10: muestra/oculta el campo según destino, y resetea vertido
   document.getElementById('f-vertido').value = r.vertido || '';
   toggleFolioBarcaza();
@@ -2751,7 +2714,7 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
     </h3>
     <div class="field-row">
       <label>Tipo de camión *</label>
-      <select id="f-tipo-camion" onchange="poblarPlacasDisponibles()">
+      <select id="f-tipo-camion" onchange="if(!window._editFid) poblarPlacasDisponibles();">
         <option value="">— Seleccionar —</option>
         <option value="VOLTEO">Volteo</option>
         <option value="GONDOLA">Góndola</option>
@@ -2764,11 +2727,29 @@ window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
         <input type="text" id="f-boleta" placeholder="Ej: 6617" inputmode="numeric"/>
       </div>
       <div>
-        <label>Placas * <a href="javascript:void(0)" onclick="poblarPlacasDisponibles()" style="font-weight:400;color:var(--accent);text-decoration:none;">🔄 refrescar</a></label>
-        <select id="f-placas" onchange="autorellenarDesdeFilaBascula()" disabled>
-          <option value="">— Elige tipo de camión primero —</option>
-        </select>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Solo se muestran camiones que ya registraste en Fila Báscula (entrada + salida).</div>
+        <div id="wrap-placas-captura">
+          <label>Placas * <a href="javascript:void(0)" onclick="poblarPlacasDisponibles()" style="font-weight:400;color:var(--accent);text-decoration:none;">🔄 refrescar</a></label>
+          <select id="f-placas" onchange="autorellenarDesdeFilaBascula()" disabled>
+            <option value="">— Elige tipo de camión primero —</option>
+          </select>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Solo se muestran camiones que ya registraste en Fila Báscula (entrada + salida).</div>
+        </div>
+        <!-- 20-jul-2026 (sección 27): al EDITAR un ticket ya existente, Placas
+             deja de ser un desplegable ligado a disponibilidad en Fila
+             Báscula (ese mecanismo es exclusivo de captura nueva) y pasa a
+             ser texto libre editable directo. El camión de un ticket ya
+             completo casi nunca sigue "disponible" en Fila Báscula, y
+             consultar esa colección aquí no tiene ningún sentido de negocio
+             — el dato real ya vive en el ticket. Esto también evita que
+             poblarPlacasDisponibles() se ejecute durante una edición y borre
+             fecha1/económico como efecto secundario (ver 24.1). Oculto por
+             defecto; editRecord()/clearForm() alternan cuál de los dos se
+             muestra. -->
+        <div id="wrap-placas-edit" style="display:none;">
+          <label>Placas *</label>
+          <input type="text" id="f-placas-edit" placeholder="Ej: AAA111"/>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Edición libre — no se vuelve a consultar Fila Báscula. Cambia solo si la placa capturada está mal.</div>
+        </div>
       </div>
     </div>
     <div class="field-row two-col">
@@ -5005,6 +4986,9 @@ function getFormData() {
     folio:    document.getElementById('f-folio').value.trim(),
     economico:document.getElementById('f-economico').value.trim().toUpperCase(),
     placas:   (function() {
+      // Sección 27: al editar, Placas es texto libre (no depende de Fila
+      // Báscula) — ver comentario en editRecord().
+      if (window._editFid) return document.getElementById('f-placas-edit').value.trim();
       const opt = document.getElementById('f-placas').selectedOptions[0];
       return (opt && opt.dataset.placas) ? opt.dataset.placas : '';
     })(),
@@ -5052,6 +5036,14 @@ function clearForm() {
   const fecha1Hint = document.getElementById('f-fecha1-hint');
   if (fecha1Hint) fecha1Hint.textContent = '(de Fila Báscula)';
   document.getElementById('f-fila-bascula-id').value = '';
+  // Sección 27: regresa Placas al modo captura nueva (select ligado a Fila
+  // Báscula) y limpia el texto libre que se usa solo al editar.
+  const wrapPlacasCaptura = document.getElementById('wrap-placas-captura');
+  const wrapPlacasEdit = document.getElementById('wrap-placas-edit');
+  if (wrapPlacasCaptura) wrapPlacasCaptura.style.display = 'block';
+  if (wrapPlacasEdit) wrapPlacasEdit.style.display = 'none';
+  const placasEditEl = document.getElementById('f-placas-edit');
+  if (placasEditEl) placasEditEl.value = '';
   document.getElementById('f-material').selectedIndex = 0;
   filtrarDestinosPorMaterial(); // sin material elegido, todos los destinos quedan habilitados de nuevo
   document.getElementById('f-origen-tipo').selectedIndex = 0;
@@ -5835,7 +5827,7 @@ window.renderPendientes = function() {
   if (!wrap) return;
   
   // Incluimos tanto "pendiente" como "conflicto" (generados por duplicidad offline)
-  const pend = db.filter(r => r.status === 'pendiente' || r.status === 'conflicto');
+  const pend = db.filter(r => (r.status === 'pendiente' || r.status === 'conflicto') && puedeVerPendiente(r));
   if (!pend.length) {
     wrap.innerHTML = '<div class="empty-state">No hay viajes pendientes o en conflicto.</div>';
     return;
@@ -7162,6 +7154,35 @@ function puedoVerRegistroFila(r) {
   return r.creadoPor === window._currentUserUid;
 }
 
+// 20-jul-2026 (sección 27, reportado por Jesús): un camión se puede
+// destarar en CUALQUIER báscula, no necesariamente donde se hizo el 1er
+// pesaje (por eso "Camiones Destare" ya no filtra por capturista, ver
+// filtrarBuscadorDestare). Pero "Pendientes" es distinto: ahí se teclea el
+// peso REAL de la báscula, y solo quien físicamente destaró el camión
+// (dio clic en "🟡 Destarado") tiene ese dato enfrente. Si los 3
+// capturistas ven los 3 pendientes por igual, cualquiera podría completar
+// el pesaje de un camión que no destaró él — captura no lineal, riesgo de
+// datos inventados. Regla:
+//  - Ya destarado (fila.t3b_salida_ts existe): solo lo ve quien lo destaró
+//    (fila.destarado_por). Si el destare es de ANTES de este cambio (sin
+//    destarado_por guardado), se deja visible para todos como antes, para
+//    no esconder pendientes viejos sin dueño registrado.
+//  - Todavía no destarado, o sin liga a fila_bascula: se ve igual que
+//    siempre, por quien lo capturó (r.creadoPor) — ahí no aplica el
+//    problema, porque de cualquier forma está bloqueado hasta que se
+//    destare.
+// Admin, coordinador y master siempre ven todo (igual que en Fila Báscula).
+function puedeVerPendiente(r) {
+  const rol = window._currentUserRol;
+  if (rol === 'admin' || rol === 'coordinador' || rol === 'master') return true;
+  const fila = r.fila_bascula_id ? (window._filaBasculaPorId || {})[r.fila_bascula_id] : null;
+  if (fila && fila.t3b_salida_ts) {
+    if (!fila.destarado_por) return true; // destare viejo, sin dueño guardado: no ocultarlo
+    return fila.destarado_por === window._currentUserUid;
+  }
+  return r.creadoPor === window._currentUserUid;
+}
+
 // 18-jul-2026 — Pedido por Jesús: el Master necesita poder sacar de la fila
 // un camión mal capturado (duplicado, camión que se fue sin avisar, error de
 // captura) directo desde el celular en campo, sin tener que entrar a Firebase
@@ -7280,7 +7301,14 @@ window.registrarEntradaFilaSegunda = async function(filaId, btn) {
 window.registrarSalidaFilaSegunda = async function(filaId, btn) {
   if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
-    await window.dbFilaBasculaActualizar(filaId, { t3b_salida_ts: Date.now() });
+    // 20-jul-2026 (sección 27, reportado por Jesús): se guarda quién dio
+    // clic en "Destarado" (destarado_por). El destare puede pasar en
+    // CUALQUIER báscula, con un capturista distinto al que hizo el 1er
+    // pesaje — pero solo ESE capturista tiene el dato real (el peso que va
+    // a teclear) frente a él, así que "Pendientes" usa este campo para que
+    // cada quien vea únicamente lo que él mismo destaró (ver
+    // puedeVerPendiente()/renderPendientes()).
+    await window.dbFilaBasculaActualizar(filaId, { t3b_salida_ts: Date.now(), destarado_por: window._currentUserUid || '' });
     window.showSyncToast('✅', 'Destarado registrado — ya puedes capturar el peso en Pendientes', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;

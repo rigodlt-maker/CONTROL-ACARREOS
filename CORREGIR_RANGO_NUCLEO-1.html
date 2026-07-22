@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Corregir rango de Núcleo — Control Acarreos</title>
+<style>
+:root {
+  --bg: #f5f4f0; --surface: #ffffff;
+  --border: rgba(0,0,0,0.12); --border-strong: rgba(0,0,0,0.28);
+  --text: #1a1a18; --text-muted: #5f5e5a;
+  --accent: #0f6e56; --accent-light: #e1f5ee; --accent-mid: #1d9e75;
+  --danger: #a32d2d; --danger-light: #fcebeb;
+  --warning: #854f0b; --warning-light: #faeeda;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 16px; font-size: 15px; }
+.wrap { max-width: 720px; margin: 0 auto; }
+.card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 0 0 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+p.sub { color: var(--text-muted); font-size: 13px; margin: 0 0 16px; }
+label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+input[type=email], input[type=password] {
+  width: 100%; height: 40px; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  padding: 0 10px; font-size: 14px; background: var(--surface); color: var(--text); margin-bottom: 10px;
+}
+.btn { display: inline-block; height: 42px; padding: 0 18px; border-radius: var(--radius); border: 0.5px solid var(--border-strong);
+  font-size: 14px; font-weight: 600; cursor: pointer; background: var(--surface); color: var(--text); margin: 4px 6px 4px 0; }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.banner { border-radius: var(--radius); padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+.banner-warning { background: var(--warning-light); color: var(--warning); }
+.banner-danger  { background: var(--danger-light);  color: var(--danger); }
+.banner-ok      { background: var(--accent-light);  color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 5px 6px; text-align: left; border-top: 0.5px solid var(--border); }
+th { color: var(--text-muted); font-weight: 600; }
+.right { text-align: right; }
+.muted { color: var(--text-muted); }
+#seccion-app { display: none; }
+code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="seccion-login" class="card">
+    <h1>Corregir rango de Núcleo</h1>
+    <p class="sub">Herramienta de Control Acarreos — solo rol master.</p>
+    <label>Correo</label>
+    <input type="email" id="login-email" autocomplete="username">
+    <label>Contraseña</label>
+    <input type="password" id="login-pass" autocomplete="current-password">
+    <button class="btn btn-primary" id="btn-login" onclick="loginUsuario()">Entrar</button>
+    <div id="login-msg" class="banner banner-danger" style="display:none;margin-top:10px;"></div>
+  </div>
+
+  <div id="seccion-app">
+    <div class="card">
+      <h1>Corregir rango de Núcleo</h1>
+      <p class="sub">Sesión: <span id="sesion-correo" class="muted"></span> · <a href="#" onclick="logoutUsuario();return false;">cerrar sesión</a></p>
+      <p class="sub">
+        Corrige el campo <code>rango</code> en tickets de <code>material == 'NUCLEO'</code>:
+        los que van a <code>destino == 'MURO'</code> deben quedar en
+        <b>0.02 a 0.20 ton</b>, y los que van a <code>destino == 'ACOPIO MARINO'</code>
+        deben quedar en <b>0.01 a 0.50 ton</b>. No toca ningún otro campo del ticket.
+        Los tickets pendientes (sin rango capturado todavía) se muestran aparte y
+        NO se tocan.
+      </p>
+      <button class="btn btn-primary" onclick="analizar()">Analizar (solo lectura, no cambia nada todavía)</button>
+      <div id="analizar-error" style="display:none;margin-top:10px;"></div>
+    </div>
+
+    <div id="resultado-analisis"></div>
+  </div>
+
+</div>
+
+<div id="aviso-file-protocol" class="wrap" style="display:none;">
+  <div class="card banner banner-danger" style="margin-top:0;">
+    ⚠️ Estás abriendo este archivo directo desde tu celular/computadora
+    (protocolo <code>file://</code>). Esta herramienta usa módulos de
+    JavaScript para conectarse a Firebase y los navegadores los bloquean en
+    ese modo. Súbela a tu repo de GitHub (junto a <code>index.html</code>) y
+    ábrela desde su URL de GitHub Pages.
+  </div>
+</div>
+<script>
+  if (location.protocol === 'file:') {
+    document.getElementById('aviso-file-protocol').style.display = 'block';
+  }
+</script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, collection, query, where, getDocs, writeBatch }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+// Mismo proyecto de Firebase que index.html — es la misma base de datos.
+const firebaseConfig = {
+  apiKey:            "AIzaSyADUbA3X07prA5yOUzFJX_zVntN88-JMwc",
+  authDomain:        "acarreos-rompeolas.firebaseapp.com",
+  projectId:         "acarreos-rompeolas",
+  storageBucket:     "acarreos-rompeolas.firebasestorage.app",
+  messagingSenderId: "217225530978",
+  appId:             "1:217225530978:web:f742aa093a972401ce4b3b"
+};
+const app  = initializeApp(firebaseConfig);
+const dbF  = getFirestore(app);
+const auth = getAuth(app);
+const COL  = 'acarreos';
+
+// Objetivo de negocio (mismos valores exactos que RANGOS_ACOPIO['NUCLEO']
+// en index.html — si esa tabla cambia, actualizar aquí también).
+const OBJETIVOS = [
+  { destino: 'MURO',          rangoCorrecto: '0.02 a 0.20 ton' },
+  { destino: 'ACOPIO MARINO', rangoCorrecto: '0.01 a 0.50 ton' }
+];
+
+window.loginUsuario = async function () {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const msg   = document.getElementById('login-msg');
+  msg.style.display = 'none';
+  if (!email || !pass) { msg.textContent = 'Ingresa correo y contraseña.'; msg.style.display = 'block'; return; }
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    msg.textContent = 'No se pudo entrar: ' + (e.code || e.message);
+    msg.style.display = 'block';
+  }
+};
+window.logoutUsuario = async function () { await signOut(auth); };
+
+onAuthStateChanged(auth, async (user) => {
+  const secLogin = document.getElementById('seccion-login');
+  const secApp   = document.getElementById('seccion-app');
+  if (!user) { secLogin.style.display = 'block'; secApp.style.display = 'none'; return; }
+
+  let perfil = null;
+  try {
+    const snap = await getDoc(doc(dbF, 'usuarios', user.uid));
+    perfil = snap.exists() ? snap.data() : null;
+  } catch (e) { /* se maneja abajo como no autorizado */ }
+
+  if (!perfil || perfil.status !== 'autorizado' || perfil.rol !== 'master') {
+    await signOut(auth);
+    const msg = document.getElementById('login-msg');
+    msg.textContent = 'Esta herramienta es solo para el rol master.';
+    msg.style.display = 'block';
+    secLogin.style.display = 'block'; secApp.style.display = 'none';
+    return;
+  }
+
+  document.getElementById('sesion-correo').textContent = user.email;
+  secLogin.style.display = 'none'; secApp.style.display = 'block';
+});
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function fmtFecha(fecha1, hora1) {
+  if (!fecha1) return '—';
+  return fecha1 + (hora1 ? ' ' + hora1 : '');
+}
+// Copiado tal cual de index.html (función normalizarRango) — así "0.02 a
+// 0.20" y "0.02 a 0.20 ton" se tratan como el MISMO rango (solo difieren en
+// el sufijo " ton"), igual que ya lo hace el resto de la app al agregar
+// Acopios. Sin esto, esta herramienta marcaría como "por corregir" tickets
+// que en realidad ya tienen el valor correcto, solo con formato distinto.
+function normalizarRango(r) {
+  let s = (r || '').trim().replace(/\s+/g, ' ');
+  if (s.toUpperCase() === 'PENDIENTE') return 'PENDIENTE';
+  s = s.replace(/\s*ton\s*$/i, '').trim();
+  return s ? s + ' ton' : '';
+}
+
+let planCorreccion = []; // [{ ref, docId, destino, rangoActual, rangoNuevo, folio, fecha }]
+
+window.analizar = async function () {
+  const cont   = document.getElementById('resultado-analisis');
+  const errBox = document.getElementById('analizar-error');
+  errBox.style.display = 'none';
+  cont.innerHTML = '<p class="muted">Consultando Firestore…</p>';
+  planCorreccion = [];
+
+  try {
+    let htmlOut = '';
+    for (const { destino, rangoCorrecto } of OBJETIVOS) {
+      const q = query(collection(dbF, COL), where('material', '==', 'NUCLEO'), where('destino', '==', destino));
+      const snap = await getDocs(q);
+
+      const porCorregir = [];
+      const yaCorrectos = [];
+      const pendientesSinRango = [];
+      const distintosActuales = {};
+
+      snap.forEach(d => {
+        const data = d.data();
+        const rangoActual = data.rango;
+        distintosActuales[rangoActual === undefined ? '(sin campo)' : String(rangoActual)] =
+          (distintosActuales[rangoActual === undefined ? '(sin campo)' : String(rangoActual)] || 0) + 1;
+
+        if (rangoActual === 'PENDIENTE' || rangoActual === undefined || rangoActual === null || rangoActual === '') {
+          pendientesSinRango.push({ docId: d.id, folio: data.folio, boleta: data.boleta });
+          return;
+        }
+        // Comparar NORMALIZADO, no el texto crudo — "0.02 a 0.20" y
+        // "0.02 a 0.20 ton" son el mismo rango, solo cambia el sufijo.
+        if (normalizarRango(rangoActual) === normalizarRango(rangoCorrecto)) {
+          yaCorrectos.push(d.id);
+          return;
+        }
+        const item = { ref: d.ref, docId: d.id, destino, rangoActual, rangoNuevo: rangoCorrecto,
+                        folio: data.folio, boleta: data.boleta, fecha1: data.fecha1, hora1: data.hora1 };
+        porCorregir.push(item);
+        planCorreccion.push(item);
+      });
+
+      htmlOut += `<div class="card"><h2>Núcleo → ${escHtml(destino)}</h2>
+        <p class="sub">${snap.size} ticket(s) encontrados en total · rango correcto: <b>${escHtml(rangoCorrecto)}</b></p>
+        <table><thead><tr><th>Valor actual de "rango"</th><th class="right">Cuántos tickets</th></tr></thead><tbody>` +
+        Object.entries(distintosActuales).map(([val, n]) =>
+          `<tr><td>${escHtml(val)}</td><td class="right">${n}</td></tr>`
+        ).join('') + `</tbody></table>
+        <p style="margin-top:10px;">
+          <span style="color:var(--accent);">✅ Ya correctos: ${yaCorrectos.length}</span> ·
+          <span style="color:var(--danger);">🔴 Por corregir: ${porCorregir.length}</span> ·
+          <span class="muted">⏳ Pendientes sin rango capturado (no se tocan): ${pendientesSinRango.length}</span>
+        </p>`;
+
+      if (porCorregir.length > 0) {
+        htmlOut += `<table><thead><tr><th>Folio</th><th>Boleta</th><th>Fecha</th><th>Rango actual</th><th>Rango nuevo</th></tr></thead><tbody>` +
+          porCorregir.slice(0, 50).map(it =>
+            `<tr><td>${escHtml(it.folio || '—')}</td><td>${escHtml(it.boleta || '—')}</td><td>${escHtml(fmtFecha(it.fecha1, it.hora1))}</td><td>${escHtml(it.rangoActual)}</td><td>${escHtml(it.rangoNuevo)}</td></tr>`
+          ).join('') + `</tbody></table>`;
+        if (porCorregir.length > 50) htmlOut += `<p class="sub">…y ${porCorregir.length - 50} más (se corrigen todos, aquí solo se muestran los primeros 50).</p>`;
+      }
+      htmlOut += `</div>`;
+    }
+
+    htmlOut += `<div class="card">`;
+    if (planCorreccion.length === 0) {
+      htmlOut += `<div class="banner banner-ok">✅ No hay nada que corregir — todos los tickets de Núcleo hacia Muro y Acopio Marino ya tienen el rango correcto.</div>`;
+    } else {
+      htmlOut += `<div class="banner banner-warning">Se van a corregir <b>${planCorreccion.length}</b> ticket(s) en total. Esto solo cambia el campo <code>rango</code> — no toca toneladas, fechas, placas ni ningún otro dato.</div>
+        <button class="btn btn-primary" onclick="aplicarCorreccion()">Aplicar corrección a ${planCorreccion.length} ticket(s)</button>`;
+    }
+    htmlOut += `<div id="aplicar-msg" style="margin-top:10px;"></div></div>`;
+
+    cont.innerHTML = htmlOut;
+  } catch (e) {
+    console.error(e);
+    errBox.innerHTML = '<div class="banner banner-danger">Error al analizar: ' + escHtml(e.message || String(e)) + '</div>';
+    errBox.style.display = 'block';
+    cont.innerHTML = '';
+  }
+};
+
+window.aplicarCorreccion = async function () {
+  const msg = document.getElementById('aplicar-msg');
+  if (!confirm('Esto va a escribir en Firestore ahora mismo, sobre ' + planCorreccion.length + ' ticket(s) reales. ¿Continuar?')) return;
+
+  msg.innerHTML = '<p class="muted">Aplicando…</p>';
+  try {
+    // Firestore permite máximo 500 escrituras por batch.
+    for (let i = 0; i < planCorreccion.length; i += 500) {
+      const lote = planCorreccion.slice(i, i + 500);
+      const batch = writeBatch(dbF);
+      lote.forEach(it => batch.update(it.ref, { rango: it.rangoNuevo }));
+      await batch.commit();
+    }
+    msg.innerHTML = `<div class="banner banner-ok">✅ Corregidos ${planCorreccion.length} ticket(s).
+      <br><br><b>Falta un paso:</b> los totales de Avances/Acopios que ya se habían calculado con el rango
+      viejo siguen desactualizados hasta que vayas a
+      <b>Admin → Herramientas de base de datos → "Recalcular totales de Avances/Acopios"</b> en la app normal
+      (esta herramienta a propósito NO toca esos totales directamente, para no arriesgar un cálculo manual mal hecho).</div>`;
+    planCorreccion = [];
+  } catch (e) {
+    console.error(e);
+    msg.innerHTML = '<div class="banner banner-danger">Error al aplicar: ' + escHtml(e.message || String(e)) + '</div>';
+  }
+};
+</script>
+</body>
+</html>

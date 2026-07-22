@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subir Programa 2026 — Control Acarreos</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg: #f5f4f0; --surface: #ffffff;
+  --border: rgba(0,0,0,0.12); --border-strong: rgba(0,0,0,0.28);
+  --text: #1a1a18; --text-muted: #5f5e5a;
+  --accent: #0f6e56; --accent-light: #e1f5ee; --accent-mid: #1d9e75;
+  --danger: #a32d2d; --danger-light: #fcebeb;
+  --warning: #854f0b; --warning-light: #faeeda;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 16px; font-size: 15px; }
+.wrap { max-width: 720px; margin: 0 auto; }
+.card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 0 0 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+p.sub { color: var(--text-muted); font-size: 13px; margin: 0 0 16px; }
+label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+input[type=email], input[type=password] {
+  width: 100%; height: 40px; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  padding: 0 10px; font-size: 14px; background: var(--surface); color: var(--text); margin-bottom: 10px;
+}
+input[type=file] { width: 100%; margin-bottom: 12px; }
+.btn { display: inline-block; height: 42px; padding: 0 18px; border-radius: var(--radius); border: 0.5px solid var(--border-strong);
+  font-size: 14px; font-weight: 600; cursor: pointer; background: var(--surface); color: var(--text); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-danger { background: var(--danger-light); color: var(--danger); border-color: rgba(163,45,45,0.3); }
+.banner { border-radius: var(--radius); padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+.banner-warning { background: var(--warning-light); color: var(--warning); }
+.banner-danger  { background: var(--danger-light);  color: var(--danger); }
+.banner-ok      { background: var(--accent-light);  color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 5px 6px; text-align: left; border-top: 0.5px solid var(--border); }
+th { color: var(--text-muted); font-weight: 600; }
+.right { text-align: right; }
+.muted { color: var(--text-muted); }
+#seccion-app { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="seccion-login" class="card">
+    <h1>Subir Programa 2026</h1>
+    <p class="sub">Herramienta de Control Acarreos — solo rol master.</p>
+    <label>Correo</label>
+    <input type="email" id="login-email" autocomplete="username">
+    <label>Contraseña</label>
+    <input type="password" id="login-pass" autocomplete="current-password">
+    <button class="btn btn-primary" id="btn-login" onclick="loginUsuario()">Entrar</button>
+    <div id="login-msg" class="banner banner-danger" style="display:none;margin-top:10px;"></div>
+  </div>
+
+  <div id="seccion-app">
+    <div class="card">
+      <h1>Subir Programa 2026</h1>
+      <p class="sub">Sesión: <span id="sesion-correo" class="muted"></span> · <a href="#" onclick="logoutUsuario();return false;">cerrar sesión</a></p>
+
+      <h2>1. Elige el Excel</h2>
+      <p class="sub">
+        Debe traer una hoja llamada <b>in</b>, con encabezado en la fila 1
+        (columna A vacía, columna B "CANTIDAD", y de la columna C en adelante
+        una fecha por columna). Cada bloque empieza con una fila de sección
+        (p. ej. "CUERPO 1", "MORRO", "MURO TARQUINA") seguida de sus filas de
+        material (NUCLEO, CORAZA, etc.) hasta la siguiente sección.
+      </p>
+      <input type="file" id="input-excel" accept=".xlsx,.xls,.csv">
+      <button class="btn btn-primary" onclick="analizarExcel()">Analizar</button>
+      <div id="analizar-error" style="display:none;margin-top:10px;"></div>
+    </div>
+
+    <div id="resultado-analisis"></div>
+  </div>
+
+</div>
+
+<div id="aviso-file-protocol" class="wrap" style="display:none;">
+  <div class="card banner banner-danger" style="margin-top:0;">
+    ⚠️ Estás abriendo este archivo directo desde tu computadora/celular
+    (protocolo <code>file://</code>). Esta herramienta usa módulos de
+    JavaScript para conectarse a Firebase, y los navegadores los BLOQUEAN
+    en ese modo — por eso "no hace nada", con cualquier archivo que subas.
+    Sube este HTML a tu repo de GitHub (junto a <code>index.html</code>) y
+    ábrelo desde su URL de GitHub Pages, igual que abres la app normal.
+  </div>
+</div>
+<script>
+  if (location.protocol === 'file:') {
+    document.getElementById('aviso-file-protocol').style.display = 'block';
+  }
+</script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+// Mismo proyecto de Firebase que index.html — NO cambiar sin cambiar
+// también index.html, son la misma base de datos.
+const firebaseConfig = {
+  apiKey:            "AIzaSyADUbA3X07prA5yOUzFJX_zVntN88-JMwc",
+  authDomain:        "acarreos-rompeolas.firebaseapp.com",
+  projectId:         "acarreos-rompeolas",
+  storageBucket:     "acarreos-rompeolas.firebasestorage.app",
+  messagingSenderId: "217225530978",
+  appId:             "1:217225530978:web:f742aa093a972401ce4b3b"
+};
+const app  = initializeApp(firebaseConfig);
+const dbF  = getFirestore(app);
+const auth = getAuth(app);
+
+window.loginUsuario = async function () {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const msg   = document.getElementById('login-msg');
+  msg.style.display = 'none';
+  if (!email || !pass) { msg.textContent = 'Ingresa correo y contraseña.'; msg.style.display = 'block'; return; }
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    msg.textContent = 'No se pudo entrar: ' + (e.code || e.message);
+    msg.style.display = 'block';
+  }
+};
+window.logoutUsuario = async function () { await signOut(auth); };
+
+onAuthStateChanged(auth, async (user) => {
+  const secLogin = document.getElementById('seccion-login');
+  const secApp   = document.getElementById('seccion-app');
+  if (!user) { secLogin.style.display = 'block'; secApp.style.display = 'none'; return; }
+
+  // Gate: solo rol master puede usar esta herramienta (mismo criterio que
+  // el resto de descargas/cargas masivas de la app — ver INSTRUCCIONESAPP.md).
+  let perfil = null;
+  try {
+    const snap = await getDoc(doc(dbF, 'usuarios', user.uid));
+    perfil = snap.exists() ? snap.data() : null;
+  } catch (e) { /* se maneja abajo como no autorizado */ }
+
+  if (!perfil || perfil.status !== 'autorizado' || perfil.rol !== 'master') {
+    await signOut(auth);
+    const msg = document.getElementById('login-msg');
+    msg.textContent = 'Esta herramienta es solo para el rol master.';
+    msg.style.display = 'block';
+    secLogin.style.display = 'block'; secApp.style.display = 'none';
+    return;
+  }
+
+  document.getElementById('sesion-correo').textContent = user.email;
+  secLogin.style.display = 'none'; secApp.style.display = 'block';
+});
+
+// ── Catálogo de materiales conocidos (espejo de ORDEN_MATERIALES_METAS +
+// COLOCACION MARINA/TERRESTRE/REZAGA de index.html). Cualquier fila cuya
+// columna A NO esté en este catálogo se trata como el INICIO de una nueva
+// sección/cuerpo (CUERPO 1, CUERPO 2, MORRO, MURO TARQUINA, EXTRAORDINARIOS,
+// o cualquier nombre nuevo que se agregue después) — así no hace falta
+// mantener una lista fija de cuerpos, la herramienta se adapta sola.
+const MATERIALES_CONOCIDOS = new Set([
+  'NUCLEO', 'SECUNDARIA 1', 'SECUNDARIA 2', 'CORAZA', 'BERMA',
+  'BERMA DE APOYO', 'COLOCACION MARINA', 'COLOCACION TERRESTRE', 'REZAGA'
+]);
+const normalizar = (s) => (s || '').toString().trim().toUpperCase()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+
+function esNumero(v) {
+  return typeof v === 'number' && !isNaN(v);
+}
+function claveMes(fecha) {
+  // fecha ya viene como objeto Date real (cellDates:true al leer el xlsx),
+  // así que esto NO vuelve a interpretar texto — usa el valor de fecha tal
+  // cual está guardado en la celda, sin ambigüedad DD/MM vs MM/DD.
+  return fecha.getFullYear() + '-' + String(fecha.getMonth() + 1).padStart(2, '0');
+}
+
+let programaAnalizado = null; // se llena en analizarExcel(), se sube en subirAFirestore()
+
+window.analizarExcel = async function () {
+  const input   = document.getElementById('input-excel');
+  const cont    = document.getElementById('resultado-analisis');
+  const errBox  = document.getElementById('analizar-error');
+  errBox.style.display = 'none';
+  cont.innerHTML = '';
+  if (!input.files[0]) { alert('Elige un archivo primero.'); return; }
+
+  try {
+    await analizarArchivo(input.files[0], cont);
+  } catch (e) {
+    console.error(e);
+    errBox.innerHTML = '<div class="banner banner-danger">Error al analizar el archivo: ' + escHtml(e.message || String(e)) + '</div>';
+    errBox.style.display = 'block';
+  }
+};
+
+async function analizarArchivo(archivo, cont) {
+  const buf = await archivo.arrayBuffer();
+  const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+  const nombreHoja = wb.SheetNames.includes('in') ? 'in' : wb.SheetNames[0];
+  const ws = wb.Sheets[nombreHoja];
+  const filas = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+
+  const avisos = [];
+  if (nombreHoja !== 'in') avisos.push('⚠️ No encontré una hoja llamada "in" — usé la primera hoja: "' + nombreHoja + '".');
+
+  // 1) Encabezados de fecha, columna C (índice 2) en adelante.
+  const encabezado = filas[0] || [];
+  const columnasFecha = []; // [{ col, key, fechaOriginal }]
+  const clavesVistas = new Map(); // key -> [columnas] para detectar duplicados
+  for (let c = 2; c < encabezado.length; c++) {
+    const val = encabezado[c];
+    if (val instanceof Date) {
+      const key = claveMes(val);
+      columnasFecha.push({ col: c, key, fechaOriginal: val });
+      if (!clavesVistas.has(key)) clavesVistas.set(key, []);
+      clavesVistas.get(key).push(c);
+    }
+  }
+  clavesVistas.forEach((cols, key) => {
+    if (cols.length > 1) {
+      avisos.push('🔴 Las columnas ' + cols.map(c => XLSX.utils.encode_col(c)).join(', ') +
+        ' del encabezado caen en el MISMO mes (' + key + '). Esto es exactamente el bug de' +
+        ' DD/MM vs MM/DD que ya se corrigió una vez — revisa esas fechas en el Excel antes de subir.');
+    }
+  });
+
+  // 2) Recorrer filas 2..fin, detectando secciones (cuerpos) y materiales.
+  const cuerpos = {};
+  let seccionActual = null;
+  for (let r = 1; r < filas.length; r++) {
+    const fila = filas[r] || [];
+    const nombreCelda = fila[0];
+    if (nombreCelda === null || nombreCelda === undefined || String(nombreCelda).trim() === '') continue;
+    const nombre = String(nombreCelda).trim();
+    const nombreNorm = normalizar(nombre);
+
+    if (!MATERIALES_CONOCIDOS.has(nombreNorm)) {
+      // Nueva sección/cuerpo.
+      seccionActual = nombre;
+      if (!cuerpos[seccionActual]) cuerpos[seccionActual] = {};
+      continue;
+    }
+    if (!seccionActual) {
+      avisos.push('🔴 Fila ' + (r + 1) + ' ("' + nombre + '") es un material pero no venía después de ninguna sección — se ignoró.');
+      continue;
+    }
+    // Fila de material.
+    const cantidadTotal = esNumero(fila[1]) ? fila[1] : 0;
+    const meses = {};
+    columnasFecha.forEach(({ col, key }) => {
+      const v = fila[col];
+      if (esNumero(v)) meses[key] = (meses[key] || 0) + v; // por si algún día hay 2 columnas del mismo mes
+    });
+    cuerpos[seccionActual][nombre] = { cantidad_total: cantidadTotal, meses };
+  }
+
+  programaAnalizado = { cuerpos, actualizado: Date.now() };
+
+  // 3) Preview.
+  let html = '';
+  avisos.forEach(a => {
+    html += '<div class="banner ' + (a.startsWith('🔴') ? 'banner-danger' : 'banner-warning') + '">' + escHtml(a) + '</div>';
+  });
+  html += '<div class="card"><h2>Meses detectados (' + columnasFecha.length + ')</h2>' +
+    '<table><thead><tr><th>Columna</th><th>Mes</th></tr></thead><tbody>' +
+    columnasFecha.map(({ col, key }) => '<tr><td>' + XLSX.utils.encode_col(col) + '</td><td>' + key + '</td></tr>').join('') +
+    '</tbody></table></div>';
+
+  html += '<div class="card"><h2>Secciones y materiales detectados</h2>';
+  Object.entries(cuerpos).forEach(([seccion, mats]) => {
+    const nMats = Object.keys(mats).length;
+    html += '<div style="margin-bottom:14px;">' +
+      '<div style="font-weight:700;margin-bottom:4px;">' + escHtml(seccion) + ' <span class="muted">(' + nMats + ' material' + (nMats === 1 ? '' : 'es') + ')</span></div>';
+    if (nMats === 0) {
+      html += '<div class="banner banner-warning">Sin materiales — si esto no es una sección real (p. ej. un nombre suelto o un typo), revisa la fila en el Excel.</div>';
+    } else {
+      html += '<table><thead><tr><th>Material</th><th class="right">Cantidad total</th><th class="right">Meses con dato</th></tr></thead><tbody>';
+      Object.entries(mats).forEach(([mat, datos]) => {
+        html += '<tr><td>' + escHtml(mat) + '</td><td class="right">' + datos.cantidad_total.toLocaleString('es-MX') + '</td><td class="right">' + Object.keys(datos.meses).length + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  const hayErroresGraves = avisos.some(a => a.startsWith('🔴'));
+  html += '<div class="card">' +
+    (hayErroresGraves
+      ? '<div class="banner banner-danger">Hay avisos 🔴 arriba — revísalos antes de subir. El botón de subir sigue disponible, pero no se recomienda continuar sin corregirlos.</div>'
+      : '<div class="banner banner-ok">✅ Sin duplicados de mes ni filas huérfanas detectadas.</div>') +
+    '<button class="btn btn-primary" onclick="subirAFirestore()">Subir a Firestore (resumenes/programa_2026)</button>' +
+    '<div id="subir-msg" style="margin-top:10px;"></div>' +
+    '</div>';
+
+  cont.innerHTML = html;
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+window.subirAFirestore = async function () {
+  if (!programaAnalizado) { alert('Analiza un Excel primero.'); return; }
+  if (!confirm('Esto REEMPLAZA por completo el documento resumenes/programa_2026 actual. ¿Continuar?')) return;
+  const msg = document.getElementById('subir-msg');
+  msg.textContent = 'Subiendo…';
+  try {
+    await setDoc(doc(dbF, 'resumenes', 'programa_2026'), programaAnalizado);
+    msg.innerHTML = '<div class="banner banner-ok">✅ Subido. La pestaña Metas de la app va a leer esta versión en su próxima recarga (o con el botón "🔄 Actualizar").</div>';
+  } catch (e) {
+    msg.innerHTML = '<div class="banner banner-danger">Error al subir: ' + escHtml(e.message) + '</div>';
+  }
+};
+</script>
+</body>
+</html>

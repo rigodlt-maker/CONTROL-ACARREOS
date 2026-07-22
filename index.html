@@ -7509,7 +7509,8 @@ window.eliminarRegistroFilaBascula = async function(id, btn) {
     // (línea ~620) detecta el borrado y dispara onFilaBasculaCambio() solo.
   } catch (e) {
     console.warn('No se pudo eliminar el registro de fila_bascula:', e);
-    alert('No se pudo eliminar. Revisa tu conexión e intenta de nuevo.');
+    alert('No se pudo eliminar (' + (e.code || 'error desconocido') + '): ' + (e.message || e) +
+          '\n\nMándale una captura de este mensaje a Claude para diagnosticarlo.');
     if (btn) btn.disabled = false;
   }
 };

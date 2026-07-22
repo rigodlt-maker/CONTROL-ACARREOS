@@ -2512,6 +2512,18 @@ window.dbFilaBasculaPorRango = async function (desdeTs, hastaTs) {
     where('t1_fila_ts', '<=', hastaTs)));
   return snap.docs.map(d => d.data());
 };
+
+// 21-jul-2026 — Puente que faltaba: eliminarRegistroFilaBascula() (botón 🗑️
+// de master en Fila Báscula, vive en el <script> normal de más abajo)
+// llamaba a deleteDoc(doc(...)) directo, pero esos son imports de ESTE
+// módulo y no existen fuera de él — por eso Jesús veía "deleteDoc is not
+// defined" al intentar borrar un camión de la fila, aunque SÍ podía borrar
+// tickets normales (esos se borran más arriba, todavía dentro del propio
+// <script type="module">, sin necesitar puente). Mismo criterio que el
+// resto de puentes dbFilaBascula* de esta sección.
+window.dbFilaBasculaEliminar = async function (filaId) {
+  return await deleteDoc(doc(db_f, 'fila_bascula', filaId));
+};
 </script>
 </head>
 <body>
@@ -7504,7 +7516,7 @@ window.eliminarRegistroFilaBascula = async function(id, btn) {
   if (!confirm('¿Eliminar este camión de la fila de báscula? Esta acción no se puede deshacer.')) return;
   if (btn) btn.disabled = true;
   try {
-    await deleteDoc(doc(db_f, COL_FILA_BASCULA, id));
+    await window.dbFilaBasculaEliminar(id);
     // No hace falta repintar a mano: el listener global de fila_bascula
     // (línea ~620) detecta el borrado y dispara onFilaBasculaCambio() solo.
   } catch (e) {

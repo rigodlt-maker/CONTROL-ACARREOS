@@ -117,6 +117,11 @@ puntual que estás tocando, en vez de leer las 35 secciones de corrido.
   bitácora (sección 30.4, y el caso real de la sección 35):** verificar
   contra `index.html` real con `grep` antes de programar. Pasó al revés
   también: la bitácora afirmó que modo nocturno ya existía y era falso.
+  **Aplica igual en la dirección contraria (sección 47): afirmar que
+  algo "no se ha construido todavía" sin haber hecho ese mismo `grep`
+  es el mismo error con el signo cambiado** — pasó con el fix de
+  lecturas masivas de Firestore (sección 10.3), ya construido desde
+  15-jul, declarado por error como pendiente en la sección 46.
 - **Verificación de sintaxis obligatoria antes de entregar (secciones
   24.4/30.5):** `node --check` sobre el módulo y los `<script>` normales
   + `grep` de IDs duplicados, siempre, incluso para cambios triviales.
@@ -3794,3 +3799,85 @@ H-04, ver arriba).
 `manifest.json` no se modificó. El backlog grande (Firestore, estilos
 inline, `alert()`) tampoco — queda pendiente para cuando Jesús lo pida,
 después de esta ronda de correcciones mecánicas.
+
+---
+
+## 47. 22-jul-2026 — Segunda ronda de auditorías (verificación de la sección 46) + 🔴 corrección de un error propio: el fix de lecturas masivas de Firestore (H-01) SÍ estaba construido
+
+### Las correcciones mecánicas de la sección 46: confirmadas sin regresiones
+Jesús le pidió a las mismas dos IAs que revisaran los cambios de la
+sección 46 (`SegundaAuditoria1.md`, `SegundaAuditoria2.md`). Ambas
+confirman, de forma independiente, que los 8 fixes mecánicos quedaron
+bien aplicados y sin efectos secundarios: `</div>` balanceado (513/513
+fuera de `<script>`, mismo método de conteo que ya se usó en la sección
+46), 0 referencias a `SIXSIGMA.md`, 0 `--` residual en comentarios, los
+5 colores de Fila Báscula + banner PWA ya usan variables CSS, zoom
+liberado sin romper nada, `sw.js` con `jsdelivr.net` + `CACHE_NAME` v4,
+`manifest.json` intacto (pospuesto a propósito). `node --check` limpio
+en los 4 bloques `<script>` y en `sw.js`. Cero IDs duplicados. Cero
+regresiones nuevas detectadas por ninguna de las dos.
+
+### 🔴 Error real de Claude, encontrado por `SegundaAuditoria1.md` (hallazgo R-1) — corregido
+La sección 46 (escrita hoy, antes de esta) afirmaba que la solución al
+hallazgo H-01 de la primera Auditoría 1 (lecturas masivas de Firestore
+por panel) **"nunca se construyó"** y la dejaba en el backlog grande.
+**Esto es falso.** Ya estaba implementada desde el **15-jul-2026**,
+documentada en la sección 10.3 de este mismo archivo — que Claude no
+volvió a revisar antes de escribir esa frase en la sección 46, y
+tampoco verificó contra el código en ese momento (rompiendo su propia
+disciplina de "verificar contra `index.html` real antes de afirmar algo
+sobre qué existe o no", sección 30.4/44).
+
+**Verificado ahora, con `grep` directo sobre `index.html`:**
+- `aplicarResumen()` (línea ~1133) escribe el mismo `payload` con
+  `increment()` en DOS documentos: `resumenes/{año-mes}` (como
+  siempre) Y `resumenes/historico_global` (línea ~1243-1254).
+- `asegurarHistoricoGlobal(idBanner)` (línea ~4779) hace **una sola
+  lectura** de `resumenes/historico_global`, cacheada en
+  `window.historicoGlobalData`, y pinta un banner de texto ("📌 Total
+  histórico: N viaje(s) · X ton").
+- Se llama exactamente desde los 4 paneles que reportaba el hallazgo
+  original: `renderDashboard()` (Gráficos, línea 5755),
+  `initResumenTab()` (línea 6264), `initBancosTab()` (línea 8962),
+  `initReportesTab()` (línea 9544).
+
+**Lo que SÍ sigue pendiente de verdad** (esto es lo único real del
+backlog de Firestore, no todo el mecanismo):
+1. El botón "Ver TODO el histórico" (con `traerTodoFirestore()` y los 3
+   cachés de detalle `dashHistoricoCompleto`/`resumenHistoricoCompleto`/
+   `reportesHistoricoCompleto`) sigue sin cooldown ni tope duro — sigue
+   siendo el hallazgo H-05 de la Auditoría 1 original, sin construir.
+   Ya no es crítico como antes, porque ahora es una acción explícita del
+   usuario (clic en un botón), no algo que pase solo al entrar al panel.
+2. Esos 3 cachés de detalle siguen separados por panel (no se
+   unificaron en uno solo) — mejora posible, no urgente.
+3. **Acción pendiente de Jesús, no de código:** correr el botón
+   "Recalcular total histórico" (Admin) **una sola vez** en producción,
+   si no se ha corrido todavía — sin eso, el banner de "Total histórico"
+   se queda mostrando "(pendiente respaldo inicial)" en vez del total
+   real acumulado desde el inicio del proyecto. No hay forma de que
+   Claude confirme esto desde este entorno (no tiene acceso a
+   Firestore) — hay que confirmarlo con Jesús directamente.
+
+### Observación menor de `SegundaAuditoria1.md` (no urgente)
+Reporta 9 selectores CSS repetidos dentro de los bloques `<style>`
+(`.active`, `.open`, `.nav-drawer`, `.lbl`, `.val`, entre otros) — la
+propia auditoría aclara que probablemente son variantes de
+tema/estado, no duplicados accidentales de la sección 46. Queda anotado
+para revisar cuando se aborde el refactor de CSS (H-02 del backlog
+grande), sin acción ahora.
+
+### Sin tocar
+Ningún cambio de código en esta sección — todo lo de aquí es
+verificación y corrección de la BITÁCORA, no de `index.html`/`sw.js`/
+`manifest.json`. El backlog grande sigue igual que en la sección 46,
+solo que ahora acotado correctamente (ver arriba): el hallazgo de
+lecturas masivas por panel YA no es "sin construir", es "construido,
+con 2 mejoras menores pendientes".
+
+### Lección agregada a la sección 0.5
+Se refuerza (no se duplica, ya existía en 30.4/44): antes de escribir
+en la bitácora que algo "no se ha construido" o "sigue pendiente",
+grep del código real primero — sobre todo si el tema ya tiene una
+sección numerada anterior en este mismo archivo (en este caso, la 10.3
+ya lo desmentía y estaba a 656 líneas de donde se escribió el error).

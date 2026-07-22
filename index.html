@@ -8836,9 +8836,34 @@ window.initMetasTab = async function(forzar) {
     }
     const semaforoPct = (pct) => pct === null ? '⚪' : pct >= 90 ? '🟢' : pct >= 70 ? '🟡' : '🔴';
 
+    // 21-jul-2026 (a petición de Jesús, con foto de la pestaña Metas en el
+    // celular): el orden alfabético ponía "EXTRAORDINARIOS" y "MORRO" antes
+    // de tiempo (CUERPO 5, EXTRAORDINARIOS, MORRO, MURO TARQUINA) y además
+    // "EXTRAORDINARIOS" se pintaba como una tarjeta más con tabla vacía —
+    // pero no es un Cuerpo con materiales propios, es la ETIQUETA que
+    // describe a Muro Tarquina (Jesús: "el muro tarquina es un concepto
+    // extraordinario"). Ahora: (1) orden de negocio fijo en vez de
+    // alfabético, con cualquier Cuerpo nuevo no listado al final; (2) antes
+    // de pintar la tarjeta de un Cuerpo marcado como "extraordinario" se
+    // inserta un separador con esa etiqueta, en vez de una tarjeta propia;
+    // (3) cualquier Cuerpo sin materiales (0 filas, como el renglón suelto
+    // "EXTRAORDINARIOS" del Excel) ya no se pinta como tarjeta vacía.
+    const ORDEN_CUERPOS_METAS = ['CUERPO 1', 'CUERPO 2', 'CUERPO 3', 'CUERPO 4', 'CUERPO 5', 'MORRO', 'MURO TARQUINA'];
+    const posCuerpo = (c) => {
+      const i = ORDEN_CUERPOS_METAS.indexOf((c || '').toUpperCase());
+      return i === -1 ? ORDEN_CUERPOS_METAS.length : i;
+    };
+    const SECCIONES_EXTRAORDINARIAS = new Set(['MURO TARQUINA']);
+
     let html = '';
-    Object.keys(programa.cuerpos).sort().forEach(cuerpo => {
+    Object.keys(programa.cuerpos)
+      .sort((a, b) => posCuerpo(a) - posCuerpo(b) || a.localeCompare(b))
+      .forEach(cuerpo => {
       const mats = programa.cuerpos[cuerpo];
+      if (Object.keys(mats).length === 0) return; // sin materiales: no es un Cuerpo real, no se pinta tarjeta (p. ej. el renglón "EXTRAORDINARIOS" del Excel)
+      if (SECCIONES_EXTRAORDINARIAS.has((cuerpo || '').toUpperCase())) {
+        html += `<div style="margin:18px 0 8px;padding:6px 10px;border-radius:8px;background:var(--accent-light);color:var(--accent);font-weight:700;font-size:12px;letter-spacing:0.5px;text-transform:uppercase;">Extraordinarios</div>`;
+      }
       html += `<div class="chart-card" style="margin-bottom:12px;">
         <h4 style="margin:0 0 10px;">${cuerpo}</h4>
         <div style="overflow-x:auto;">

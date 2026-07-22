@@ -17,7 +17,7 @@
 // todo. Si no subes el número, el navegador puede seguir sirviendo el
 // index.html viejo desde caché aunque ya hayas subido uno nuevo al hosting.
 
-const CACHE_NAME = 'control-acarreos-v3';
+const CACHE_NAME = 'control-acarreos-v4';
 
 const APP_SHELL = [
   './',
@@ -66,7 +66,8 @@ self.addEventListener('fetch', (event) => {
     url.includes('firebaseio.com') ||
     url.includes('googleapis.com') ||
     url.includes('gstatic.com') ||
-    url.includes('cdnjs.cloudflare.com');
+    url.includes('cdnjs.cloudflare.com') ||
+    url.includes('cdn.jsdelivr.net');
 
   if (esFirebaseOExterno || event.request.method !== 'GET') {
     return; // deja que el navegador maneje la petición normalmente, sin intervenir

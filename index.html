@@ -19,7 +19,7 @@
   } catch (e) { /* si falla (ej. localStorage bloqueado), se queda en claro por default */ }
 })();
 </script>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -32,7 +32,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&amp;display=swap" rel="stylesheet">
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -505,7 +505,7 @@ let isInitialized  = false;
 let currentUser    = null;
 let currentUserDoc = null;
 let ventanaDias    = parseInt(localStorage.getItem('db_ventana_dias') || '30', 10);
-// Six Sigma Bloque A (ver SIXSIGMA.md §5): arranca en el primer focus sobre
+// Six Sigma Bloque A (ver INSTRUCCIONESAPP.md §5): arranca en el primer focus sobre
 // f-fecha1 y se limpia en clearForm() para que cada ticket tenga su propio
 // tiempo de captura, sin arrastrar el del ticket anterior.
 window.tiempoInicioCaptura = null;
@@ -689,7 +689,7 @@ onAuthStateChanged(auth, async (user) => {
       bancos:     esAdminOMaster || esCoordinador || esVisor,
       metas:      esAdminOMaster || esCoordinador || esVisor,
       excel:      esAdminOMaster || esCoordinador || esVisor,
-      sixsigma:   esMaster, // Six Sigma Bloque B.1: único rol con acceso, ver SIXSIGMA.md sección 1
+      sixsigma:   esMaster, // Six Sigma Bloque B.1: único rol con acceso, ver INSTRUCCIONESAPP.md sección 1
       tendencia:  esMaster || esVisor, // 11.4 (18-jul-2026): análisis de tendencia R², visor y master
       auditar:    esAdminOMaster || esCoordinador, // 32.7 (21-jul-2026): confirmado por Jesús — coordinador + admin + master
       admin:      esAdminOMaster
@@ -2030,7 +2030,7 @@ async function confirmarLecturaCompleta(desde, hasta) {
 }
 window.confirmarLecturaCompleta = confirmarLecturaCompleta;
 
-// ── Six Sigma Bloque A: reloj de captura no invasivo (ver SIXSIGMA.md §5) ──
+// ── Six Sigma Bloque A: reloj de captura no invasivo (ver INSTRUCCIONESAPP.md §5) ──
 // Se dispara con el primer focus en f-fecha1 (decidido con Jesús el
 // 13/07/2026). Solo marca la primera vez — si el capturista vuelve a tocar
 // el campo no se reinicia, para que el tiempo sea desde que empezó de
@@ -2489,7 +2489,7 @@ window.dbUsuariosListar = async function () {
 // Six Sigma Bloque B.1: ÚNICA consulta permitida sobre toda la colección
 // stats_analisis, y solo acotada por rango de fecha (captura_fin_ts, que
 // siempre existe) — se dispara nada más con el botón de descarga, nunca
-// como listener ni para pintar los KPIs en pantalla (ver SIXSIGMA.md
+// como listener ni para pintar los KPIs en pantalla (ver INSTRUCCIONESAPP.md
 // sección 2, lección de BOT.MD sección 14).
 window.dbStatsAnalisisPorRango = async function (desdeTs, hastaTs) {
   const snap = await getDocs(query(collection(db_f, 'stats_analisis'),
@@ -2532,7 +2532,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
      PANTALLA DE INICIO (SPLASH) — animacion de grua + logo INDI.
      Se muestra por encima de TODO (incluso #fb-loading) al abrir
      la app y se retira sola (fade + display:none) sin recargar ni
-     navegar a otra pagina -- a diferencia del archivo original, que
+     navegar a otra pagina — a diferencia del archivo original, que
      hacia un redirect a index.html; aqui ya estamos dentro de
      index.html, asi que el flujo normal de conexion/login sigue su
      curso por debajo, en paralelo, exactamente igual que siempre.
@@ -3907,7 +3907,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
 </div>
 
 <!-- Six Sigma Bloque B.1: panel restringido a esMaster (ver visibilidadPorTab
-     y SIXSIGMA.md sección "Bloque B.1"). Los indicadores en pantalla salen
+     y INSTRUCCIONESAPP.md sección "Bloque B.1"). Los indicadores en pantalla salen
      SIEMPRE de resumenes/stats_analisis (agregado con increment()), nunca de
      una consulta a toda la colección stats_analisis — esa consulta completa
      solo ocurre en la descarga puntual a Excel, acotada por rango de fecha. -->
@@ -4177,8 +4177,6 @@ window.dbFilaBasculaEliminar = async function (filaId) {
   </div>
 </div>
 
-</div>
-
 <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
   <div class="modal">
     <div class="modal-header">
@@ -4220,7 +4218,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
   <span id="sync-msg">Sincronizando…</span>
 </div>
 
-<div id="pwa-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;background:#0f6e56;color:white;padding:12px 16px;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 12px rgba(0,0,0,0.2);">
+<div id="pwa-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;background:var(--accent);color:white;padding:12px 16px;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 12px rgba(0,0,0,0.2);">
   <div style="display:flex;align-items:center;gap:10px;">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
     <div>
@@ -4230,7 +4228,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
   </div>
   <div style="display:flex;gap:8px;flex-shrink:0">
     <button onclick="dismissPWA()" style="background:rgba(255,255,255,0.2);border:none;color:white;padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Ahora no</button>
-    <button onclick="installPWA()" style="background:white;border:none;color:#0f6e56;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">Instalar</button>
+    <button onclick="installPWA()" style="background:white;border:none;color:var(--accent);padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">Instalar</button>
   </div>
 </div>
 
@@ -7300,7 +7298,7 @@ function getBancosFiltradoBase() {
 // un init consistente con el resto de pestañas y sea fácil enchufar la
 // lógica real más adelante sin tocar la barra de tabs.
 // ══════════════════════════════════════════════════════
-// ── Six Sigma Bloque B.2: Fila Báscula (ver SIXSIGMA.md §5) ────────────────
+// ── Six Sigma Bloque B.2: Fila Báscula (ver INSTRUCCIONESAPP.md §5) ────────────────
 // Colección auxiliar `fila_bascula`: un documento por vehículo mientras está
 // "en tránsito" en báscula (entre que llega a la fila y que se cierra el
 // ciclo con el 2do pesaje). No confundir con stats_analisis: fila_bascula es
@@ -7555,7 +7553,7 @@ window.renderFilaBascula = function() {
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             ${r.t3_salida_ts ? '' : `<button class="btn btn-secondary" style="font-size:12px;" onclick="registrarSalidaFrente('${id}', this)">Sale a tiro</button>`}
-            ${esMasterFila ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
+            ${esMasterFila ? `<button class="btn" style="font-size:12px;background:var(--danger);color:white;border-color:var(--danger);" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
           </div>
         </div>`;
       }).join('');
@@ -7601,10 +7599,10 @@ window.filtrarBuscadorDestare = function() {
       <span style="font-size:11px;color:var(--text-muted);">${r.tipo_camion || ''} · Boleta ${r.boleta || '—'}</span><br>
       <span style="font-size:12px;color:var(--text-muted);">${estado}${r.reclamado_por ? (r.reclamado_por === uid ? ' · reclamado por ti' : ' · reclamado') : ''}</span>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-        <button class="btn" style="flex:1;font-size:12px;background:#2e7d32;color:white;border-color:#2e7d32;" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}', this)">🟢 Entra a fila</button>
-        <button class="btn" style="flex:1;font-size:12px;background:#f9a825;color:white;border-color:#f9a825;" ${(!r.t1b_fila_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
-        ${puedeLiberar ? `<button class="btn" style="font-size:12px;background:#546e7a;color:white;border-color:#546e7a;" onclick="liberarCamionFilaSegunda('${id}', this)">↩️ Liberar</button>` : ''}
-        ${esMasterDestare ? `<button class="btn" style="font-size:12px;background:#c62828;color:white;border-color:#c62828;" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
+        <button class="btn" style="flex:1;font-size:12px;background:var(--accent);color:white;border-color:var(--accent);" ${r.t1b_fila_ts ? 'disabled' : ''} onclick="registrarEntradaFilaSegunda('${id}', this)">🟢 Entra a fila</button>
+        <button class="btn" style="flex:1;font-size:12px;background:var(--warning);color:white;border-color:var(--warning);" ${(!r.t1b_fila_ts) ? 'disabled' : ''} onclick="registrarSalidaFilaSegunda('${id}', this)">🟡 Destarado</button>
+        ${puedeLiberar ? `<button class="btn" style="font-size:12px;background:var(--info);color:white;border-color:var(--info);" onclick="liberarCamionFilaSegunda('${id}', this)">↩️ Liberar</button>` : ''}
+        ${esMasterDestare ? `<button class="btn" style="font-size:12px;background:var(--danger);color:white;border-color:var(--danger);" onclick="eliminarRegistroFilaBascula('${id}', this)">🗑️</button>` : ''}
       </div>
     </div>`;
   };
@@ -8021,7 +8019,7 @@ window.initSixSigmaTab = async function() {
     document.getElementById('ss-kpi-editadas').textContent = editadas.toLocaleString('es-MX');
     // First Pass Yield aproximado: 1 - (eventos de edición / total capturado).
     // Es una aproximación (cuenta EVENTOS de edición, no tickets únicos
-    // editados), documentado así en SIXSIGMA.md — evita tener que leer la
+    // editados), documentado así en INSTRUCCIONESAPP.md — evita tener que leer la
     // colección completa para saber si un ticket en particular ya se editó.
     const fpy = total ? Math.max(0, 1 - (editadas / total)) : null;
     document.getElementById('ss-kpi-fpy').textContent = fpy !== null ? (fpy * 100).toFixed(1) + '%' : '—';

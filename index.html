@@ -4347,7 +4347,16 @@ const RANGOS = {
   'CUERPO 3': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.50 a 0.80 ton','SECUNDARIA 1':'0.80 a 1.50 ton','CORAZA':'16 ton','BERMA':'0.80 a 1.50 ton','BERMA DE APOYO':'0.50 a 0.80 ton' },
   'CUERPO 4': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.60 a 1.00 ton','SECUNDARIA 1':'1.00 a 2.00 ton','CORAZA':'19 ton','BERMA':'1.00 a 2.00 ton','BERMA DE APOYO':'0.60 a 1.00 ton' },
   'CUERPO 5': { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'0.80 a 1.20 ton','SECUNDARIA 1':'1.20 a 2.30 ton','BERMA':'1.20 a 2.30 ton','BERMA DE APOYO':'0.80 a 1.20 ton' },
-  'MURO':     { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'1.00 a 1.50 ton','SECUNDARIA 1':'1.50 a 3.00 ton','BERMA':'1.50 a 3.00 ton','BERMA DE APOYO':'1.00 a 1.50 ton' },
+  // 21-jul-2026: NUCLEO de MURO corregido a '0.02 a 0.20 ton' (confirmado
+  // por Jesús). Antes decía '0.01 a 0.50 ton' — el mismo valor que usan
+  // Cuerpo 3/4/5 y Morro, probablemente copiado por error al armar esta
+  // tabla. Con el valor viejo, cualquier ticket NUEVO de Núcleo->Muro se
+  // autorrellenaba mal desde que existe este catálogo (campo de solo
+  // lectura, sin dropdown para destinos que no son Acopio) — ver sección
+  // 44 de INSTRUCCIONESAPP.md para el historial completo de esta corrección
+  // (incluye los 817 tickets históricos ya corregidos con
+  // CORREGIR_RANGO_NUCLEO.html).
+  'MURO':     { 'NUCLEO':'0.02 a 0.20 ton','SECUNDARIA 2':'1.00 a 1.50 ton','SECUNDARIA 1':'1.50 a 3.00 ton','BERMA':'1.50 a 3.00 ton','BERMA DE APOYO':'1.00 a 1.50 ton' },
   'MORRO':    { 'NUCLEO':'0.01 a 0.50 ton','SECUNDARIA 2':'1.00 a 1.50 ton','SECUNDARIA 1':'1.50 a 3.00 ton','BERMA':'1.50 a 3.00 ton','BERMA DE APOYO':'1.00 a 1.50 ton' }
 };
 const RANGOS_ACOPIO = {

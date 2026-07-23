@@ -890,6 +890,7 @@ function cutoffFecha(dias) {
 
 function startRealtimeSync(rol) {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  let _debounceResumenLive = null; // FASE 5 (23-jul-2026), ver comentario junto al onSnapshot de abajo
 
   // FASE — Pendiente 19.2 de BOT.MD (13/07/2026, ajustado el mismo día en la
   // auditoría de lecturas, sección 20): el rol `visor` es de solo lectura,
@@ -939,6 +940,23 @@ function startRealtimeSync(rol) {
               : '✅ Sincronizado en tiempo real · ')
             + db.length.toLocaleString('es-MX') + ' registro(s) en la ventana cargada'
           );
+        }
+        // FASE 5 (23-jul-2026): Resumen calcula sus totales con una lectura
+        // "pull" (calcularResumenGenericoAgregado -> resumenes/{mes} vía
+        // leerDocResumen, getDoc puntual), sin su propio onSnapshot — así que
+        // aunque este listener de tickets SÍ es en tiempo real, alguien
+        // parado en la pestaña Resumen no veía los cambios de otros
+        // capturistas hasta salir y volver a entrar. Se reutiliza este mismo
+        // listener (ya existente, sin lecturas nuevas de la colección de
+        // tickets) para disparar un refresco de Resumen cuando la pestaña
+        // está abierta ahora mismo. Debounce de 800ms para que varias
+        // escrituras seguidas (dos capturistas guardando casi al mismo
+        // tiempo) colapsen en un solo recálculo, en vez de una lectura de
+        // resumenes/{mes} por cada escritura suelta.
+        const tabResumenActivo = document.getElementById('tab-resumen');
+        if (tabResumenActivo && tabResumenActivo.classList.contains('active')) {
+          clearTimeout(_debounceResumenLive);
+          _debounceResumenLive = setTimeout(() => { if (window.renderResumen) window.renderResumen(); }, 800);
         }
       }
     },
@@ -1697,6 +1715,34 @@ window.saveRecord = async function() {
   if (data.concepto === 'TRANSFERENCIA_ACOPIOS') {
     if (!confirm('Este viaje es una TRANSFERENCIA ENTRE ACOPIOS (' + data.banco + ' → ' + data.destino + '), un caso excepcional. ¿Confirmas que es correcto?')) return;
   }
+  // FASE 2 (23-jul-2026): advertencia si el material que sale de un Acopio
+  // no tiene existencia actual en ese acopio. Usa el mismo agregado en
+  // caché que la pestaña "Acopios" (resumenes/avance_acopio, 1 solo doc —
+  // NO se recorre la colección de tickets completa, respeta la regla de
+  // costo de lecturas de la sección 0.5). Si la verificación falla (ej.
+  // sin señal), NO bloquea el guardado — solo se pierde la advertencia
+  // informativa, para no dejar a un capturista sin poder guardar por un
+  // problema de red ajeno a su ticket.
+  let advertenciaExistencia = false;
+  if (data.origen_tipo === 'ACOPIO' && data.banco && data.material && data.rango && data.rango !== 'PENDIENTE') {
+    try {
+      const datosAvAc = await window.asegurarDatosAvancesAcopios(); // usa caché si ya se cargó antes en esta sesión
+      if (datosAvAc) {
+        const ac = window.computeAcopios(datosAvAc);
+        const filas = ac.porAcopio[data.banco] || [];
+        const fila = filas.find(f => f.material === data.material && f.rango === data.rango);
+        const existencia = fila ? fila.existencia : 0;
+        if (existencia <= 0) {
+          const nombreAcopio = data.banco === 'ACOPIO MARINO' ? 'Acopio Marino' : 'Acopio Terrestre';
+          const disponibleTxt = existencia.toLocaleString('es-MX', {maximumFractionDigits:2});
+          if (!confirm('⚠️ ' + window.nombreMaterialLegible(data.material) + ' (' + data.rango + ') no tiene existencia actualmente en ' + nombreAcopio + ' (' + disponibleTxt + ' t disponible). ¿Confirmas que quieres registrar este ticket de todos modos?')) return;
+          advertenciaExistencia = true;
+        }
+      }
+    } catch (e) {
+      console.error('No se pudo verificar existencia en Acopio para la advertencia de Fase 2:', e);
+    }
+  }
   
   const saveBtn = document.getElementById('btn-guardar');
   saveBtn.disabled = true;
@@ -1705,6 +1751,7 @@ window.saveRecord = async function() {
   try {
     const { _fid: _fid2, ...payload } = data;
     payload.creadoPor = currentUser.uid;
+    payload.advertencia_existencia = advertenciaExistencia; // FASE 2 (23-jul-2026)
 
     if (!window._editFid) {
       if (!navigator.onLine) {
@@ -2971,7 +3018,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     <div class="field-row two-col">
       <div>
         <label id="f-origen-label">Origen (Banco) *</label>
-        <select id="f-banco"></select>
+        <select id="f-banco" onchange="filtrarDestinoPorOrigenAcopio(); autoSeleccionarVertido();"></select>
       </div>
       <div>
         <label>Destino *</label>
@@ -3181,6 +3228,17 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     <button class="btn btn-secondary" id="btn-solo-barcaza" onclick="toggleSoloBarcaza()" style="width:100%;font-size:12px;">
       🚢 Ver solo tickets de Barcaza
     </button>
+  </div>
+  <div style="padding:0 0 10px;">
+    <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.03em;">Tickets de acopio</div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-secondary" id="btn-acopio-correctos" onclick="setFiltroAcopio('correctos')" style="flex:1;font-size:12px;">
+        ✅ Correctos
+      </button>
+      <button class="btn btn-secondary" id="btn-acopio-advertencia" onclick="setFiltroAcopio('advertencia')" style="flex:1;font-size:12px;">
+        🔺 Con advertencia
+      </button>
+    </div>
   </div>
   <div id="barcaza-resumen-panel" style="display:none;margin-bottom:10px;"></div>
 
@@ -4593,8 +4651,40 @@ function updateOrigenOptions() {
   label.textContent = tipo === 'ACOPIO' ? 'Origen (Acopio) *' : 'Origen (Banco) *';
   toggleFolio();
   checkTransferenciaAcopios();
+  filtrarDestinoPorOrigenAcopio(); // FASE 1 (23-jul-2026): re-habilita/deshabilita Destino según el nuevo origen
 }
 window.updateOrigenOptions = updateOrigenOptions;
+
+// FASE 1 (23-jul-2026): impide capturar una transferencia de un Acopio
+// hacia sí mismo (Acopio Marino -> Acopio Marino, Acopio Terrestre ->
+// Acopio Terrestre) — no tiene sentido de negocio mover material de un
+// acopio a sí mismo, a diferencia de Marino <-> Terrestre que sí es una
+// transferencia real y excepcional (ver checkTransferenciaAcopios, que
+// sigue mostrando su aviso solo para esos casos válidos). Mismo patrón que
+// filtrarDestinosPorMaterial(): deshabilita la opción en vez de eliminarla,
+// para no romper el flujo si el origen vuelve a cambiar después.
+window.filtrarDestinoPorOrigenAcopio = function() {
+  const origenTipo  = document.getElementById('f-origen-tipo').value;
+  const origenValor = document.getElementById('f-banco').value;
+  const sel = document.getElementById('f-destino');
+  if (!sel) return;
+  const mismoAcopio = origenTipo === 'ACOPIO' ? origenValor : '';
+  let seleccionInvalida = false;
+  Array.from(sel.options).forEach(opt => {
+    if (!opt.value) return;
+    const excluido = !!mismoAcopio && opt.value === mismoAcopio;
+    opt.disabled = excluido;
+    if (excluido && sel.value === opt.value) seleccionInvalida = true;
+  });
+  if (seleccionInvalida) {
+    const nombreAcopio = mismoAcopio === 'ACOPIO MARINO' ? 'Acopio Marino' : 'Acopio Terrestre';
+    sel.value = '';
+    alert('No puedes registrar un movimiento de "' + nombreAcopio + '" hacia sí mismo. Elige un destino distinto.');
+    updateRangos();
+    toggleVertido();
+    checkTransferenciaAcopios();
+  }
+};
 
 // El Folio (Vale) solo existe como documento físico cuando el material sale
 // de un Banco de materiales. Cuando el origen es Acopio no hay folio real
@@ -4705,9 +4795,32 @@ function toggleVertido() {
   const destinoEsRompeolas = !!destino && !destinoEsAcopio && !destinoEsPrefabricados;
   document.getElementById('wrap-vertido').style.display = destinoEsRompeolas ? 'block' : 'none';
   if (!destinoEsRompeolas) document.getElementById('f-vertido').value = '';
+  else autoSeleccionarVertido(); // FASE 1 (23-jul-2026): llenado inteligente según el Acopio de origen
   toggleFolioBarcaza();
 }
 window.toggleVertido = toggleVertido;
+
+// FASE 1 (23-jul-2026): "llenado inteligente" — cuando el origen es un
+// Acopio y el destino elegido es una colocación (Vertido visible), se
+// preselecciona el Vertido que corresponde a ese acopio (Marino->Marino,
+// Terrestre->Terrestre) solo para agilizar la captura. Sigue siendo
+// editable: el capturista puede cambiarlo a mano si el viaje real usó
+// el medio contrario. No pisa nada durante edición de un ticket ya
+// guardado: editRecord() llama a toggleVertido() y DESPUÉS sobreescribe
+// f-vertido con el valor real guardado (ver línea ~1848), así que el
+// valor auténtico siempre gana al final del flujo de edición.
+function autoSeleccionarVertido() {
+  const origenTipo  = document.getElementById('f-origen-tipo').value;
+  const origenValor = document.getElementById('f-banco').value;
+  const wrap = document.getElementById('wrap-vertido');
+  if (!wrap || wrap.style.display === 'none') return; // este destino no usa Vertido
+  if (origenTipo !== 'ACOPIO') return; // solo aplica cuando el origen es un Acopio
+  const vertidoSel = document.getElementById('f-vertido');
+  if (origenValor === 'ACOPIO MARINO') vertidoSel.value = 'MARINO';
+  else if (origenValor === 'ACOPIO TERRESTRE') vertidoSel.value = 'TERRESTRE';
+  toggleFolioBarcaza();
+}
+window.autoSeleccionarVertido = autoSeleccionarVertido;
 
 // Muestra el aviso cuando el movimiento capturado es Acopio → Acopio
 // (transferencia entre acopios): caso excepcional pero posible en campo.
@@ -5467,6 +5580,22 @@ function toggleSoloBarcaza() {
 }
 window.toggleSoloBarcaza = toggleSoloBarcaza;
 
+// FASE 2 (23-jul-2026): filtro "Tickets de acopio" — Correctos / Con
+// advertencia. Excluyente entre sí (elegir uno apaga el otro), y se puede
+// apagar tocando el mismo botón otra vez. Se combina con el buscador y con
+// "Ver solo tickets de Barcaza" (AND, igual que ese filtro ya se combina
+// con el buscador — ver renderDB()).
+window.filtroAcopioDB = ''; // '' | 'correctos' | 'advertencia'
+function setFiltroAcopio(valor) {
+  window.filtroAcopioDB = window.filtroAcopioDB === valor ? '' : valor;
+  const btnC = document.getElementById('btn-acopio-correctos');
+  const btnA = document.getElementById('btn-acopio-advertencia');
+  if (btnC) btnC.className = window.filtroAcopioDB === 'correctos' ? 'btn btn-primary' : 'btn btn-secondary';
+  if (btnA) btnA.className = window.filtroAcopioDB === 'advertencia' ? 'btn btn-primary' : 'btn btn-secondary';
+  renderDB();
+}
+window.setFiltroAcopio = setFiltroAcopio;
+
 // Al tocar la etiqueta 🚢 de un ticket, filtra la Base de datos a esa
 // barcaza (mismo folio_barcaza), que dispara el panel-resumen con el
 // acumulado y deja la lista lista para entrar a editar cada ticket.
@@ -5568,6 +5697,11 @@ function renderDB() {
   // son los que tienen folio_barcaza asignado (viajes marinos cargados por
   // camión Articulado y agrupados por folio de barcaza).
   if (window.soloBarcazaDB) filtered = filtered.filter(r => !!r.folio_barcaza);
+  // FASE 2 (23-jul-2026): "Tickets de acopio" — Correctos = origen Acopio
+  // sin la marca de advertencia; Con advertencia = origen Acopio con la
+  // marca puesta al guardar (ver saveRecord(), advertencia_existencia).
+  if (window.filtroAcopioDB === 'correctos')    filtered = filtered.filter(r => r.origen_tipo === 'ACOPIO' && !r.advertencia_existencia);
+  else if (window.filtroAcopioDB === 'advertencia') filtered = filtered.filter(r => r.origen_tipo === 'ACOPIO' && !!r.advertencia_existencia);
 
   const totalKg = filtered.reduce((s, r) => s + (r.neto_kg || 0), 0);
   document.getElementById('stat-total').textContent     = filtered.length;
@@ -5621,6 +5755,7 @@ function renderDB() {
           ${r.destino ? '<span class="badge badge-green">'+escHtml(r.destino)+'</span>' : ''}
           ${r.folio_barcaza ? '<span class="badge" style="background:var(--info-light);color:var(--info);cursor:pointer;" onclick="event.stopPropagation(); abrirBarcazaModal(\''+escHtml(r.folio_barcaza)+'\')">🚢 '+escHtml(r.folio_barcaza)+'</span>' : ''}
           ${r.concepto === 'TRANSFERENCIA_ACOPIOS' ? '<span class="badge" style="background:var(--warning-light);color:var(--warning);">⚠️ Transferencia</span>' : ''}
+          ${r.advertencia_existencia ? '<span class="badge" style="background:var(--alert-amber2-bg);color:var(--alert-amber2-text);border:1px solid var(--alert-amber2-border);">🔺 Sin existencia en Acopio</span>' : ''}
         </div>
       </div>
       <div class="rec-peso">
@@ -6068,6 +6203,7 @@ window.renderAvances = renderAvances;
 function nombreMaterialLegible(m) {
   return { 'NUCLEO':'Núcleo', 'SECUNDARIA 2':'Secundaria 2', 'SECUNDARIA 1':'Secundaria 1', 'CORAZA':'Coraza', 'BERMA':'Berma', 'BERMA DE APOYO':'Berma de apoyo', 'REZAGA':'Rezaga' }[m] || m;
 }
+window.nombreMaterialLegible = nombreMaterialLegible; // FASE 2 (23-jul-2026): se necesita llamar desde saveRecord(), que vive en el <script type="module"> de arriba
 
 // ══════════════════════════════════════════════════════
 // FASE 5 — Pestaña "Acopios" (inventario disponible por acopio)

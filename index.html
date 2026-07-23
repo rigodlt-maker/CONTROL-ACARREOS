@@ -9010,7 +9010,9 @@ window.initMetasTab = async function(forzar) {
         const prorrateoMesActual = diasHabTotalesMes > 0 ? (metaMes * diasHabTranscurridos / diasHabTotalesMes) : 0;
         const metaAcumHoy = metaMesesCerrados + prorrateoMesActual;
 
-        const metaTot  = datos.cantidad_total || 0;
+        const metaTot  = (cuerpo.toUpperCase() === 'MURO TARQUINA' && material.toUpperCase() === 'NUCLEO')
+  ? MURO_META_TOTAL
+  : (datos.cantidad_total || 0);
         const realAcum = realAcumPorCM[k] || 0;
         const pctHoy   = metaAcumHoy > 0 ? (realAcum / metaAcumHoy * 100) : (realAcum > 0 ? 100 : null);
         const pctAvanceTotal = metaTot > 0 ? (realAcum / metaTot * 100) : (realAcum > 0 ? 100 : null);

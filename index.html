@@ -5713,13 +5713,28 @@ function renderDB() {
   // tarjeta siga visible aunque no esté activado). Cada tarjeta muestra el
   // total de viajes/toneladas y el desglose por material+rango; al tocarla
   // se abre el detalle con la lista de tickets, editables desde ahí mismo.
-  const grupos = computeBarcazaGrupos(filteredSearch);
+  // FASE 2-fix (23-jul-2026, reportado por Jesús): se cambió la fuente de
+  // `filteredSearch` a `filtered` para que las tarjetas de Barcaza SÍ
+  // respeten el filtro activo de "Tickets de acopio" (Correctos/Con
+  // advertencia) — antes se calculaban solo con el buscador de texto, así
+  // que una Barcaza sin ningún ticket con advertencia igual aparecía al
+  // filtrar "Con advertencia", lo cual confundía. Con `filtered`, si no hay
+  // ningún filtro de acopio activo el resultado es idéntico a antes (sigue
+  // sin depender del toggle "Ver solo tickets de Barcaza"); si el filtro
+  // está activo, la tarjeta solo aparece si le queda al menos un ticket que
+  // cumpla ese filtro.
+  const grupos = computeBarcazaGrupos(filtered);
   window._ultimosGruposBarcaza = grupos;
   const resumenEl = document.getElementById('barcaza-resumen-panel');
   if (resumenEl) {
     if (grupos.length) {
       resumenEl.style.display = 'block';
-      resumenEl.innerHTML = grupos.map(g => `
+      resumenEl.innerHTML = grupos.map(g => {
+        // FASE 2-fix: si algún ticket de esta Barcaza no tiene existencia en
+        // Acopio, la tarjeta agregada también lo advierte — está cargando un
+        // material que, en teoría, no existía en el Acopio de origen.
+        const tieneAdvertencia = g.tickets.some(t => t.advertencia_existencia);
+        return `
         <div class="slicers-card" style="border-color:var(--accent);cursor:pointer;margin-bottom:8px;" onclick="abrirBarcazaModal('${escHtml(g.folio)}')">
           <h3>🚢 Barcaza ${escHtml(g.folio)}</h3>
           <div style="font-size:12.5px;">
@@ -5727,9 +5742,11 @@ function renderDB() {
           </div>
           <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
             ${Object.entries(g.porMaterial).map(([k,tv]) => `<span class="badge badge-green">${escHtml(k)}: ${tv.toLocaleString('es-MX',{maximumFractionDigits:2})} t</span>`).join('')}
+            ${tieneAdvertencia ? '<span class="badge" style="background:var(--alert-amber2-bg);color:var(--alert-amber2-text);border:1px solid var(--alert-amber2-border);">🔺 Sin existencia en Acopio</span>' : ''}
           </div>
           <div style="margin-top:6px;font-size:11px;color:var(--text-muted);">Toca para ver y editar los tickets incluidos →</div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     } else {
       resumenEl.style.display = 'none';
       resumenEl.innerHTML = '';

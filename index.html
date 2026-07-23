@@ -6244,7 +6244,8 @@ window.renderPendientes = function() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
          <div style="flex:1">
             <div style="font-weight:600; font-size:14px; color:${conflicto||estancado ? 'var(--danger)' : 'inherit'}">Boleta: ${window.escHtml(r.boleta)}</div>
-            <div style="font-size:11px;color:var(--text-muted); margin-top:2px;">Placas: ${window.escHtml(r.placas)} | Folio: ${window.escHtml(r.folio)}</div>
+            <div style="font-size:11px;color:var(--text-muted); margin-top:2px;">Placas: ${window.escHtml(r.placas)} | Folio: ${window.escHtml(r.folio || '—')}</div>
+            <div style="font-size:11px;color:var(--text-muted); margin-top:2px;">Material: ${window.escHtml(r.material || '—')} | Banco: ${window.escHtml(r.banco || '—')} | Destino: ${window.escHtml(r.destino || '—')}</div>
             ${badgeHTML}
          </div>
          <div style="font-size:11px;color:var(--text-muted);text-align:right">

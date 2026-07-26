@@ -5003,3 +5003,58 @@ Black Belt lo hubiera señalado como desperdicio circular. Si en campo
 se ve que esto no es suficiente, la siguiente opción sería un doc
 único en Firestore con el timestamp por panel (1 lectura extra por
 intento, mucho más barato que las lecturas de "leer todo").
+
+## 67. 26-jul-2026 — 🟠 `historico_global` ya no escribe `tendencia_diaria` (dejó de estar desincronizado con `recalcularHistoricoGlobal()`) — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Contexto real de volumen (dato de Jesús):** la app espera 300-500
+registros/día, con una base total esperada de 250,000-500,000
+registros en la vida del proyecto. Con ese dato, corrijo una
+imprecisión de mi propio análisis anterior (sección 62/auditoría): el
+riesgo de que `historico_global` se acercara al límite de 1MB de
+Firestore por `tendencia_diaria` era mucho menor de lo que sugerí — a
+ese ritmo, unos 1,000-1,600 días hábiles en varios años de proyecto
+pesarían ~70-110 KB, lejos del límite. **El motivo real para quitarlo
+no es el tamaño, es que no tiene ningún consumidor** (confirmado de
+nuevo en el código actual: el único lector de `historico_global`,
+línea ~5060, solo usa `total_viajes`/`total_ton`).
+
+**Junta Obeya realizada (ver sección 0.7):** DBA/Integridad de datos
+señaló que mantener sincronizadas dos funciones (`aplicarResumen()` y
+`recalcularHistoricoGlobal()`) para un campo sin lector es esfuerzo sin
+beneficio; Arquitecto propuso dejar de escribirlo en vez de
+"reparar" la función de recálculo; QA confirmó que no rompe ningún
+lector existente; Master Black Belt dirigió hacia eliminar la
+escritura muerta en vez de sincronizar dos funciones para nada.
+Jesús aprobó la dirección, con la condición explícita de no afectar
+la arquitectura actual.
+
+**Qué se cambió:** en `aplicarResumen()`, el `payload` que se usa para
+el doc MENSUAL (`ref`) sigue exactamente igual (con `tendencia_diaria`
+normal). Para el doc `historico_global` (`refGlobal`) se arma ahora un
+`payloadGlobal` — copia del mismo payload, pero sin las claves que
+empiezan con `tendencia_diaria.` — y es ESE el que se escribe ahí.
+`recalcularHistoricoGlobal()` no se tocó (ya no incluía ese campo, y
+ahora eso es consistente con lo que escribe `aplicarResumen()`, en vez
+de una omisión).
+
+**Impacto:** cero cambio visible para Jesús ni para el equipo — nadie
+leía ese campo desde `historico_global`. Se elimina la desincronización
+entre las dos funciones y el documento deja de crecer con un campo sin
+uso.
+
+**Verificación antes de entregar:**
+- `node --check` limpio en ambos bloques (`module` y normal).
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Reconfirmé en el código actual (no solo en la auditoría vieja) que
+  ningún lector de `historico_global` usa `tendencia_diaria`.
+- El doc MENSUAL (`ref`) no se tocó — sigue recibiendo
+  `tendencia_diaria` exactamente igual que antes.
+
+**No se tocó, a propósito:** la estructura de `por_combinacion` y
+`por_banco_material_rango` en `historico_global` — esos campos SÍ
+tienen lectores reales, y su tamaño está acotado por el catálogo de
+combinaciones banco×material×destino×tipo_camión (no crece con cada
+registro nuevo, solo con combinaciones nuevas), así que no hay el mismo
+problema ahí.

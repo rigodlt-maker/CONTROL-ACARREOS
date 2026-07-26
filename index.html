@@ -1295,9 +1295,23 @@ async function aplicarResumen(rec, signo) {
   // lectura (leerDocResumen('historico_global')) en vez del botón "Ver TODO
   // el histórico" (traerTodoFirestore, ~6,000 lecturas). Requiere respaldo
   // inicial una sola vez: botón "Recalcular total histórico" en Admin.
+  //
+  // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 67): tendencia_diaria se
+  // EXCLUYE a propósito de este documento — nadie lo lee de aquí (Tendencia
+  // usa el agregado MENSUAL vía calcularTendenciaAgregada()/tnd_*, no
+  // historico_global), y recalcularHistoricoGlobal() (el "reconstruir desde
+  // cero" de este mismo doc) nunca lo reconstruía, así que cada recálculo
+  // manual lo borraba de golpe sin que nadie lo notara. En vez de sincronizar
+  // las dos funciones para mantener un campo sin consumidor, se deja de
+  // escribir aquí — el doc MENSUAL (`ref`, arriba) sigue teniendo
+  // tendencia_diaria normal, esto NO le afecta.
+  const payloadGlobal = {};
+  for (const k in payload) {
+    if (!k.startsWith('tendencia_diaria.')) payloadGlobal[k] = payload[k];
+  }
   const refGlobal = doc(db_f, COL_RESUMEN, 'historico_global');
   try {
-    await updateDoc(refGlobal, payload);
+    await updateDoc(refGlobal, payloadGlobal);
   } catch (e) {
     if (e && e.code === 'not-found') {
       try {
@@ -1306,7 +1320,7 @@ async function aplicarResumen(rec, signo) {
           por_material: {}, por_banco: {}, por_destino: {}, por_combinacion: {},
           por_banco_material_rango: {}
         });
-        await updateDoc(refGlobal, payload);
+        await updateDoc(refGlobal, payloadGlobal);
       } catch (e2) {
         console.error('No se pudo crear/actualizar resumenes/historico_global:', e2);
       }

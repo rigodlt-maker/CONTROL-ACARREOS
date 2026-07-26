@@ -4698,7 +4698,7 @@ secciones 58 y 59.
   resto de su revisión paso a paso de la app (pantallas no cubiertas
   por este pedido de 6 fases).
 
-## 61. 25-jul-2026 — 🔴 Bug real encontrado por auditoría con Drive: typo en `CATALOGO_TOTALES` (Cuerpo 1 / Berma) — CORREGIDO
+## 62. 25-jul-2026 — 🔴 Bug real encontrado por auditoría con Drive: typo en `CATALOGO_TOTALES` (Cuerpo 1 / Berma) — CORREGIDO
 
 **Contexto:** Auditoría técnica completa de `index.html` vía Google Drive
 (sesión con Claude + integración de Drive), cruzando el catálogo de metas
@@ -4758,3 +4758,46 @@ de decisión/priorización con Jesús):**
   por rol (doble candado UI+función), manejo offline en los 3 puntos
   de guardado, consistencia de zona horaria UTC-6, costo de lecturas
   Firestore de las funciones agregadas después de la sección 46.
+
+## 63. 26-jul-2026 — 🔴 Incidente: divergencia Drive vs. GitHub causó pérdida temporal de `eliminarStatsAnalisisDeTicket` — RECUPERADO
+
+**Qué pasó:** La sección 62 (fix de `CATALOGO_TOTALES`) se hizo sobre
+una copia de `index.html` descargada de **Google Drive**. Esa copia de
+Drive no tenía la función `eliminarStatsAnalisisDeTicket` (limpieza de
+`stats_analisis` al borrar un ticket, documentada como sección 61 y
+fechada 24-jul-2026) — función que **sí existía en el repo de GitHub**
+desde antes, subida ahí en otra sesión sin pasar por Drive.
+
+Al subir la versión corregida (basada en Drive) al repo, se sobrescribió
+la versión más nueva de GitHub y con ella se perdió esa función completa
+(~80 líneas) y su llamada en `deleteRecord()`. El commit
+`50c9c74` (24-jul) la tenía; el commit `001b29d` (26-jul, con el fix de
+la sección 62) ya no.
+
+**Causa raíz:** Drive y GitHub se estaban tratando como si fueran la
+misma fuente de verdad, pero divergieron — alguien subió una versión
+directo a GitHub sin reflejarla también en Drive. La próxima vez que se
+audite o corrija algo, **hay que diffear ambas fuentes antes de asumir
+cuál es la más reciente** (no basta con mirar la fecha de modificación
+de Drive).
+
+**Recuperación aplicada:** se restauró `eliminarStatsAnalisisDeTicket`
+completa (idéntica al commit `50c9c74`) y su llamada en `deleteRecord()`,
+fusionada sobre la copia ya corregida de la sección 62. Se agregó un
+comentario en el código señalando esta recuperación.
+
+**Verificación antes de entregar:**
+- `node --check` limpio en ambos bloques (`module` y normal) tras la
+  fusión.
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Se confirmaron las 3 dependencias de la función
+  (`dbStatsAnalisisBuscarPorTicket`, `incrementarStatsResumen`,
+  `getDocs`/`query`/`collection`/`where`) presentes en la copia base
+  antes de pegar la función de vuelta.
+- Corregida además una referencia cruzada equivocada dentro del propio
+  comentario del fix de la sección 62 (decía "sección 50" por error de
+  redacción, debía decir "sección 62").
+
+**Pendiente para Jesús:** confirmar que no hay más trabajo hecho
+"solo en GitHub, nunca en Drive" (o viceversa) antes de seguir usando
+ambos como si fueran espejos exactos uno del otro.

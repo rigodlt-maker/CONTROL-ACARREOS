@@ -1913,6 +1913,88 @@ window.editRecord = async function() {
   showTab('form', { push: true });
 }
 
+// 24-jul-2026 — Al eliminar un ticket desde "Base de datos" (rol master),
+// también se limpia su rastro en `stats_analisis` (Six Sigma Bloque A/B.2),
+// para que ese viaje eliminado deje de contar en los KPIs del panel 6 Sigma.
+// Se busca por DOS vías porque un ticket capturado sin señal (cola offline,
+// ver registrarStatsCaptura línea ~1763) guarda el doc de stats_analisis
+// con id_ticket: null — ahí SOLO la boleta (número único) permite
+// encontrarlo, tal como lo describió Jesús. NO se toca la colección
+// `flota`: es un catálogo PERMANENTE por placa (1 doc por camión, no por
+// viaje/boleta) que alimenta el autorrelleno de económico para TODOS los
+// viajes futuros de ese camión — borrarla al eliminar un solo ticket
+// rompería ese autorrelleno para viajes que nada tienen que ver con el
+// ticket eliminado. Ver INSTRUCCIONESAPP.md sección 61.
+// (Recuperada el 26-jul-2026: esta función se había perdido al sobrescribir
+// el repo con una copia de Drive que no la tenía — ver sección 62.)
+window.eliminarStatsAnalisisDeTicket = async function(idTicket, boleta, ticketRecord) {
+  try {
+    const encontrados = new Map();
+    if (idTicket) {
+      const porId = await window.dbStatsAnalisisBuscarPorTicket(idTicket);
+      porId.forEach(d => encontrados.set(d.id, d.data));
+    }
+    if (boleta) {
+      const snapBoleta = await getDocs(query(collection(db_f, 'stats_analisis'), where('boleta', '==', boleta)));
+      snapBoleta.forEach(d => encontrados.set(d.id, d.data()));
+    }
+    if (!encontrados.size) return;
+
+    for (const [docId, data] of encontrados) {
+      // Reversa exacta del agregado resumenes/stats_analisis, con los
+      // mismos deltas que se sumaron al crear/cerrar este doc (ver
+      // registrarStatsCaptura y procesarFilaBasculaDeTicket más arriba) —
+      // así el panel 6 Sigma no queda con conteos/sumas inflados por un
+      // viaje que ya no existe.
+      const reversa = { total_capturas: -1 };
+      if (typeof data.duracion_captura_seg === 'number') {
+        reversa.suma_duracion_seg = -data.duracion_captura_seg;
+      }
+      if (data.capturista_id) {
+        reversa[`por_capturista.${data.capturista_id}`] = -1;
+      }
+      // ediciones_contador vive en el TICKET (colección `acarreos`), no en
+      // el doc de stats_analisis (ahí siempre queda en 0, ver línea ~2180)
+      // — por eso la reversa de "capturas_editadas_eventos" se saca del
+      // ticket que se está borrando, no del doc de stats_analisis.
+      if (ticketRecord && ticketRecord.ediciones_contador) {
+        reversa.capturas_editadas_eventos = -ticketRecord.ediciones_contador;
+      }
+      const t1 = data.t1_fila_ts || null;
+      const t2 = data.t2_bruto_ts || null;
+      const t3 = data.t3_salida_ts || null;
+      const t1b = data.t1b_fila_ts || null;
+      const t4 = data.t4_destare_ts || null;
+      if (t2) {
+        // t2_bruto_ts solo se escribe cuando procesarFilaBasculaDeTicket()
+        // corrió con el ciclo cerrado — mismo momento en que se incrementó
+        // ciclos_bascula_cerrados, así que es el indicador correcto para
+        // decidir si hay que revertirlo (ver procesarFilaBasculaDeTicket).
+        reversa.ciclos_bascula_cerrados = -1;
+        if (t1) {
+          reversa.suma_espera_fila_bruto_seg = -Math.max(0, Math.floor((t2 - t1) / 1000));
+          reversa.conteo_espera_fila_bruto = -1;
+        }
+        if (t3 && t1b) {
+          reversa.suma_tiempo_frente_seg = -Math.max(0, Math.floor((t1b - t3) / 1000));
+          reversa.conteo_tiempo_frente = -1;
+        }
+        if (t1b && t4) {
+          reversa.suma_espera_fila_tara_seg = -Math.max(0, Math.floor((t4 - t1b) / 1000));
+          reversa.conteo_espera_fila_tara = -1;
+        }
+      }
+      await incrementarStatsResumen(reversa);
+      await deleteDoc(doc(db_f, 'stats_analisis', docId));
+    }
+  } catch (e) {
+    // No debe tronar ni bloquear el borrado del ticket real (mismo criterio
+    // que registrarStatsCaptura/procesarFilaBasculaDeTicket): si falla, se
+    // reporta en consola y el ticket ya se elimina de todas formas.
+    console.warn('Six Sigma: no se pudo limpiar stats_analisis al eliminar ticket:', e);
+  }
+};
+
 window.deleteRecord = async function() {
   if (!confirm('¿Eliminar este registro permanentemente?')) return;
   try {
@@ -1920,6 +2002,7 @@ window.deleteRecord = async function() {
     await deleteDoc(doc(db_f, COL, window._currentFid));
     await aplicarResumen(r, -1); // FASE 5: Await crítico
     await aplicarAgregadoAvanceAcopio(r, -1); // Fase 14.2: Await crítico
+    await eliminarStatsAnalisisDeTicket(window._currentFid, r ? r.boleta : null, r); // 24-jul-2026: limpia stats_analisis ligado a este ticket (NO toca 'flota', ver comentario arriba)
     closeModalForce();
     window.showSyncToast('✅', 'Registro eliminado', 'ok');
   } catch(err) {
@@ -4544,7 +4627,7 @@ const CATALOGO_TOTALES = [
   { cuerpo:'CUERPO 1', material:'SECUNDARIA 2',   rango:'0.20 a 0.30 ton', cantidad: 17506.45 },
   { cuerpo:'CUERPO 1', material:'SECUNDARIA 1',   rango:'0.30 a 0.50 ton', cantidad: 49910.19 },
   { cuerpo:'CUERPO 1', material:'CORAZA',         rango:'5.8 ton',         cantidad: 23230.12 },
-  { cuerpo:'CUERPO 1', material:'BERMA',          rango:'0.30 a 0.50 ton', cantidad: 13549.09 }, // corregido 25-jul-2026: era 13594.09 (transposición de dígitos), ver INSTRUCCIONESAPP.md sección 50
+  { cuerpo:'CUERPO 1', material:'BERMA',          rango:'0.30 a 0.50 ton', cantidad: 13549.09 }, // corregido 25-jul-2026: era 13594.09 (transposición de dígitos), ver INSTRUCCIONESAPP.md sección 62
   { cuerpo:'CUERPO 1', material:'BERMA DE APOYO', rango:'0.20 a 0.30 ton', cantidad: 30349.36 },
   // Cuerpo 2
   { cuerpo:'CUERPO 2', material:'NUCLEO',         rango:'0.02 a 0.20 ton', cantidad: 144120.91 },

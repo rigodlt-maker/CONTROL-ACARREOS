@@ -4958,3 +4958,48 @@ el riesgo de que este marco se vuelva teatro narrativo en vez de una
 herramienta real de priorización — si una sesión encuentra que está
 llenando el formato sin decir nada nuevo, debe cortarlo y responder
 directo.
+
+## 66. 26-jul-2026 — 🟠 H-05 resuelto: cooldown de 10 min por panel en "Ver TODO el histórico" — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Junta Obeya realizada (ver sección 0.7):** Logística de Acarreos
+señaló el riesgo real (si se agota el cupo de Firestore en oficina, el
+bot de Telegram deja de responder en campo); Arquitecto propuso
+`localStorage` + timestamp por panel, sin tocar Firestore; QA marcó 3
+casos borde (persistencia entre refrescos, llave independiente por
+panel, mensaje con minutos restantes); Master Black Belt dirigió hacia
+la solución más barata posible. Decisión de Jesús: 10 minutos, por
+panel (no global).
+
+**Qué se cambió:** `confirmarLecturaCompleta(desde, hasta, panel)`
+ahora acepta un tercer parámetro opcional `panel`. Si se pasa, revisa
+`localStorage['cooldownLecturaCompleta_' + panel]`; si pasaron menos de
+10 minutos desde el último uso confirmado de ESE panel, bloquea con un
+`alert()` indicando cuántos minutos faltan — sin llamar a Firestore. Si
+no se pasa `panel`, el comportamiento es idéntico al de antes (por si
+alguna llamada futura no lo necesita).
+
+Se actualizaron los 7 call sites reales de "leer todo el histórico"
+(no eran 8 como se estimó en la auditoría de la sección 62, se
+recontaron directo en el código): `dash`, `db`, `resumen`, `tendencia`,
+`bancos`, `reportes`, `excel_reportes` — cada uno con su propia llave,
+para que usar uno no bloquee los demás.
+
+**Verificación antes de entregar:**
+- `node --check` limpio en ambos bloques (`module` y normal).
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Confirmado que los 7 call sites (ya no 8) quedaron con su panel
+  correspondiente, sin dejar ninguno con `confirmarLecturaCompleta(null,
+  null)` sin tercer argumento.
+
+**Limitación conocida, aceptada a propósito:** `localStorage` es por
+navegador/dispositivo, no por usuario ni compartido entre sesiones —
+dos personas en dos computadoras distintas pueden cada una gastar su
+propio cupo de 10 minutos en paralelo. Se decidió así porque agregar un
+cooldown compartido de verdad (en Firestore) consumiría lecturas
+adicionales para resolver un problema de exceso de lecturas — Master
+Black Belt lo hubiera señalado como desperdicio circular. Si en campo
+se ve que esto no es suficiente, la siguiente opción sería un doc
+único en Firestore con el timestamp por panel (1 lectura extra por
+intento, mucho más barato que las lecturas de "leer todo").

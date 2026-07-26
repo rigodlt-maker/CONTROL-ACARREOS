@@ -2196,7 +2196,31 @@ window.dbBuscarPorFolio = async function (folioExacto) {
 // cupo diario (50,000 lecturas gratis, COMPARTIDO con el bot de Telegram)
 // está a punto de gastar. Si falla el conteo por cualquier motivo, se deja
 // pasar con una advertencia genérica en vez de bloquear al usuario.
-async function confirmarLecturaCompleta(desde, hasta) {
+// H-05 (ver INSTRUCCIONESAPP.md sección 66): cooldown de 10 min POR PANEL,
+// guardado en localStorage — sin lecturas nuevas a Firestore. El confirm()
+// de costo estimado se mantiene igual; el cooldown solo se activa si se
+// pasa un `panel` (string). Si no se pasa panel, se comporta exactamente
+// como antes (compatibilidad con cualquier llamada que no lo use).
+async function confirmarLecturaCompleta(desde, hasta, panel) {
+  const COOLDOWN_MS = 10 * 60 * 1000;
+  if (panel) {
+    try {
+      const key = 'cooldownLecturaCompleta_' + panel;
+      const ultima = parseInt(localStorage.getItem(key) || '0', 10);
+      const restante = COOLDOWN_MS - (Date.now() - ultima);
+      if (restante > 0) {
+        const minutos = Math.ceil(restante / 60000);
+        alert('Ya leíste todo el histórico de este panel hace poco (hace menos de 10 min). '
+          + 'Espera ' + minutos + ' minuto(s) más antes de repetirlo — protege el cupo diario '
+          + 'de lecturas de Firestore, que esta app comparte con el bot de Telegram.');
+        return false;
+      }
+    } catch (e) {
+      // localStorage no disponible (modo privado, cuota llena, etc.) — no
+      // bloquea la lectura, solo se pierde la protección del cooldown.
+      console.warn('No se pudo leer el cooldown de lectura completa:', e);
+    }
+  }
   let mensaje = '¿Seguro que quieres leer todo el histórico? Esto puede tardar y consume tu cupo diario de lecturas de Firestore (compartido con el bot de Telegram).';
   try {
     const constraints = [];
@@ -2210,7 +2234,12 @@ async function confirmarLecturaCompleta(desde, hasta) {
   } catch (e) {
     console.warn('No se pudo estimar el conteo antes de leer todo:', e);
   }
-  return confirm(mensaje);
+  const ok = confirm(mensaje);
+  if (ok && panel) {
+    try { localStorage.setItem('cooldownLecturaCompleta_' + panel, String(Date.now())); }
+    catch (e) { console.warn('No se pudo guardar el cooldown de lectura completa:', e); }
+  }
+  return ok;
 }
 window.confirmarLecturaCompleta = confirmarLecturaCompleta;
 
@@ -2297,7 +2326,7 @@ window.cargarHistoricoCompletoDash = async function(forzar) {
     renderDashboard();
     return;
   }
-  if (!(await confirmarLecturaCompleta(null, null))) return;
+  if (!(await confirmarLecturaCompleta(null, null, 'dash'))) return;
   cargandoHistoricoDash = true;
   const nota = document.getElementById('dash-historico-nota');
   if (nota) nota.textContent = '⏳ Cargando todo el histórico de la base de datos…';
@@ -2445,7 +2474,7 @@ window.buscarHistorial = async function() {
 let cargandoHistorialDBCompleto = false;
 window.verTodoElHistorialDB = async function() {
   if (cargandoHistorialDBCompleto) return;
-  if (!(await confirmarLecturaCompleta(null, null))) return;
+  if (!(await confirmarLecturaCompleta(null, null, 'db'))) return;
   cargandoHistorialDBCompleto = true;
   const btn = document.getElementById('btn-ver-todo-db');
   const btnHtmlOriginal = btn ? btn.innerHTML : '';
@@ -6579,7 +6608,7 @@ window.usarVentanaRecienteEnResumen = function() {
 };
 
 window.cargarHistoricoCompletoResumen = async function() {
-  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
+  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null, 'resumen'))) return;
   const btn = document.getElementById('btn-resumen-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -8851,7 +8880,7 @@ window.generarAnalisisTendencia = async function() {
       // El agregado no existe todavía en ningún mes: falta correr
       // "Recalcular resumen" una vez en Admin. Se avisa y se cae al
       // método anterior (lectura completa con confirmación de costo).
-      if (!(await confirmarLecturaCompleta(null, null))) { if (btn) btn.disabled = false; return; }
+      if (!(await confirmarLecturaCompleta(null, null, 'tendencia'))) { if (btn) btn.disabled = false; return; }
       if (progreso) progreso.textContent = 'El agregado mensual de Tendencia todavía no existe (falta correr "Recalcular resumen" una vez en Admin) — leyendo histórico completo…';
       const todos = await window.traerTodoFirestore(null, null, (n) => {
         if (progreso) progreso.textContent = `Leyendo histórico completo… ${n.toLocaleString('es-MX')} registro(s)`;
@@ -9294,7 +9323,7 @@ window.usarVentanaRecienteEnBancos = function() {
 };
 
 window.cargarHistoricoCompletoBancos = async function() {
-  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
+  if (!window.resumenHistoricoCompleto && !(await confirmarLecturaCompleta(null, null, 'bancos'))) return;
   const btn = document.getElementById('btn-bancos-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -9877,7 +9906,7 @@ window.usarVentanaRecienteEnReportes = function() {
 };
 
 window.cargarHistoricoCompletoReportes = async function() {
-  if (!reportesHistoricoCompleto && !(await confirmarLecturaCompleta(null, null))) return;
+  if (!reportesHistoricoCompleto && !(await confirmarLecturaCompleta(null, null, 'reportes'))) return;
   const btn = document.getElementById('btn-reportes-historico');
   const btnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Cargando…'; }
@@ -10006,7 +10035,7 @@ window.descargarExcelDesdeTab = async function() {
   // de fechas, se pide confirmación mostrando cuántos documentos son de
   // verdad antes de leer nada.
   if (!desde && !hasta) {
-    if (!(await confirmarLecturaCompleta(null, null))) return;
+    if (!(await confirmarLecturaCompleta(null, null, 'excel_reportes'))) return;
   }
 
   const btn = document.getElementById('btn-descargar-excel');

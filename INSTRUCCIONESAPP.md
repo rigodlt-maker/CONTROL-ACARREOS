@@ -179,6 +179,86 @@ cambio, toda sesión que edite `index.html`, `INSTRUCCIONESAPP.md`,
 
 ---
 
+## 0.7 — Marco de trabajo "Obeya": equipo virtual multidisciplinario (obligatorio desde 26-jul-2026)
+
+**Instrucción de Jesús (26-jul-2026):** que cualquier sesión que lea
+esta bitácora razone las decisiones de peso como si fuera una **junta
+tipo Obeya** (el "cuarto grande" de Lean, donde los responsables de
+cada frente se sientan juntos con la información visible y deciden
+rápido, en vez de que cada área decida por su lado y se descubran los
+choques después) — con dos alas de expertise sentadas en esa misma
+sala, más un facilitador que pone la disciplina:
+
+**Ala de Obra (Rompeolas Oriente, construcción marítima):**
+- **Director de Obra / Superintendente de Construcción** — secuencia
+  constructiva real del rompeolas (núcleo → secundarias → coraza →
+  berma → berma de apoyo, por cuerpo), qué es físicamente posible en
+  campo.
+- **Jefe de Logística de Acarreos** — flujos de camión, bancos,
+  báscula, ciclos, cuellos de botella reales de patio/frente de obra.
+- **Dirección Ejecutiva/Financiera** — impacto en costo, en avance
+  contractual, en lo que se reporta a dirección o al cliente.
+- **Seguridad e Higiene** — cuando el cambio toca flujo de camiones,
+  básculas, o algo que un capturista opera en campo.
+- **Asesor Lean Construction (FARO)** — desperdicio del LADO FÍSICO de
+  la obra (esperas de camión, retrabajo de captura, sobreinventario en
+  patio).
+
+**Ala de Software:**
+- **Arquitecto/Dev Lead** — decisiones de diseño sobre `index.html`
+  (monolito vanilla JS), estructura de Firestore, deuda técnica.
+- **QA** — casos borde, qué se rompe si esto se usa mal o a medias.
+- **Seguridad** — `firestore.rules`, permisos por rol, exposición de
+  datos entre capturista/coordinador/admin/master.
+- **DBA / Integridad de datos** — consistencia de agregados
+  (`resumenes/*`), migraciones, qué pasa si dos escrituras chocan.
+- **UX de campo** — que la pantalla se pueda usar con una mano, con
+  sol, con guantes, con señal intermitente — no UX de escritorio.
+
+**Facilitador — Master Black Belt Lean Six Sigma:** no aporta una
+disciplina más a la lista — dirige la junta. Su directiva explícita es
+cazar **desperdicio de pensamiento y retrabajo** en las OCHO formas
+clásicas (DOWNTIME: Defectos, sobreproducción, Espera, No-uso de
+talento, Transporte, Inventario, Movimiento, Exceso de procesamiento),
+aplicadas tanto al lado de obra como al de software. Dos ejemplos ya
+vividos en este proyecto que el Master Black Belt debe señalar como
+lo que son:
+- El incidente Drive/GitHub (sección 63) = **retrabajo puro** (mismo
+  bug, corregido dos veces, con pérdida de trabajo de por medio) por
+  no verificar la fuente antes de sobrescribir.
+- Repetir código de auditoría en secciones nuevas en vez de consolidar
+  en 0.5 (regla que ya existe ahí) = **exceso de procesamiento**.
+
+**Cómo se usa esto en la práctica (para que la junta misma no se
+vuelva el desperdicio):**
+1. **No se convoca a todo el comité para cada tarea trivial.** Antes de
+   simular la junta, la sesión se pregunta: "¿qué rol(es) de esta lista
+   tendría algo real que decir aquí?" — y responde solo con esos, 1-3
+   líneas de aporte concreto cada uno, no relleno de personaje. Si la
+   respuesta es "ninguno, es una corrección de sintaxis", no se convoca
+   nada.
+2. Se convoca la junta completa (o la mayoría del ala relevante) para:
+   cambios de arquitectura, bugs con impacto financiero o de avance de
+   obra, features nuevas que toquen flujo de camión/báscula, o cuando
+   Jesús lo pida explícitamente.
+3. Formato mínimo cuando sí aplica: **(a)** la decisión o el problema en
+   una línea, **(b)** 2-4 aportes de rol, cortos y concretos, **(c)** la
+   directiva del Master Black Belt (qué desperdicio se evita decidiendo
+   así), **(d)** la decisión final.
+4. **Nota de Claude, sin filtro (mismo criterio que la sección 0.5):**
+   el riesgo real de este marco es que se vuelva teatro — diez
+   personajes opinando en abstracto sin decir nada que un solo párrafo
+   directo no dijera igual. Si una sesión se encuentra escribiendo
+   "aportes" genéricos solo para llenar el formato, eso ES el
+   desperdicio de pensamiento que el Master Black Belt debería estar
+   cazando — se corta, y se responde directo. Este marco es una
+   herramienta de priorización y de no dejar un ángulo importante fuera
+   (ej. no proponer un cambio de flujo de báscula sin que alguien con
+   cabeza de "Seguridad" o de "Logística de Acarreos" lo mire primero),
+   no una capa de narrativa obligatoria sobre cada respuesta.
+
+---
+
 ## 1. Roles reales del sistema (verificado en `index.html`, línea ~465)
 
 El PDF original hablaba de un solo rol `MASTER` en mayúsculas. **Eso no
@@ -4858,3 +4938,23 @@ Esta sesión se identifica como **`Sonnet5-20260726-A`**.
 directo al repo — el flujo sigue siendo clonar/leer, entregar el
 archivo corregido, y que Jesús lo suba manualmente. El ID de sesión
 documenta quién *preparó* el cambio, no quién lo subió.
+
+## 65. 26-jul-2026 — Se establece el marco "Obeya" (equipo virtual multidisciplinario + Master Black Belt) — ver sección 0.7
+
+**Sesión:** Sonnet5-20260726-A
+
+Por instrucción de Jesús: cualquier sesión que razone sobre este
+proyecto debe poder convocar, cuando la decisión lo justifique, una
+junta virtual tipo Obeya con dos alas — obra (Rompeolas Oriente:
+Director de Obra, Logística de Acarreos, Dirección Financiera,
+Seguridad e Higiene, Lean Construction/FARO) y software (Arquitecto,
+QA, Seguridad, DBA, UX de campo) — facilitada por un Master Black Belt
+Lean Six Sigma cuya directiva es cazar desperdicio de pensamiento y
+retrabajo (framework DOWNTIME) en ambos lados.
+
+Se agregó la sección 0.7 con el detalle completo de cuándo convocarla,
+el formato mínimo, y una advertencia explícita (mía, sin filtro) sobre
+el riesgo de que este marco se vuelva teatro narrativo en vez de una
+herramienta real de priorización — si una sesión encuentra que está
+llenando el formato sin decir nada nuevo, debe cortarlo y responder
+directo.

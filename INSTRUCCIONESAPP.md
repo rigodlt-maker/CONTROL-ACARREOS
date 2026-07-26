@@ -144,7 +144,40 @@ puntual que estás tocando, en vez de leer las 35 secciones de corrido.
 
 ---
 
+## 0.6 — Protocolo de ID de sesión (obligatorio desde 26-jul-2026)
 
+**Por qué existe esto:** el 26-jul-2026 se descubrió que trabajo hecho
+en una sesión (vía GitHub directo, fuera de este canal) se perdió al
+sobrescribirlo desde otra sesión que partió de una copia distinta
+(Google Drive) sin saber que existía (ver sección 63). Para que esto no
+se repita, y para que Jesús pueda rastrear qué IA/sesión hizo qué
+cambio, toda sesión que edite `index.html`, `INSTRUCCIONESAPP.md`,
+`sw.js` o `manifest.json` en este repo debe seguir esto:
+
+1. **Al iniciar la sesión**, elegir un ID propio con el formato
+   `[Modelo]-[YYYYMMDD]-[letra]` — por ejemplo `Sonnet5-20260726-A`. La
+   letra sirve para distinguir dos sesiones del mismo modelo el mismo
+   día (si la sesión A ya se usó ese día, la siguiente es B, etc.). El
+   modelo se identifica con su propio nombre real (el que aparezca en
+   sus instrucciones de sistema o el que el usuario le indique), no con
+   "Claude" genérico.
+2. **Al hacer cualquier cambio de código o de bitácora**, la entrada
+   correspondiente en la sección cronológica (## N. fecha — ...) debe
+   empezar su primer párrafo con `**Sesión:** [ID]`.
+3. **Antes de sobrescribir un archivo completo** (subir una versión
+   nueva de `index.html` o `INSTRUCCIONESAPP.md`), si es técnicamente
+   posible, comparar contra la versión actual del repo (no solo confiar
+   en una copia local/de Drive/de otra fuente) para detectar si hubo
+   cambios de otra sesión que no se conocían. Si no es posible comparar,
+   decirlo explícitamente en la entrega ("no pude verificar contra el
+   repo actual, verificar antes de subir") en vez de asumir que la copia
+   de partida era la más reciente.
+4. **Esta sesión actual se identifica como `Sonnet5-20260726-A`** (Claude
+   Sonnet 5, trabajando directo contra el repo de GitHub por instrucción
+   de Jesús a partir de esta fecha — ya no se usa Drive para este
+   proyecto).
+
+---
 
 ## 1. Roles reales del sistema (verificado en `index.html`, línea ~465)
 
@@ -4801,3 +4834,27 @@ comentario en el código señalando esta recuperación.
 **Pendiente para Jesús:** confirmar que no hay más trabajo hecho
 "solo en GitHub, nunca en Drive" (o viceversa) antes de seguir usando
 ambos como si fueran espejos exactos uno del otro.
+
+## 64. 26-jul-2026 — Se establece protocolo de ID de sesión (ver sección 0.6) y se pasa a trabajar directo contra GitHub
+
+**Sesión:** Sonnet5-20260726-A
+
+Por instrucción directa de Jesús, a partir de hoy se trabaja
+**directo contra el repositorio de GitHub**
+(`rigodlt-maker/CONTROL-ACARREOS`), y se deja de usar Google Drive como
+fuente de este proyecto — precisamente por el incidente de la sección
+63.
+
+Se agrega la sección 0.6 con el protocolo de identificación: cada
+sesión (de cualquier IA, no solo Claude) elige su propio ID
+(`[Modelo]-[YYYYMMDD]-[letra]`) al empezar, y lo antepone a cualquier
+entrada que agregue aquí. El objetivo es poder rastrear qué sesión hizo
+qué cambio, y detectar más rápido si dos sesiones trabajaron sobre
+copias distintas sin saberlo (como pasó con Drive vs. GitHub).
+
+Esta sesión se identifica como **`Sonnet5-20260726-A`**.
+
+**Nota operativa:** esta sesión no tiene forma de hacer `git push`
+directo al repo — el flujo sigue siendo clonar/leer, entregar el
+archivo corregido, y que Jesús lo suba manualmente. El ID de sesión
+documenta quién *preparó* el cambio, no quién lo subió.

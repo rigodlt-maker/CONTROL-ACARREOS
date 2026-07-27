@@ -789,14 +789,14 @@ window.cargarPanelAdmin = function() {
             </div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
-            ${u.status !== 'autorizado'
+            ${(u.status !== 'autorizado' && puedeEliminar)
               ? `<button onclick="cambiarStatusUsuario('${escHtml(u._uid)}','autorizado')" style="background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Autorizar</button>`
-              : (() => {
+              : (u.status === 'autorizado' ? (() => {
                   const puedeRevocar = esMaster || (esAdmin && rolUsuario === 'capturista');
                   return puedeRevocar
                     ? `<button onclick="cambiarStatusUsuario('${escHtml(u._uid)}','pendiente')" style="background:var(--danger);color:white;border:none;padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Revocar</button>`
                     : '';
-                })()
+                })() : '')
             }
             ${puedeEliminar
               ? `<button onclick="eliminarUsuario('${escHtml(u._uid)}','${escHtml(u.nombre||u.email||'').replace(/'/g,"\\'")}')" style="background:var(--danger-light);color:var(--danger);border:0.5px solid rgba(163,45,45,0.3);padding:8px 12px;border-radius:8px;font-size:12px;cursor:pointer;">🗑️ Eliminar</button>`
@@ -2709,12 +2709,14 @@ window.dbFilaBasculaBuscarAbiertas = async function (campo, valor) {
 };
 
 // Six Sigma Bloque B.2 v2: camiones disponibles para el desplegable de
-// Placas en Captura — se filtra SOLO por tipo_camion (único where, sin
-// índice compuesto nuevo) y el resto (cerrado, id_ticket, t3_salida_ts) se
-// filtra en JS del lado del cliente, ya que fila_bascula es una colección
-// chica y acotada a los camiones actualmente en ciclo.
+// Placas en Captura. 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 72):
+// se agrega where('cerrado','==',false) — sin esto, la lectura crecía sin
+// límite con el tiempo (ningún registro cerrado se purga), leyendo todo
+// el histórico de ese tipo de camión en cada apertura de "Nueva captura".
+// Puede pedir crear un índice compuesto (tipo_camion + cerrado) la primera
+// vez — Firestore da el link directo en la consola del navegador.
 window.dbFilaBasculaBuscarPorTipo = async function (tipoCamion) {
-  const snap = await getDocs(query(collection(db_f, 'fila_bascula'), where('tipo_camion', '==', tipoCamion)));
+  const snap = await getDocs(query(collection(db_f, 'fila_bascula'), where('tipo_camion', '==', tipoCamion), where('cerrado', '==', false)));
   return snap.docs.map(d => ({ id: d.id, data: d.data() }));
 };
 
@@ -7748,6 +7750,22 @@ window.toggleSegundaPlacaFila = toggleSegundaPlacaFila;
 // try/finally para garantizar que el botón se reactive SIEMPRE al
 // salir, ya sea por una validación fallida o porque terminó bien, sin
 // tener que repetir `btn.disabled = false` en cada punto de salida.
+// 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 74) — Fase 1 del pendiente de
+// manejo offline en Fila Báscula: NO se encola nada (a diferencia de
+// saveRecord/saveToOutbox), solo se reemplaza el error crudo de Firebase por
+// un mensaje claro cuando la causa es falta de señal, para que el
+// capturista sepa que su registro NO se guardó y hay que reintentarlo —
+// antes veía un mensaje técnico en inglés sin saber si su camión quedó
+// registrado o no. A nivel de módulo (no dentro de otra función) para que
+// esté disponible desde el arranque, no solo después de la primera llamada.
+function mensajeErrorFilaBascula(accion, e) {
+  if (!navigator.onLine || (e && e.code === 'unavailable')) {
+    return 'Sin señal — el registro de "' + accion + '" NO se guardó. Verifica tu conexión e inténtalo de nuevo en unos segundos.';
+  }
+  return 'Error al ' + accion + ': ' + (e && e.message ? e.message : e);
+}
+window.mensajeErrorFilaBascula = mensajeErrorFilaBascula;
+
 window.registrarEntradaFila = async function(btn) {
   if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
@@ -7827,7 +7845,7 @@ window.registrarEntradaFila = async function(btn) {
     toggleSegundaPlacaFila();
     window.showSyncToast('✅', 'Entrada registrada', 'ok');
   } catch (e) {
-    alert('Error al registrar entrada: ' + e.message);
+    alert(mensajeErrorFilaBascula('registrar entrada', e));
   }
   } finally {
     if (btn) btn.disabled = false;
@@ -7847,7 +7865,7 @@ window.registrarSalidaFrente = async function(filaId, btn) {
     window.showSyncToast('✅', 'Sale a tiro registrado', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
-    alert('Error al registrar salida: ' + e.message);
+    alert(mensajeErrorFilaBascula('registrar salida', e));
   }
 };
 
@@ -7924,8 +7942,12 @@ window.eliminarRegistroFilaBascula = async function(id, btn) {
     // (línea ~620) detecta el borrado y dispara onFilaBasculaCambio() solo.
   } catch (e) {
     console.warn('No se pudo eliminar el registro de fila_bascula:', e);
-    alert('No se pudo eliminar (' + (e.code || 'error desconocido') + '): ' + (e.message || e) +
-          '\n\nMándale una captura de este mensaje a Claude para diagnosticarlo.');
+    if (!navigator.onLine || (e && e.code === 'unavailable')) {
+      alert(mensajeErrorFilaBascula('eliminar', e));
+    } else {
+      alert('No se pudo eliminar (' + (e.code || 'error desconocido') + '): ' + (e.message || e) +
+            '\n\nMándale una captura de este mensaje a Claude para diagnosticarlo.');
+    }
     if (btn) btn.disabled = false;
   }
 };
@@ -8069,7 +8091,7 @@ window.registrarEntradaFilaSegunda = async function(filaId, btn) {
     window.showSyncToast('✅', '2da entrada a fila registrada', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
-    alert('Error al registrar entrada: ' + e.message);
+    alert(mensajeErrorFilaBascula('reclamar el camión para destare', e));
   }
 };
 // 32.4 (21-jul-2026) — "Autoliberar": quien reclamó el camión (además de
@@ -8090,7 +8112,7 @@ window.liberarCamionFilaSegunda = async function(filaId, btn) {
     window.showSyncToast('↩️', 'Camión liberado y reiniciado — ya lo puede tomar cualquiera desde cero', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
-    alert('Error al liberar el camión: ' + e.message);
+    alert(mensajeErrorFilaBascula('liberar el camión', e));
   }
 };
 window.registrarSalidaFilaSegunda = async function(filaId, btn) {
@@ -8107,7 +8129,7 @@ window.registrarSalidaFilaSegunda = async function(filaId, btn) {
     window.showSyncToast('✅', 'Destarado registrado — ya puedes capturar el peso en Pendientes', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
-    alert('Error al registrar destarado: ' + e.message);
+    alert(mensajeErrorFilaBascula('registrar destarado', e));
   }
 };
 

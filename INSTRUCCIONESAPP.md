@@ -5236,3 +5236,35 @@ Decisiones de Jesús: Rezaga sin clasificación de rango (siempre pendiente), pe
 **Cambios:** (1) opción "Rezaga" agregada a `f-material`; (2) `EXCLUSIONES_DESTINO_POR_MATERIAL` — se agregó 'AREA DE PREFABRICADOS' a la exclusión de Núcleo/Secundaria 1-2/Berma/Berma de Apoyo, y nueva entrada `REZAGA: ['ACOPIO MARINO','ACOPIO TERRESTRE']`; (3) `updateRangos()` auto-marca y deshabilita "pendiente" cuando material=REZAGA **y no es edición** (`!window._editFid` — se encontró y corrigió a tiempo un bug real: sin ese candado, editar un ticket viejo de Rezaga con rango histórico real lo hubiera sobrescrito a 'PENDIENTE' al guardar, por cómo `saveRecord()` prioriza el checkbox sobre el valor del campo).
 
 **Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.
+
+## 72. 26-jul-2026 — Zona horaria: sin hallazgos. Costo de lecturas: `dbFilaBasculaBuscarPorTipo()` corregido
+
+**Sesión:** Sonnet5-20260726-A
+
+**Zona horaria:** el dato crítico (`fecha1`/`dia_captura`, decide el mes de cada ticket) ya usa `timeZone:'America/Mexico_City'` explícito — correcto. Solo `isoHoy()` (pre-rellenar filtro "este mes" en Resumen/Bancos/Reportes) usa hora local del dispositivo — bajo riesgo, no toca datos guardados, usuario puede corregir el filtro a mano. Sin fix necesario.
+
+**Costo de lecturas:** `dbFilaBasculaBuscarPorTipo()` (llena el desplegable de Placas en cada "Nueva captura") filtraba solo por `tipo_camion`, sin `cerrado` — con 300-500 tickets/día y sin purga de registros cerrados, la lectura iba a crecer sin límite con el tiempo. Se agregó `where('cerrado','==',false)`, mismo patrón que su función hermana `dbFilaBasculaBuscarAbiertas`. Puede pedir crear índice compuesto (tipo_camion+cerrado) la primera vez — Firestore da el link en consola. Los 3 botones "Recalcular..." (admin) sí leen la colección completa sin cooldown, pero ya tienen su propio `confirm()` de aviso y deshabilitan el botón mientras corren — riesgo bajo, uso admin poco frecuente, sin cambio.
+
+**Verificación:** `node --check` limpio en ambos bloques.
+
+## 73. 26-jul-2026 — Botón "Autorizar" ya respeta el candado de rol (mismo criterio que Revocar/Eliminar) — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+El botón "Autorizar" (Admin → Usuarios, cuentas con status 'pendiente') se mostraba a cualquiera sin filtrar por rol del usuario objetivo, a diferencia de "Revocar"/"Eliminar". Se agregó la misma condición `puedeEliminar` (`esMaster || (esAdmin && rolUsuario==='capturista')`) — un admin ya no ve el botón para un pendiente que no sea capturista, evitando el error crudo de Firestore al intentarlo.
+
+**Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.
+
+## 74. 26-jul-2026 — H-05 Fase 1: mensajes claros de "sin señal" en los 6 puntos de escritura de Fila Báscula — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+Decisión de Jesús: solo Fase 1 (mensaje claro), sin cola offline — la app es webapp, no corre sin internet desde cero (los otros 3 puntos con cola offline cubren señal intermitente con la página ya cargada, no "cero internet").
+
+**Qué se cambió:** helper `mensajeErrorFilaBascula(accion, e)` a nivel de módulo (disponible desde el arranque) — si `!navigator.onLine` o `e.code==='unavailable'`, muestra "Sin señal — el registro de X NO se guardó..." en vez del error crudo de Firebase; para cualquier otro tipo de error, conserva el mensaje técnico original (no se oculta información real de un bug). Aplicado en los 6 puntos: registrar entrada, registrar salida, reclamar para destare, liberar camión, registrar destarado, eliminar (este último conserva además su mensaje extendido de diagnóstico para errores que no sean de señal). No se tocó `procesarFilaBasculaDeTicket` (línea ~8138): esa escritura vive dentro del flujo de cierre de ticket, ya cubierto por el manejo de la sección 68.
+
+**Nota de implementación:** el primer intento puse el helper DENTRO de `registrarEntradaFila()` por error — no hubiera estado disponible hasta la primera vez que alguien registrara una entrada. Se corrigió antes de entregar, moviéndolo a nivel de módulo.
+
+**Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.
+
+**Pendiente, sin decidir:** la Fase 2 (cola offline real para Fila Báscula) queda descartada por ahora según el razonamiento de Jesús arriba.

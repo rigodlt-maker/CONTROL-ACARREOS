@@ -1145,9 +1145,18 @@ async function aplicarAgregadoAvanceAcopio(rec, signo) {
         await updateDoc(ref, payload);
       } catch (e2) {
         console.error('No se pudo crear/actualizar resumenes/avance_acopio:', e2);
+        // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 68): este fallo antes
+        // era silencioso — el ticket se guarda bien, pero el agregado en
+        // tiempo real de Avances/Acopios queda desactualizado sin que nadie
+        // en campo se entere. Se avisa con toast (no alert(), para no
+        // bloquear la captura) y se deja el console.error para diagnóstico.
+        if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero Avances/Acopios no se pudo actualizar. Usa "Recalcular totales" en Admin.', 'err', 7000);
       }
     } else {
       console.error('No se pudo actualizar resumenes/avance_acopio:', e);
+      // 26-jul-2026 (ver sección 68): mismo criterio que arriba — aviso
+      // visual sin bloquear la captura.
+      if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero Avances/Acopios no se pudo actualizar. Usa "Recalcular totales" en Admin.', 'err', 7000);
     }
   }
 }
@@ -1283,9 +1292,15 @@ async function aplicarResumen(rec, signo) {
         await updateDoc(ref, payload);
       } catch (e2) {
         console.error('No se pudo crear/actualizar el resumen de ' + mes + ':', e2);
+        // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 68): aviso visual —
+        // el ticket se guarda bien, pero el resumen mensual (Resumen,
+        // Gráficos, Reportes) queda desactualizado sin aviso hasta ahora.
+        if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el resumen del mes no se pudo actualizar. Usa "Recalcular resumen" en Admin.', 'err', 7000);
       }
     } else {
       console.error('No se pudo actualizar el resumen de ' + mes + ':', e);
+      // 26-jul-2026 (ver sección 68): mismo criterio que arriba.
+      if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el resumen del mes no se pudo actualizar. Usa "Recalcular resumen" en Admin.', 'err', 7000);
     }
   }
 

@@ -5058,3 +5058,42 @@ tienen lectores reales, y su tamaño está acotado por el catálogo de
 combinaciones banco×material×destino×tipo_camión (no crece con cada
 registro nuevo, solo con combinaciones nuevas), así que no hay el mismo
 problema ahí.
+
+## 68. 26-jul-2026 — 🟡 Fallos silenciosos en `aplicarResumen()`/`aplicarAgregadoAvanceAcopio()` ahora avisan con toast — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Qué estaba mal (de la auditoría, sección 62/Bloque 4):** si escribir
+el agregado de `resumenes/{mes}` o `resumenes/avance_acopio` fallaba
+(incluida la rama donde el doc ni siquiera existía y el `setDoc` de
+emergencia también fallaba), el error se tragaba con `console.error` —
+sin ningún aviso visual. El ticket en sí se guardaba bien; solo el
+agregado en tiempo real quedaba desactualizado, sin que nadie en campo
+lo notara.
+
+**Qué se cambió:** en las 4 ramas de catch afectadas (2 en
+`aplicarResumen()`, 2 en `aplicarAgregadoAvanceAcopio()`) se agregó
+`window.showSyncToast('⚠️', ..., 'err', 7000)` junto al
+`console.error` que ya existía. Se usó el toast existente (`err`,7 s)
+en vez de `alert()` a propósito — un `alert()` bloquea la pantalla y
+detendría al capturista a media faena por un fallo que no es culpa
+suya y que no le impide seguir trabajando; el toast avisa sin
+bloquear, y el mensaje le dice qué botón de Admin usar para corregirlo
+("Recalcular resumen"/"Recalcular totales").
+
+**Verificación antes de entregar:**
+- `node --check` limpio en ambos bloques (`module` y normal).
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Confirmé que `window.showSyncToast` ya se usa desde el bloque
+  `module` en otras partes (ej. `deleteRecord()`, sección 63) — mismo
+  patrón, sin problema de orden de carga entre `<script type="module">`
+  (diferido) y el `<script>` normal donde vive `showSyncToast` (se
+  ejecuta antes por ser síncrono, sin `defer`/`async`).
+
+**No se tocó:** el resto de los `catch(e){ console.warn/error(...) }`
+que se revisaron en la auditoría original (lecturas de respaldo tipo
+"No se pudo leer el resumen de X mes") — esos son fallos de LECTURA
+con fallback silencioso aceptable (el dato de ese mes simplemente no
+se suma, no hay corrupción ni desfase permanente), distinto de estos 4
+que son fallos de ESCRITURA de un agregado que sí queda desactualizado
+hasta que alguien lo note.

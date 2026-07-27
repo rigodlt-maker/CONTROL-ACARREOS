@@ -2032,6 +2032,22 @@ window.deleteRecord = async function() {
     await aplicarResumen(r, -1); // FASE 5: Await crítico
     await aplicarAgregadoAvanceAcopio(r, -1); // Fase 14.2: Await crítico
     await eliminarStatsAnalisisDeTicket(window._currentFid, r ? r.boleta : null, r); // 24-jul-2026: limpia stats_analisis ligado a este ticket (NO toca 'flota', ver comentario arriba)
+    // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 70): reportado por Jesús —
+    // al borrar un ticket que sí llegó a "Entrada a fila" (tiene
+    // fila_bascula_id), ese documento de fila_bascula quedaba huérfano:
+    // seguía apareciendo en "Camiones Destare" apuntando a un id_ticket que
+    // ya no existe, sin forma de completarlo (no hay ticket que destarar) ni
+    // de liberar la placa para una captura nueva. Se borra también aquí —
+    // el camión sale completo del sistema, igual que el ticket que lo
+    // originó. Tolerante a tickets viejos sin fila_bascula_id (no todos lo
+    // tienen): si no existe el campo, o el doc ya no existe, no hace nada.
+    if (r && r.fila_bascula_id) {
+      try {
+        await window.dbFilaBasculaEliminar(r.fila_bascula_id);
+      } catch (e) {
+        console.warn('No se pudo eliminar el registro huérfano de fila_bascula:', e);
+      }
+    }
     closeModalForce();
     window.showSyncToast('✅', 'Registro eliminado', 'ok');
   } catch(err) {

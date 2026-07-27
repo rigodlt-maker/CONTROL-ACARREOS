@@ -5156,3 +5156,73 @@ reales (no solo contra la documentación):**
   línea por línea contra el archivo original. Recomendado: probar el
   guardado de un ticket con destino "Área de Prefabricados" en cuanto
   se despliegue, para confirmar en producción real.
+
+## 70. 26-jul-2026 — Prueba de campo del fix de la sección 69 encuentra 2 hallazgos nuevos: regla de negocio de Rezaga/Prefabricados (🟡 pendiente de decisión) y ticket eliminado deja huérfana su fila de báscula (🔴 CORREGIDO)
+
+**Sesión:** Sonnet5-20260726-A
+
+**Contexto:** Jesús probó en la app real el fix de la sección 69
+(destino "Área de Prefabricados"). El guardado sí funcionó (confirma
+que el fix de `firestore.rules` quedó bien publicado). Durante la
+prueba encontró 2 cosas más.
+
+**🟡 Hallazgo 1 — regla de negocio, PENDIENTE de decisión de Jesús (no
+corregido todavía):** el campo de rango no deja capturar nada para
+"Área de Prefabricados" — esto NO es un bug, es diseño intencional (el
+campo es `readonly` para todo destino que no sea Cuerpo/Acopio, se
+llena solo desde catálogo o se marca "pendiente"). Pero al probarlo,
+Jesús aclaró la regla de negocio real: **"Área de Prefabricados" es
+una plataforma de colados, no debería recibir NINGÚN material tipo
+piedra (Núcleo, Berma, Secundaria 1/2) — solo Rezaga.** Hoy
+`EXCLUSIONES_DESTINO_POR_MATERIAL` solo excluye ese destino para
+CORAZA; todo lo demás pasa. Esto retoma el pendiente de la sección
+25.2 (Rezaga nunca se agregó al catálogo de `f-material` por falta de
+reglas de negocio) — ya con la regla real en mano. Quedan 2 caminos sin
+decidir todavía:
+  1. Excluir "Área de Prefabricados" de TODOS los materiales actuales
+     (el destino queda huérfano hasta que se agregue Rezaga).
+  2. Agregar Rezaga al catálogo de materiales ahora, y que sea el
+     único que pueda ir a ese destino.
+
+**🔴 Hallazgo 2 — CORREGIDO:** Jesús (cuenta master) intentó eliminar
+el ticket de prueba desde "Base de Datos", esperando que también
+limpiara su registro en Fila Báscula (ya que un ticket borrado = mal
+capturado/de prueba, y ya no hay nada que destarar). Resultado real:
+`deleteRecord()` borraba el ticket de `acarreos` correctamente, pero
+**nunca tocaba el documento de `fila_bascula` ligado** — quedaba
+huérfano, apuntando (`id_ticket`) a un ticket que ya no existe, sin
+forma de completarlo (no hay ticket que destarar) ni de liberar la
+placa para una captura nueva desde la UI. Confirmado en el código:
+esto aplica a CUALQUIER ticket con `fila_bascula_id` (o sea, todo
+ticket que nació de "Entrada a fila" normal), no solo a los de
+prueba — riesgo real en campo, no solo de testing.
+
+**Junta Obeya realizada (ver sección 0.7):** Logística de Acarreos
+confirmó que un camión así queda "fantasma"; Arquitecto señaló que ya
+existe el mismo patrón para `stats_analisis` (sección 61/63) y que
+extenderlo a `fila_bascula` es consistente, no una idea nueva; QA pidió
+tolerancia a tickets viejos sin `fila_bascula_id`; Master Black Belt lo
+marcó como defecto real de flujo (DOWNTIME: Defectos).
+
+**Qué se cambió:** en `deleteRecord()`, si el ticket tenía
+`fila_bascula_id`, ahora también se borra ese documento de
+`fila_bascula` (vía `dbFilaBasculaEliminar`, ya existente — mismo
+candado de permisos `esMaster()` en las reglas, sin cambios ahí).
+Tolerante: si el ticket no tenía `fila_bascula_id` (tickets viejos), o
+el doc ya no existe, no hace nada — envuelto en su propio try/catch
+para no bloquear el resto del borrado si esto falla.
+
+**Aclaración importante — esto NO se aplicó retroactivamente:** el
+ticket de prueba original de Jesús (el que quedó huérfano ANTES de
+este fix) sigue huérfano en `fila_bascula` — este cambio solo afecta
+eliminaciones FUTURAS. Para limpiar ese registro de prueba específico,
+hay que borrarlo manualmente desde la consola de Firebase, o
+re-registrar una "Entrada a fila" nueva con esas mismas placas (crea un
+documento nuevo e independiente, sin tocar el huérfano) y luego usar el
+botón 🗑️ de Fila Báscula sobre el huérfano viejo directamente.
+
+**Verificación antes de entregar:**
+- `node --check` limpio en ambos bloques (`module` y normal).
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Confirmé que `esMaster()` en `firestore.rules` ya cubre el delete de
+  `fila_bascula` sin necesitar ningún cambio de reglas.

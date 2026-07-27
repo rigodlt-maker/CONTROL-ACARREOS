@@ -932,8 +932,17 @@ function startRealtimeSync(rol) {
         appReady();
         renderDB();
       } else {
-        renderDB();
-        if (document.getElementById('tab-db').classList.contains('active')) {
+        // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 75): renderDB() es
+        // pesado (filtra, agrupa tarjetas de Barcaza, reconstruye la lista) y
+        // antes corría COMPLETO en cada escritura de CUALQUIER usuario, aunque
+        // la pestaña "Base de Datos" no estuviera abierta — con 300-500
+        // viajes/día eso significa trabajo pesado constante en segundo plano
+        // en el celular de cada capturista. Ahora solo se llama si la pestaña
+        // está realmente visible; el botón del menú (arriba) fuerza un
+        // render fresco al entrar, así que la lista nunca queda obsoleta.
+        const tabDBActivo = document.getElementById('tab-db').classList.contains('active');
+        if (tabDBActivo) renderDB();
+        if (tabDBActivo) {
           updateSyncNote(
             (recortado
               ? '⚠️ Se alcanzó el tope de carga (' + tope.toLocaleString('es-MX') + '). Pueden faltar registros más antiguos de esta ventana — usa "Ver TODO el histórico" para buscarlos. · '
@@ -2996,7 +3005,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 2h6a1 1 0 011 1v1H8V3a1 1 0 011-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></svg>
       Reportes
     </button>
-    <button class="nav-item" id="nd-db" style="display:none" onclick="showTab('db')">
+    <button class="nav-item" id="nd-db" style="display:none" onclick="showTab('db'); if (window.renderDB) window.renderDB();">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
       Base de datos
     </button>

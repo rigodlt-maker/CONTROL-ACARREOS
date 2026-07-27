@@ -5268,3 +5268,18 @@ Decisión de Jesús: solo Fase 1 (mensaje claro), sin cola offline — la app es
 **Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.
 
 **Pendiente, sin decidir:** la Fase 2 (cola offline real para Fila Báscula) queda descartada por ahora según el razonamiento de Jesús arriba.
+
+## 75. 26-jul-2026 — Causa real de la lentitud a 6,000 viajes: `renderDB()` corría completo en cada escritura, aunque la pestaña no estuviera visible — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Causa raíz encontrada:** el listener principal de `acarreos` (`onSnapshot`, ventana de `ventanaDias` días, tope 3,000-9,500 docs) llamaba `renderDB()` — función pesada: filtra, agrupa tarjetas de Barcaza, reconstruye la lista — en CADA escritura de CUALQUIER usuario, sin verificar si la pestaña "Base de Datos" estaba siquiera abierta. Con captura activa de varios capturistas, esto significa trabajo pesado constante en segundo plano en cada celular conectado, sin que nadie lo esté viendo — probablemente la causa principal de la lentitud reportada a solo 6,000 registros totales.
+
+**Fix:** `renderDB()` ahora solo corre si `#tab-db` está activa. El botón del menú "Base de Datos" fuerza un render fresco al entrar, así la lista nunca se ve obsoleta.
+
+**Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados.
+
+**Otros riesgos de escala identificados (400-500k registros), sin corregir todavía — requieren decisión/priorización de Jesús:**
+1. `LIMITE_VENTANA` (tope 9,500 docs en la ventana de 30 días): a 300-500 viajes/día, 30 días = 9,000-15,000 — va a chocar con el tope regularmente, mostrando "⚠️ Se alcanzó el tope de carga" cada vez más seguido. Requiere decidir: ¿bajar la ventana default, subir el tope, o rediseñar a paginación real?
+2. El listener remapea TODO el array (`snapshot.docs.map(...)`) en cada cambio, en vez de procesar solo `snapshot.docChanges()` (patrón estándar de Firestore para listeners grandes) — más costoso de lo necesario incluso con el fix de este punto, pero de menor impacto ahora que ya no corre en segundo plano.
+3. No se auditó a fondo el resto de funciones que procesan arrays completos en el cliente (Gráficos, Reportes) para confirmar cuáles escalan mal a cientos de miles de registros — pendiente si se quiere profundizar.

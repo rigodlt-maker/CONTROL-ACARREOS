@@ -5283,3 +5283,17 @@ Decisión de Jesús: solo Fase 1 (mensaje claro), sin cola offline — la app es
 1. `LIMITE_VENTANA` (tope 9,500 docs en la ventana de 30 días): a 300-500 viajes/día, 30 días = 9,000-15,000 — va a chocar con el tope regularmente, mostrando "⚠️ Se alcanzó el tope de carga" cada vez más seguido. Requiere decidir: ¿bajar la ventana default, subir el tope, o rediseñar a paginación real?
 2. El listener remapea TODO el array (`snapshot.docs.map(...)`) en cada cambio, en vez de procesar solo `snapshot.docChanges()` (patrón estándar de Firestore para listeners grandes) — más costoso de lo necesario incluso con el fix de este punto, pero de menor impacto ahora que ya no corre en segundo plano.
 3. No se auditó a fondo el resto de funciones que procesan arrays completos en el cliente (Gráficos, Reportes) para confirmar cuáles escalan mal a cientos de miles de registros — pendiente si se quiere profundizar.
+
+## 76. 26-jul-2026 — Ventana de carga de "Base de Datos" redimensionada para 300-500 viajes/día — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+Confirmado por Jesús: "Base de Datos" (ventana en vivo) casi siempre se usa para días recientes (pendientes, correcciones) — el historial viejo se resuelve con Reportes/Resumen o "Ver TODO el histórico". Con eso:
+
+**Qué se cambió:**
+- Opciones de ventana: de 7/30/90/365 días a **7/15/30 días** (default 7, antes 30). 90/365 días quedaban muy por debajo de lo prometido a este volumen de todos modos (ej. "30 días" en realidad solo mostraba 12-20 días de datos reales antes de este fix).
+- `LIMITE_VENTANA`: `{7:4000, 15:8500, 30:16000}` (antes `{7:3000, 30:6000, 90:9500, 365:9500}`), techo duro de 9500→17000 — dimensionado para 300-500 viajes/día real, no para el volumen de cuando se escribió el código original.
+
+**Pendiente relacionado, NO corregido (fuera de lo que se pidió hoy):** `cargarHistoricoParaVisor()` (línea ~985) sigue cargando 90 días fijos con `traerTodoFirestore()` para el rol visor — a 300-500/día eso son 27,000-45,000 lecturas POR SESIÓN de visor, y el comentario original ya advertía que puede haber varios visores a la vez (ej. 4 directores). Vale la pena revisarlo en otra sesión — mismo cupo compartido de 50,000/día que el bot de Telegram.
+
+**Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.

@@ -1,0 +1,243 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function miPerfil() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function estaAutorizado() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && miPerfil().status == 'autorizado';
+    }
+
+    function rol() {
+      return miPerfil().rol;
+    }
+
+    function esAdmin() {
+      return estaAutorizado() && (rol() == 'admin' || rol() == 'master');
+    }
+
+    function esMaster() {
+      return estaAutorizado() && rol() == 'master';
+    }
+
+    // Coordinador: puede ver y completar/editar CUALQUIER acarreo
+    // (no solo los propios), pero no administra usuarios.
+    function esCoordinador() {
+      return estaAutorizado() && rol() == 'coordinador';
+    }
+
+    // Six Sigma Bloques B.1/B.2: mismo set de roles que ya pueden crear/editar
+    // en acarreos (capturista, coordinador, admin, master). fila_bascula y
+    // stats_analisis se llenan como subproducto del flujo normal de captura,
+    // así que necesitan el mismo permiso que ya tiene acarreos.
+    function puedeCapturar() {
+      return estaAutorizado() && rol() in ['capturista', 'coordinador', 'admin', 'master'];
+    }
+
+    // FASE 8 — Validación de los campos que alimentan el "concepto de negocio"
+    // (origen_tipo, tipo_camion, concepto). Sin esto, cualquier cliente
+    // autorizado podía escribir un valor inventado o vacío en estos campos y
+    // romper silenciosamente los totales de Avances/Acopios, ya que esas
+    // pestañas confían en r.concepto tal cual está guardado. Los conjuntos de
+    // valores permitidos son un espejo exacto de computeConcepto() en
+    // index.html — si esa función cambia, actualizar aquí también.
+    // Nota: '' se permite en concepto porque computeConcepto() puede devolver
+    // cadena vacía para combinaciones origen/destino no contempladas (caso
+    // límite ya existente en el código, no introducido por esta regla).
+    function origenTipoValido(data) {
+      return !('origen_tipo' in data) || data.origen_tipo in ['BANCO', 'ACOPIO'];
+    }
+
+    // FASE 10: 'BARCAZA' se elimina del catálogo — ya no existe ese tipo de
+    // camión (los registros históricos que lo usaban fueron borrados de la
+    // base por decisión del usuario, jul-2026). Se agrega 'ARTICULADO'
+    // (camión que carga las barcazas).
+    function tipoCamionValido(data) {
+      return !('tipo_camion' in data) || data.tipo_camion in ['VOLTEO', 'GONDOLA', 'ARTICULADO'];
+    }
+
+    // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 69): se agrega
+    // 'SUMINISTRO_PREFABRICADOS' — computeConcepto() en index.html lo
+    // devuelve desde que se agregó el destino "Área de Prefabricados"
+    // (jul-2026), pero esta lista nunca se actualizó. Sin este valor,
+    // CUALQUIER ticket con ese destino era rechazado por Firestore con
+    // "Missing or insufficient permissions" al guardar — bug real y
+    // activo, encontrado al cruzar esta regla contra el código.
+    function conceptoValido(data) {
+      return !('concepto' in data) || data.concepto in ['', 'SUMINISTRO', 'SUMINISTRO_PREFABRICADOS', 'COLOCACION_TERRESTRE', 'COLOCACION_MARINA', 'TRANSFERENCIA_ACOPIOS'];
+    }
+
+    // FASE 10: 'vertido' es el nuevo campo explícito (Marino/Terrestre) que
+    // reemplaza la inferencia de medio marino a partir de tipo_camion='BARCAZA'.
+    function vertidoValido(data) {
+      return !('vertido' in data) || data.vertido in ['', 'MARINO', 'TERRESTRE'];
+    }
+
+    function camposConceptoValidos(data) {
+      return origenTipoValido(data) && tipoCamionValido(data) && conceptoValido(data) && vertidoValido(data);
+    }
+
+    // 21-jul-2026 (sección 32.2 de INSTRUCCIONESAPP.md) — CAUSA RAÍZ del bug
+    // "Missing or insufficient permissions" al completar un destare: la regla
+    // de update de acarreos solo dejaba pasar al creador original del ticket
+    // (creadoPor) o a coordinador/admin/master. El diseño de las secciones
+    // 26.2/27.2 ya asumía que CUALQUIER capturista podía destarar un ticket
+    // que él no creó (destare en cualquier báscula) — pero nunca se ajustó
+    // esta regla de escritura para permitirlo, solo la visibilidad en la UI.
+    //
+    // Esta función deja pasar el update si quien escribe es quien registró el
+    // "Destarado" de ese ciclo (fila_bascula.destarado_por, campo agregado en
+    // la sección 27.2 / registrarSalidaFilaSegunda, confirmado existente en
+    // index.html línea ~7665). Tolerante a datos viejos: si el ticket no trae
+    // fila_bascula_id, o el doc de fila_bascula referenciado no existe o no
+    // tiene destarado_por (destares de antes de este cambio), simplemente no
+    // aplica y se sigue exigiendo creadoPor/coordinador/admin/master como
+    // antes — no se migra histórico, ver sección 32.2.
+    function fueDestaradoPorMi(data) {
+      return 'fila_bascula_id' in data
+        && data.fila_bascula_id != ''
+        && exists(/databases/$(database)/documents/fila_bascula/$(data.fila_bascula_id))
+        && get(/databases/$(database)/documents/fila_bascula/$(data.fila_bascula_id)).data.get('destarado_por', '') == request.auth.uid;
+    }
+
+    match /usuarios/{uid} {
+      // Usuario autorizado lee la lista; usuario no autorizado solo lee su propio doc
+      allow read: if estaAutorizado() || request.auth.uid == uid;
+
+      // FASE 13 — Se elimina el auto-registro público. El código de
+      // invitación vivía en un repo público, por lo que no frenaba a nadie
+      // que lo buscara; solo servía para acumular cuentas 'pendiente' sin
+      // control. Ahora SOLO un usuario master puede crear cuentas nuevas,
+      // y las crea ya autorizadas (ver crearCuentaMaster en index.html).
+      allow create: if esMaster();
+
+      // master: puede actualizar cualquier usuario (incluye asignar rol coordinador)
+      // admin: solo puede actualizar capturistas (autorizar/revocar), sin tocar su rol
+      allow update: if esMaster()
+        || (esAdmin()
+            && resource.data.rol == 'capturista'
+            && request.resource.data.rol == 'capturista');
+
+      // master: elimina a cualquiera
+      // admin: solo elimina capturistas
+      allow delete: if esMaster()
+        || (esAdmin() && resource.data.rol == 'capturista');
+    }
+
+    match /acarreos/{docId} {
+      // Lectura: cualquier usuario autorizado (capturista incluido, ve su propia
+      // ventana reciente vía la query del cliente; esto solo controla acceso).
+      // FASE 8: esto ya cubre a Avances/Acopios, que leen el histórico completo
+      // vía traerTodoFirestore() — no requieren ninguna regla adicional, ya
+      // que estaAutorizado() no distingue por rol para lectura.
+      allow read: if estaAutorizado();
+
+      // Crear: capturista, coordinador, admin o master.
+      // Se exige que 'creadoPor' sea el UID de quien escribe — así nadie puede
+      // crear un registro "a nombre de" otro usuario.
+      // FASE 8: se agrega validación de origen_tipo/tipo_camion/concepto para
+      // que ningún cliente pueda escribir un valor fuera del catálogo conocido.
+      allow create: if estaAutorizado()
+        && rol() in ['capturista', 'coordinador', 'admin', 'master']
+        && request.resource.data.creadoPor == request.auth.uid
+        && camposConceptoValidos(request.resource.data);
+
+      // Actualizar:
+      //   - coordinador, admin y master: cualquier registro (coordinador completa
+      //     pendientes y corrige registros de cualquier capturista).
+      //   - capturista: si el registro le pertenece (creadoPor == su uid), o es
+      //     un registro ANTERIOR a este cambio que no tiene 'creadoPor' (para no
+      //     romper la edición de pendientes ya existentes), o ÉL fue quien hizo
+      //     el destare de ese ciclo aunque no lo haya creado (sección 32.2 —
+      //     fix del bug real de permisos al completar destare entre capturistas).
+      // FASE 8: misma validación de campos de concepto que en create, para
+      // cerrar el mismo hueco también en ediciones.
+      allow update: if estaAutorizado()
+        && (
+          rol() in ['coordinador', 'admin', 'master']
+          || (rol() == 'capturista' &&
+              (!resource.data.keys().hasAny(['creadoPor'])
+               || resource.data.creadoPor == request.auth.uid
+               || fueDestaradoPorMi(resource.data)))
+        )
+        && camposConceptoValidos(request.resource.data);
+
+      // Eliminar: solo master (sin cambios).
+      allow delete: if esMaster();
+    }
+
+    match /resumenes/{docId} {
+      // Lectura: cualquier usuario autorizado puede consultar resúmenes.
+      allow read: if estaAutorizado();
+
+      // Crear/actualizar: capturista, coordinador, admin y master necesitan
+      // escribir en resumenes al guardar o completar una boleta (aplicarResumen /
+      // moverResumen usan setDoc con merge:true). El visor queda excluido porque
+      // nunca genera registros.
+      // Six Sigma Bloque B.1 reutiliza esta misma colección para el doc
+      // resumenes/stats_analisis (agregado con increment()), así que ya queda
+      // cubierto por esta regla sin necesitar nada adicional.
+      allow create, update: if estaAutorizado()
+        && rol() in ['capturista', 'coordinador', 'admin', 'master'];
+
+      // Eliminar: solo master — protege contra borrado accidental del historial.
+      allow delete: if esMaster();
+    }
+
+    // Six Sigma Bloque B.2 v3 (18-jul-2026) — cola de "Fila Báscula". Se crea
+    // al registrar entrada (registrarEntradaFila), se actualiza al "Sale a
+    // tiro" / "Entra a fila" / "Destarado", y se liga+cierra al completar el
+    // ticket (procesarFilaBasculaDeTicket) — quien completa el ciclo puede
+    // ser un capturista distinto al que registró la entrada, así que el
+    // update NO se restringe por creadoPor (a diferencia de acarreos).
+    // Paso #1: t1_fila_ts y dia_captura (el timestamp real de cuándo se
+    // formó el camión) quedan PROTEGIDOS una vez creados — cualquier
+    // capturista puede seguir actualizando el resto de los campos del ciclo
+    // (t3_salida_ts, t1b_fila_ts, t3b_salida_ts, id_ticket, boleta, cerrado,
+    // destarado_por), pero solo coordinador o master pueden cambiar esos 2
+    // campos después de la creación.
+    match /fila_bascula/{docId} {
+      allow read: if estaAutorizado();
+      allow create: if puedeCapturar()
+        && request.resource.data.creadoPor == request.auth.uid;
+      allow update: if puedeCapturar()
+        && (
+          (request.resource.data.t1_fila_ts == resource.data.t1_fila_ts
+            && request.resource.data.dia_captura == resource.data.dia_captura)
+          || esCoordinador() || esMaster()
+        );
+      allow delete: if esMaster();
+    }
+
+    // Six Sigma Bloque B.1 — un doc por ticket capturado (registrarStatsCaptura),
+    // con updates puntuales de t1-t4 al cerrar el ciclo de báscula
+    // (intentarCerrarFilaBascula). El panel "6 Sigma" en sí NO lee esta
+    // colección para pintar KPIs (usa resumenes/stats_analisis, ya cubierto
+    // arriba); solo se lee/consulta aquí directamente al: (a) buscar el doc
+    // por id_ticket al cerrar un ciclo de báscula, y (b) la descarga puntual
+    // a Excel para Minitab (rol master, acotada por rango de fecha).
+    match /stats_analisis/{docId} {
+      allow read: if estaAutorizado();
+      allow create: if puedeCapturar()
+        && request.resource.data.capturista_id == request.auth.uid;
+      allow update: if puedeCapturar();
+      allow delete: if esMaster();
+    }
+
+    // 18-jul-2026 — Registro persistente placa -> económico ("flota").
+    // Se usa para autorellenar el económico de una placa ya conocida y para
+    // detectar de forma automática si un económico ya está asignado a otra
+    // placa (pokayoke: no puede haber 2 volteos con el mismo económico).
+    // El ID del documento es la placa misma (o "PLACA1 / PLACA2" en
+    // góndola/articulado).
+    match /flota/{placasId} {
+      allow read: if estaAutorizado();
+      allow create, update: if puedeCapturar();
+      allow delete: if esMaster();
+    }
+  }
+}

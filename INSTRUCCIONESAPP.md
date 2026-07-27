@@ -5097,3 +5097,62 @@ con fallback silencioso aceptable (el dato de ese mes simplemente no
 se suma, no hay corrupción ni desfase permanente), distinto de estos 4
 que son fallos de ESCRITURA de un agregado que sí queda desactualizado
 hasta que alguien lo note.
+
+## 69. 26-jul-2026 — 🔴 Bug real en `firestore.rules`: "Área de Prefabricados" rechazado al guardar — CORREGIDO. Auditoría completa de permisos por rol.
+
+**Sesión:** Sonnet5-20260726-A
+
+**Contexto:** Jesús compartió `firestore.rules` directo en el chat (no
+vivía ni en Drive ni en GitHub hasta ahora — primera vez que se puede
+auditar contra el código real). Se recomienda **subir este archivo al
+repo de GitHub** junto con `index.html`, para que quede versionado
+igual que el resto.
+
+**🔴 Bug encontrado — confirmado y corregido:** `computeConcepto()` en
+`index.html` devuelve `concepto: 'SUMINISTRO_PREFABRICADOS'` para el
+destino "Área de Prefabricados" (agregado jul-2026), pero
+`conceptoValido()` en las reglas nunca se actualizó para incluir ese
+valor — la propia regla trae un comentario que ya advertía esto
+("si esa función cambia, actualizar aquí también"). Resultado real:
+**cualquier ticket guardado con ese destino era rechazado** por
+Firestore con "Missing or insufficient permissions". Es un destino
+real y seleccionable (material CORAZA → Área de Prefabricados), así
+que esto bloqueaba una operación de campo legítima, no un caso de
+borde teórico.
+
+**Fix:** se agregó `'SUMINISTRO_PREFABRICADOS'` a la lista de
+`conceptoValido()`. Sin cambios en ninguna otra regla. Balance de
+llaves/paréntesis verificado, sin diferencias fuera de esa línea.
+
+**🟡 Hallazgo menor, sin corregir todavía:** el botón "Autorizar" en
+Admin (`cambiarStatusUsuario`) se muestra a cualquiera que vea el
+panel de usuarios, sin filtrar por rol como sí hacen "Revocar" y
+"Eliminar" (`esMaster || (esAdmin && rol==='capturista')`). Si un
+admin intenta autorizar a alguien que no sea capturista, la regla lo
+rechaza y ve un error crudo de Firebase en vez de que el botón no
+aparezca. Impacto bajo hoy (el auto-registro público ya se eliminó,
+casi no deberían existir pendientes con otro rol) — queda pendiente
+por decidir si se corrige.
+
+**✅ Verificado sin hallazgos, cruzando código real contra reglas
+reales (no solo contra la documentación):**
+- `origen_tipo` ('BANCO'/'ACOPIO'), `tipo_camion`
+  ('VOLTEO'/'GONDOLA'/'ARTICULADO'), `vertido`
+  ('','MARINO','TERRESTRE'): los valores que la UI realmente escribe
+  coinciden exactamente con las listas blancas de las reglas.
+- Botón "Eliminar" ticket: correctamente oculto para todo lo que no
+  sea `master`, igual que `esMaster()`.
+- Selector de "Rol" de usuario: correctamente oculto para admin (solo
+  master lo ve), coincide con la regla de `usuarios/update`.
+- `t1_fila_ts`/`dia_captura` protegidos en `fila_bascula`: nada en el
+  código intenta editarlos después de creados, así que la protección
+  nunca se activa por error ni bloquea un flujo real.
+
+**Verificación antes de entregar:**
+- Balance de llaves `{}`/paréntesis `()` idéntico al original salvo la
+  línea agregada.
+- No pude correr un validador real de reglas de Firestore (no hay
+  emulador disponible en este entorno) — la verificación fue manual,
+  línea por línea contra el archivo original. Recomendado: probar el
+  guardado de un ticket con destino "Área de Prefabricados" en cuanto
+  se despliegue, para confirmar en producción real.

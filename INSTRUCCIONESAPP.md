@@ -5226,3 +5226,13 @@ botón 🗑️ de Fila Báscula sobre el huérfano viejo directamente.
 - Grep de IDs duplicados de DOM fuera de `<script>`: cero.
 - Confirmé que `esMaster()` en `firestore.rules` ya cubre el delete de
   `fila_bascula` sin necesitar ningún cambio de reglas.
+
+## 71. 26-jul-2026 — Rezaga agregada al catálogo de captura, restringida a Muro/Morro/Cuerpos + Área de Prefabricados
+
+**Sesión:** Sonnet5-20260726-A
+
+Decisiones de Jesús: Rezaga sin clasificación de rango (siempre pendiente), permitida en Muro/Morro/Cuerpos + Área de Prefabricados (NO en Acopio Marino/Terrestre), sin entrada en Metas/CATALOGO_TOTALES (Prefabricados no es parte del programa original — confirmado ya excluido de Avances/Acopios por diseño previo, ver computeConcepto/SUMINISTRO_PREFABRICADOS).
+
+**Cambios:** (1) opción "Rezaga" agregada a `f-material`; (2) `EXCLUSIONES_DESTINO_POR_MATERIAL` — se agregó 'AREA DE PREFABRICADOS' a la exclusión de Núcleo/Secundaria 1-2/Berma/Berma de Apoyo, y nueva entrada `REZAGA: ['ACOPIO MARINO','ACOPIO TERRESTRE']`; (3) `updateRangos()` auto-marca y deshabilita "pendiente" cuando material=REZAGA **y no es edición** (`!window._editFid` — se encontró y corrigió a tiempo un bug real: sin ese candado, editar un ticket viejo de Rezaga con rango histórico real lo hubiera sobrescrito a 'PENDIENTE' al guardar, por cómo `saveRecord()` prioriza el checkbox sobre el valor del campo).
+
+**Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.

@@ -3150,6 +3150,14 @@ window.dbFilaBasculaEliminar = async function (filaId) {
           <option value="SECUNDARIA 1">Secundaria 1</option>
           <option value="SECUNDARIA 2">Secundaria 2</option>
           <option value="CORAZA">Coraza</option>
+          <!-- 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 71): Rezaga se agrega
+               al catálogo de captura — antes solo existía en tickets viejos
+               migrados, nunca era seleccionable aquí (sección 25.2). No tiene
+               clasificación de rango (ver toggleRangoPendiente/updateRangos,
+               se auto-marca "pendiente"), y solo puede ir a Área de
+               Prefabricados o a Muro/Morro/Cuerpos — nunca a Acopio Marino/
+               Terrestre (ver EXCLUSIONES_DESTINO_POR_MATERIAL). -->
+          <option value="REZAGA">Rezaga</option>
         </select>
       </div>
       <div>
@@ -4655,11 +4663,21 @@ const RANGOS_ACOPIO = {
 // leer y mantener.
 const EXCLUSIONES_DESTINO_POR_MATERIAL = {
   'CORAZA':         ['MURO', 'MORRO', 'CUERPO 4', 'CUERPO 5', 'AREA DE PREFABRICADOS'],
-  'NUCLEO':         [],
-  'SECUNDARIA 1':   ['MURO'],
-  'SECUNDARIA 2':   ['MURO'],
-  'BERMA':          ['MURO'],
-  'BERMA DE APOYO': ['MURO']
+  // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 71): "Área de Prefabricados"
+  // es una plataforma de colados, no parte del rompeolas — Jesús confirmó que
+  // NINGÚN material tipo piedra debe poder mandarse ahí, solo Rezaga. Se
+  // agrega 'AREA DE PREFABRICADOS' a la exclusión de los 5 materiales de
+  // piedra que antes sí lo permitían (CORAZA ya lo excluía desde antes).
+  'NUCLEO':         ['AREA DE PREFABRICADOS'],
+  'SECUNDARIA 1':   ['MURO', 'AREA DE PREFABRICADOS'],
+  'SECUNDARIA 2':   ['MURO', 'AREA DE PREFABRICADOS'],
+  'BERMA':          ['MURO', 'AREA DE PREFABRICADOS'],
+  'BERMA DE APOYO': ['MURO', 'AREA DE PREFABRICADOS'],
+  // Rezaga: confirmado por Jesús que sí se usa en Muro/Morro/Cuerpos (no es
+  // exclusivo de Prefabricados) — se excluye SOLO de Acopio Marino/Terrestre
+  // (no se definió que se almacene ahí; si en el futuro sí aplica, quitar
+  // esta exclusión). Sin rango propio (ver toggleRangoPendiente/updateRangos).
+  'REZAGA':         ['ACOPIO MARINO', 'ACOPIO TERRESTRE']
 };
 
 // Deshabilita (no elimina, para no perder la opción si luego cambia el
@@ -4701,7 +4719,7 @@ const CATALOGO_TOTALES = [
   { cuerpo:'CUERPO 1', material:'SECUNDARIA 2',   rango:'0.20 a 0.30 ton', cantidad: 17506.45 },
   { cuerpo:'CUERPO 1', material:'SECUNDARIA 1',   rango:'0.30 a 0.50 ton', cantidad: 49910.19 },
   { cuerpo:'CUERPO 1', material:'CORAZA',         rango:'5.8 ton',         cantidad: 23230.12 },
-  { cuerpo:'CUERPO 1', material:'BERMA',          rango:'0.30 a 0.50 ton', cantidad: 13594.09 }, // corregido 27-jul-2026: tenia 13549.09 
+  { cuerpo:'CUERPO 1', material:'BERMA',          rango:'0.30 a 0.50 ton', cantidad: 13549.09 }, // corregido 25-jul-2026: era 13594.09 (transposición de dígitos), ver INSTRUCCIONESAPP.md sección 62
   { cuerpo:'CUERPO 1', material:'BERMA DE APOYO', rango:'0.20 a 0.30 ton', cantidad: 30349.36 },
   // Cuerpo 2
   { cuerpo:'CUERPO 2', material:'NUCLEO',         rango:'0.02 a 0.20 ton', cantidad: 144120.91 },
@@ -5542,8 +5560,21 @@ function calcPesos() {
 }
 
 function updateRangos() {
-  document.getElementById('f-rango-pendiente').checked = false; // cambiar destino/material reinicia el pendiente
+  const material = document.getElementById('f-material').value;
+  const pendienteEl = document.getElementById('f-rango-pendiente');
+  // 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 71): Rezaga no tiene
+  // clasificación de rango/tamaño de piedra (confirmado por Jesús) — se
+  // marca "pendiente" siempre y se bloquea el checkbox para que nadie lo
+  // desmarque por error esperando un rango que nunca va a aparecer.
+  if (material === 'REZAGA' && !window._editFid) {
+    pendienteEl.checked = true;
+    pendienteEl.disabled = true;
+  } else {
+    pendienteEl.disabled = false;
+    pendienteEl.checked = false; // cambiar destino/material reinicia el pendiente
+  }
   aplicarRangoCatalogo();
+  if (pendienteEl.checked) toggleRangoPendiente(); // deja el campo de rango deshabilitado/vacío de forma consistente
 }
 
 // Calcula y aplica el rango de catálogo (si existe) para la combinación

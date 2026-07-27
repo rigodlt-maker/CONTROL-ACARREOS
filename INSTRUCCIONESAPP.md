@@ -5297,3 +5297,40 @@ Confirmado por Jesús: "Base de Datos" (ventana en vivo) casi siempre se usa par
 **Pendiente relacionado, NO corregido (fuera de lo que se pidió hoy):** `cargarHistoricoParaVisor()` (línea ~985) sigue cargando 90 días fijos con `traerTodoFirestore()` para el rol visor — a 300-500/día eso son 27,000-45,000 lecturas POR SESIÓN de visor, y el comentario original ya advertía que puede haber varios visores a la vez (ej. 4 directores). Vale la pena revisarlo en otra sesión — mismo cupo compartido de 50,000/día que el bot de Telegram.
 
 **Verificación:** `node --check` limpio en ambos bloques, sin IDs duplicados de DOM.
+
+## 77. 27-jul-2026 — Pendiente de la sección 76: cooldown de 10 min para `cargarHistoricoParaVisor()` — CORREGIDO (alcance parcial, ver abajo)
+
+**Sesión:** Sonnet5-20260726-A
+
+**Qué se cambió:** se agregó `cooldownHistoricoVisorRestanteMin()` (mismo
+patrón de `localStorage` + 10 min que `confirmarLecturaCompleta()`, sección
+66, pero **sin** su diálogo `confirm()` — este flujo corre automático al
+abrir la app y desde el botón de sync manual, así que bloquear con un
+diálogo en cada apertura sería mala UX para un rol que solo consulta).
+`cargarHistoricoParaVisor()` ahora, si ya hay datos en memoria (`db`) y el
+cooldown sigue activo, **no vuelve a leer Firestore** — reutiliza lo que ya
+está cargado y solo refresca la nota visual con los minutos restantes.
+`manualSync()` (el botón de sync del visor) ahora avisa explícito con un
+toast "Ya actualizaste hace poco — espera N min" cuando el cooldown está
+activo, en vez de repetir la lectura completa cada toque.
+
+**Alcance de este fix, explícito (30.3):** cierra el caso de mayor riesgo
+real identificado en la sección 76 — uno o varios visores tocando el botón
+de sync manual repetidamente. **NO cierra** el caso de recargar/reabrir la
+app: la memoria de `db` se pierde al recargar la página, así que una
+recarga dentro de la ventana de cooldown vuelve a leer completo aunque el
+timestamp en `localStorage` siga vigente (el cooldown en sí sigue activo,
+pero no hay datos en memoria que reutilizar). Cerrar ese caso requeriría
+cachear el dataset mismo entre recargas (`sessionStorage`, con manejo de
+tamaño y de timestamps de Firestore al serializar) — se decidió no hacerlo
+en esta misma entrega para no mezclar dos cambios de riesgo distinto; queda
+como pendiente aparte si Jesús decide que vale la pena.
+
+**Verificación antes de entregar:**
+- `node --check` limpio en los 4 bloques `<script>` reales del archivo
+  (extraídos por posición exacta de apertura/cierre, no por regex simple —
+  ver nota de falso positivo en 24.4/30.5).
+- Grep de IDs duplicados de DOM fuera de `<script>`: cero.
+- Confirmado que ambas funciones tocadas (`cargarHistoricoParaVisor`,
+  `manualSync`) siguen viviendo en el mismo bloque `<script type="module">`
+  donde ya estaban — el cambio no las movió de bloque.

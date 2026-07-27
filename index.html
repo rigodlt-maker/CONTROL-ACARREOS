@@ -984,12 +984,51 @@ function startRealtimeSync(rol) {
   );
 }
 
+// 26-jul-2026 (ver INSTRUCCIONESAPP.md sección 77): cooldown de 10 min para
+// el rol `visor`, mismo criterio de "proteger el cupo compartido de 50,000
+// lecturas/día" que confirmarLecturaCompleta() (sección 66) — pero SIN su
+// diálogo de confirm(), porque esta función corre automática al abrir la
+// app (línea ~910) y desde el botón de sync manual (manualSync, más abajo);
+// bloquear con un confirm() en cada apertura sería mala UX para un rol que
+// solo consulta datos. Devuelve minutos restantes (0 = sin cooldown activo).
+function cooldownHistoricoVisorRestanteMin() {
+  try {
+    const COOLDOWN_MS = 10 * 60 * 1000;
+    const ultima = parseInt(localStorage.getItem('cooldownHistoricoVisor') || '0', 10);
+    const restante = COOLDOWN_MS - (Date.now() - ultima);
+    return restante > 0 ? Math.ceil(restante / 60000) : 0;
+  } catch (e) {
+    return 0; // localStorage no disponible: no bloquea, mismo criterio que confirmarLecturaCompleta()
+  }
+}
+
 // Carga única y automática de los últimos 90 días para el rol `visor`.
 // Reutiliza traerTodoFirestore(), ya probado para esto mismo en los botones
 // "Ver TODO el histórico" de Gráficos/Resumen/Reportes. traerTodoFirestore()
 // siempre ordena ascendente; el resto de la app espera `db` en orden
 // descendente (más reciente primero), por eso el reverse().
-async function cargarHistoricoParaVisor() {
+//
+// Con cooldown (sección 77): si ya hay datos cargados en memoria (`db`) Y
+// el cooldown de 10 min sigue activo, NO se vuelve a leer Firestore — se
+// reutiliza lo que ya está en `db` y solo se refresca la nota visual. Esto
+// cierra el caso de mayor riesgo real: el botón de sync manual (más abajo)
+// tocado varias veces seguidas por uno o varios visores a la vez.
+//
+// Alcance de este fix (30.3): NO cubre recargar/reabrir la app (la memoria
+// de `db` se pierde al recargar la página, así que una recarga dentro del
+// cooldown vuelve a leer completo aunque el cooldown de localStorage siga
+// activo) — cubrir ese caso requeriría cachear el dataset mismo entre
+// recargas (sessionStorage), no solo el timestamp del cooldown. Queda como
+// pendiente aparte si Jesús decide que vale la pena, ver bitácora.
+async function cargarHistoricoParaVisor(forzar) {
+  const yaHayDatosEnMemoria = Array.isArray(db) && db.length > 0;
+  const minRestantes = cooldownHistoricoVisorRestanteMin();
+  if (!forzar && yaHayDatosEnMemoria && minRestantes > 0) {
+    if (document.getElementById('tab-db') && document.getElementById('tab-db').classList.contains('active')) {
+      updateSyncNote('✅ ' + db.length.toLocaleString('es-MX') + ' registro(s) en memoria (últimos 90 días) · próxima actualización disponible en ' + minRestantes + ' min');
+    }
+    return { cooldown: true, minRestantes };
+  }
   try {
     const registros = await traerTodoFirestore(cutoffFecha(90), null, (n) => {
       if (!isInitialized) {
@@ -999,6 +1038,8 @@ async function cargarHistoricoParaVisor() {
     });
     db = registros.slice().reverse();
     window.db = db;
+    try { localStorage.setItem('cooldownHistoricoVisor', String(Date.now())); }
+    catch (e) { console.warn('No se pudo guardar el cooldown del visor:', e); }
     if (!isInitialized) {
       isInitialized = true;
       appReady();
@@ -1007,10 +1048,12 @@ async function cargarHistoricoParaVisor() {
     if (document.getElementById('tab-db') && document.getElementById('tab-db').classList.contains('active')) {
       updateSyncNote('✅ ' + db.length.toLocaleString('es-MX') + ' registro(s) cargados (últimos 90 días, acceso de solo lectura) · ');
     }
+    return { cooldown: false };
   } catch (e) {
     console.error('Firestore error (visor):', e);
     if (!isInitialized) appError('No se pudo conectar a la base de datos.\n' + e.message);
     else window.showSyncToast('⚠️', 'Error de conexión.', 'err');
+    return { cooldown: false, error: true };
   }
 }
 window.cargarHistoricoParaVisor = cargarHistoricoParaVisor;
@@ -2151,8 +2194,15 @@ window.togglePasswordVisibility = function(inputId, btn) {
 window.manualSync = function() {
   if (window._currentUserRol === 'visor') {
     window.showSyncToast('⏳', 'Actualizando…', 'pending');
-    cargarHistoricoParaVisor().then(() => {
-      window.showSyncToast('✅', 'Datos actualizados', 'ok', 2000);
+    // 26-jul-2026 (sección 77): cooldown de 10 min — si cargarHistoricoParaVisor()
+    // reutilizó los datos en memoria (sin leer Firestore), se avisa explícito
+    // en vez de mostrar "Datos actualizados" como si hubiera habido lectura nueva.
+    cargarHistoricoParaVisor().then((resultado) => {
+      if (resultado && resultado.cooldown) {
+        window.showSyncToast('⏳', 'Ya actualizaste hace poco — espera ' + resultado.minRestantes + ' min', 'pending', 3500);
+      } else if (!(resultado && resultado.error)) {
+        window.showSyncToast('✅', 'Datos actualizados', 'ok', 2000);
+      }
     });
     return;
   }

@@ -5334,3 +5334,39 @@ como pendiente aparte si Jesús decide que vale la pena.
 - Confirmado que ambas funciones tocadas (`cargarHistoricoParaVisor`,
   `manualSync`) siguen viviendo en el mismo bloque `<script type="module">`
   donde ya estaban — el cambio no las movió de bloque.
+
+## 78. 27-jul-2026 — Auditoría sección 75 pendiente #3 (Gráficos/Reportes) — hallazgo real + fix (Resumen y Bancos incluidos)
+
+**Sesión:** Sonnet5-20260726-A
+
+**Lo que ya estaba bien:** ni `renderDashboard()` ni `renderReportes()` están
+enganchados al listener de fondo (`onSnapshot`) — solo corren al entrar a
+la pestaña o cambiar un filtro. No repiten el bug de `renderDB()` (sección
+75). Ambas ya usaban agregados mensuales (`resumenes/{mes}`) como ruta
+principal, no lectura de la colección completa.
+
+**Hallazgo real:** `calcularResumenGenericoAgregado()`/`calcularResumenBancosAgregado()`
+mezclaban "traer del rango" con "filtrar por banco/material/destino/tipo de
+camión" — el filtro es 100% cliente, pero cada checkbox togglead@o volvía a
+leer Firestore desde cero, incluyendo `traerTodoFirestore()` del **mes en
+curso completo** cada vez que el rango llega a "hoy" (caso normal —
+Estatus Operativo, Suministros del día, etc.). Afecta las 4 pestañas que
+comparten estas funciones: Gráficos, Reportes, Resumen y Bancos.
+
+**Fix:** se separó "traer" de "filtrar". Dos funciones nuevas,
+`obtenerLineasCrudasRango()` y `obtenerLineasCrudasBancosRango()`, cachean
+en memoria (60s) las líneas crudas por rango de fechas exacto; el filtrado
+sigue siendo síncrono sobre esas líneas. Togglear un checkbox ya no dispara
+lectura de red si el rango de fechas no cambió.
+
+**Por qué son DOS caches separados, no uno:** al revisar `aplicarResumen()`
+antes de unificar, se encontró que `por_combinacion` (fuente de
+Gráficos/Reportes/Resumen) y `por_banco_material_rango` (fuente de Bancos)
+NO son equivalentes — `por_combinacion` cuenta doble los tickets de
+colocación a propósito (fix del 22-jul para Metas: material real +
+pseudo-material "COLOCACION TERRESTRE/MARINA"). Compartir una sola fuente
+habría duplicado viajes/toneladas de colocación en Bancos. Se detectó ANTES
+de entregar, no en producción.
+
+**Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
+duplicados, confirmado que ningún call site externo cambió de firma.

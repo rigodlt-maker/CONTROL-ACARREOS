@@ -9618,6 +9618,65 @@ function renderBancosTablaDesdePorBanco(porBanco, totalViajes, totalTon) {
 //    completa.
 // Costo: igual que calcularResumenBancosAgregado (unos cuantos reads por
 // mes + 0-2 consultas acotadas a los meses parciales de los extremos).
+// 27-jul-2026 (sección 78): cache de 60s de las líneas CRUDAS (sin filtrar)
+// por rango de fechas, compartido entre Suministros/Reportes/Resumen/Bancos.
+// Antes, cada checkbox de banco/material/destino/tipo de camión volvía a
+// leer Firestore desde cero -- incluyendo traerTodoFirestore() del mes EN
+// CURSO completo cada vez que el rango llega a "hoy" (el caso más común,
+// ej. Estatus Operativo). El filtro es 100% del lado del cliente, así que
+// no había ninguna razón real para repetir la lectura de red en cada
+// toggle. Esto separa "traer" (red, cacheado) de "filtrar" (síncrono).
+const _cacheLineasCrudas = {};
+async function obtenerLineasCrudasRango(desde, hasta) {
+  const hoy = isoHoy();
+  const desdeEf = desde || '2025-01-01';
+  const hastaEf = hasta || hoy;
+  const clave = desdeEf + '_' + hastaEf;
+  const TTL_MS = 60 * 1000;
+  const cache = _cacheLineasCrudas[clave];
+  if (cache && (Date.now() - cache.ts) < TTL_MS) return cache.lineas;
+
+  const lineas = [];
+  const meses = [];
+  let [ay, am] = desdeEf.split('-').map(Number);
+  const [by, bm] = hastaEf.split('-').map(Number);
+  while (ay < by || (ay === by && am <= bm)) {
+    meses.push(`${ay}-${String(am).padStart(2,'0')}`);
+    am++; if (am > 12) { am = 1; ay++; }
+  }
+  for (const mes of meses) {
+    const primerDia = `${mes}-01`;
+    const [my, mm] = mes.split('-').map(Number);
+    const ultimoDiaNum = new Date(my, mm, 0).getDate();
+    const ultimoDia = `${mes}-${String(ultimoDiaNum).padStart(2,'0')}`;
+    const cubreTodoElMes = desdeEf <= primerDia && hastaEf >= ultimoDia;
+    if (cubreTodoElMes) {
+      try {
+        const snap = await window.leerDocResumen(mes);
+        if (snap.exists()) {
+          const d = snap.data();
+          Object.values(d.por_combinacion || {}).forEach(item => {
+            if (typeof item === 'number') return;
+            lineas.push({ banco: item.banco, material: item.material, destino: item.destino, tipo_camion: item.tipo_camion, viajes: item.viajes || 0, ton: item.ton || 0, mes });
+          });
+        }
+      } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
+    } else {
+      const subDesde = desdeEf > primerDia ? desdeEf : primerDia;
+      const subHasta = hastaEf < ultimoDia ? hastaEf : ultimoDia;
+      try {
+        const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
+        registrosMes.forEach(r => {
+          const ton = r.ton || (r.neto_kg || 0) / 1000;
+          lineas.push({ banco: r.banco, material: r.material, destino: r.destino, tipo_camion: r.tipo_camion, viajes: 1, ton, mes });
+        });
+      } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
+    }
+  }
+  _cacheLineasCrudas[clave] = { lineas, ts: Date.now() };
+  return lineas;
+}
+
 async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) {
   const { bancos = [], materiales = [], destinos = [], tiposCamion = [] } = filtros || {};
   // 18-jul-2026: `soloOrigenBanco` lo usa Suministros (Gráficos) — esa
@@ -9630,9 +9689,6 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) 
   // con excluir esos para replicar el filtro exacto de getDashboardFiltered().
   const ACOPIOS = ['ACOPIO MARINO', 'ACOPIO TERRESTRE'];
   const soloOrigenBanco = !!(opciones && opciones.soloOrigenBanco);
-  const hoy = isoHoy();
-  const desdeEf = desde || '2025-01-01';
-  const hastaEf = hasta || hoy;
   const porBanco = {};
   const porBancoGrupo = {};
   const porMes = {}; // 'YYYY-MM' -> toneladas (respeta los mismos filtros)
@@ -9672,6 +9728,30 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) 
     totalViajes += viajes; totalTon += ton;
   };
 
+  const lineas = await obtenerLineasCrudasRango(desde, hasta);
+  lineas.forEach(l => acumular(l.banco, l.material, l.destino, l.tipo_camion, l.viajes, l.ton, l.mes));
+  return { porBanco, porBancoGrupo, totalViajes, totalTon, porMes };
+}
+
+// Cache separado del de obtenerLineasCrudasRango(): Bancos usa el agregado
+// `por_banco_material_rango`, NO `por_combinacion` — a propósito. Para
+// tickets de colocación, `por_combinacion` guarda el viaje DOS veces
+// (material real + pseudo-material "COLOCACION TERRESTRE/MARINA", fix del
+// 22-jul-2026 para Metas), mientras que `por_banco_material_rango` lo
+// cuenta una sola vez. Compartir fuente entre ambas hubiera duplicado
+// viajes/toneladas de colocación en Bancos — se detectó al revisar
+// aplicarResumen() antes de unificar, así que se mantienen separadas.
+const _cacheLineasCrudasBancos = {};
+async function obtenerLineasCrudasBancosRango(desde, hasta) {
+  const hoy = isoHoy();
+  const desdeEf = desde || '2025-01-01';
+  const hastaEf = hasta || hoy;
+  const clave = desdeEf + '_' + hastaEf;
+  const TTL_MS = 60 * 1000;
+  const cache = _cacheLineasCrudasBancos[clave];
+  if (cache && (Date.now() - cache.ts) < TTL_MS) return cache.lineas;
+
+  const lineas = [];
   const meses = [];
   let [ay, am] = desdeEf.split('-').map(Number);
   const [by, bm] = hastaEf.split('-').map(Number);
@@ -9679,27 +9759,19 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) 
     meses.push(`${ay}-${String(am).padStart(2,'0')}`);
     am++; if (am > 12) { am = 1; ay++; }
   }
-
   for (const mes of meses) {
     const primerDia = `${mes}-01`;
     const [my, mm] = mes.split('-').map(Number);
     const ultimoDiaNum = new Date(my, mm, 0).getDate();
     const ultimoDia = `${mes}-${String(ultimoDiaNum).padStart(2,'0')}`;
     const cubreTodoElMes = desdeEf <= primerDia && hastaEf >= ultimoDia;
-
     if (cubreTodoElMes) {
       try {
         const snap = await window.leerDocResumen(mes);
         if (snap.exists()) {
           const d = snap.data();
-          Object.values(d.por_combinacion || {}).forEach(item => {
-            // Compatibilidad hacia atrás: meses no reconstruidos con
-            // "Recalcular resumen" todavía pueden traer el esquema viejo
-            // (número plano = solo toneladas, sin viajes). Se cuentan como
-            // 0 viajes en ese caso — solo afecta datos históricos hasta
-            // que se corra el recálculo una vez.
-            if (typeof item === 'number') return;
-            acumular(item.banco, item.material, item.destino, item.tipo_camion, item.viajes || 0, item.ton || 0, mes);
+          Object.values(d.por_banco_material_rango || {}).forEach(item => {
+            lineas.push({ banco: item.banco, material: item.material, viajes: item.viajes || 0, ton: item.ton || 0 });
           });
         }
       } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
@@ -9709,19 +9781,17 @@ async function calcularResumenGenericoAgregado(desde, hasta, filtros, opciones) 
       try {
         const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
         registrosMes.forEach(r => {
-          const ton = r.ton || (r.neto_kg||0)/1000;
-          acumular(r.banco, r.material, r.destino, r.tipo_camion, 1, ton, mes);
+          const ton = r.ton || (r.neto_kg || 0) / 1000;
+          lineas.push({ banco: r.banco || 'SIN BANCO', material: r.material || 'SIN MATERIAL', viajes: 1, ton });
         });
       } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
     }
   }
-  return { porBanco, porBancoGrupo, totalViajes, totalTon, porMes };
+  _cacheLineasCrudasBancos[clave] = { lineas, ts: Date.now() };
+  return lineas;
 }
 
 async function calcularResumenBancosAgregado(desde, hasta, bancosFiltro) {
-  const hoy = isoHoy();
-  const desdeEf = desde || '2025-01-01';
-  const hastaEf = hasta || hoy;
   const resultado = {};
   let totalViajes = 0, totalTon = 0;
   const acumular = (banco, material, viajes, ton) => {
@@ -9735,44 +9805,8 @@ async function calcularResumenBancosAgregado(desde, hasta, bancosFiltro) {
     resultado[banco].materiales[m].ton += ton;
     totalViajes += viajes; totalTon += ton;
   };
-
-  const meses = [];
-  let [ay, am] = desdeEf.split('-').map(Number);
-  const [by, bm] = hastaEf.split('-').map(Number);
-  while (ay < by || (ay === by && am <= bm)) {
-    meses.push(`${ay}-${String(am).padStart(2,'0')}`);
-    am++; if (am > 12) { am = 1; ay++; }
-  }
-
-  for (const mes of meses) {
-    const primerDia = `${mes}-01`;
-    const [my, mm] = mes.split('-').map(Number);
-    const ultimoDiaNum = new Date(my, mm, 0).getDate();
-    const ultimoDia = `${mes}-${String(ultimoDiaNum).padStart(2,'0')}`;
-    const cubreTodoElMes = desdeEf <= primerDia && hastaEf >= ultimoDia;
-
-    if (cubreTodoElMes) {
-      try {
-        const snap = await window.leerDocResumen(mes);
-        if (snap.exists()) {
-          const d = snap.data();
-          Object.values(d.por_banco_material_rango || {}).forEach(item => {
-            acumular(item.banco, item.material, item.viajes || 0, item.ton || 0);
-          });
-        }
-      } catch (e) { console.warn('No se pudo leer el resumen de', mes, e); }
-    } else {
-      const subDesde = desdeEf > primerDia ? desdeEf : primerDia;
-      const subHasta = hastaEf < ultimoDia ? hastaEf : ultimoDia;
-      try {
-        const registrosMes = await window.traerTodoFirestore(subDesde, subHasta);
-        registrosMes.forEach(r => {
-          const ton = r.ton || (r.neto_kg||0)/1000;
-          acumular(r.banco || 'SIN BANCO', r.material || 'SIN MATERIAL', 1, ton);
-        });
-      } catch (e) { console.warn('No se pudo leer el mes parcial', mes, e); }
-    }
-  }
+  const lineas = await obtenerLineasCrudasBancosRango(desde, hasta);
+  lineas.forEach(l => acumular(l.banco, l.material, l.viajes, l.ton));
   return { porBanco: resultado, totalViajes, totalTon };
 }
 

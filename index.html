@@ -458,7 +458,7 @@ body.modal-open { position: fixed; inset: 0; overflow: hidden; width: 100%; }
 import { initializeApp, getApps }                 from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, initializeFirestore, persistentLocalCache,
          persistentMultipleTabManager, collection, addDoc,
-         getDoc, getDocs, doc, updateDoc, deleteDoc,
+         getDoc, getDocs, doc, updateDoc, deleteDoc, runTransaction,
          query, orderBy, onSnapshot, where, limit, startAfter,
          serverTimestamp, setDoc, increment, writeBatch,
          getCountFromServer } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -921,17 +921,66 @@ function startRealtimeSync(rol) {
   // realidad solo mostraba 12-20 días de datos). Se quitaron 90/365 como
   // ventana en vivo (ver seleccionable arriba); el techo duro sube de 9500
   // a 17000 para no truncar "30 días" a volumen alto.
+  // 27-jul-2026 (ver INSTRUCCIONESAPP.md sección 80, hallazgo H2 de la
+  // sección 79): antes TODOS los roles con sync (capturista, coordinador,
+  // admin, master) abrían el listener con la MISMA ventana (selector de
+  // "Base de Datos"). Pero capturista NO tiene acceso a esa pestaña
+  // (visibilidadPorTab, línea ~682) — solo usa el array `db` para (a)
+  // Pendientes, que solo necesita tickets "estancados" de +12h, y (b) un
+  // pre-check de boleta duplicada en memoria que de todos modos tiene
+  // respaldo real contra Firestore (línea ~1667/1859), así que no pierde
+  // corrección aunque la ventana sea corta. Con 5 capturistas conectados a
+  // la vez (el rol más numeroso de los 9 con listener vivo), cada uno
+  // abriendo hasta 4,000 documentos al conectarse era el mayor contribuyente
+  // al costo de "solo abrir la app" (sección 79, H2: ~37,000 lecturas de las
+  // 50,000/día compartidas, antes de capturar nada). Capturista ahora usa
+  // ventana fija de 2 días, no el selector `ventanaDias` (ese sigue siendo
+  // exclusivo de quien SÍ ve "Base de Datos": coordinador, admin, master).
+  const esRolAcotado = rol === 'capturista';
+  const diasVentanaEfectiva = esRolAcotado ? 2 : ventanaDias;
   const LIMITE_VENTANA = { 7: 4000, 15: 8500, 30: 16000 };
-  const tope = Math.min(LIMITE_VENTANA[ventanaDias] || 4000, 17000);
+  const tope = esRolAcotado ? 1500 : Math.min(LIMITE_VENTANA[ventanaDias] || 4000, 17000);
+  // 27-jul-2026 (sección 79/83, docChanges()): db se reinicia explícito
+  // ANTES de suscribirse — necesario para el patrón incremental de abajo.
+  // Antes no hacía falta (cada snapshot reemplazaba el array completo), pero
+  // con docChanges() los índices que entrega el SDK (newIndex/oldIndex) son
+  // relativos al resultado de ESTA query; si `db` trajera basura de una
+  // ventana/rol anterior (ej. al cambiar los días en "Base de Datos" via
+  // cambiarVentana), los splice() quedarían mal alineados.
+  db = [];
+  window.db = db;
   const q = query(
     collection(db_f, COL),
-    where('fecha1', '>=', cutoffFecha(ventanaDias)),
+    where('fecha1', '>=', cutoffFecha(diasVentanaEfectiva)),
     orderBy('fecha1', 'desc'),
     limit(tope)
   );
   unsubscribe = onSnapshot(q,
     (snapshot) => {
-      db = snapshot.docs.map(d => ({ _fid: d.id, ...d.data() }));
+      // 27-jul-2026 (sección 79/83, hallazgo relacionado a H2): antes esta
+      // línea era `db = snapshot.docs.map(...)` — reconstruía el array
+      // COMPLETO (hasta 17,000/4,000/1,500 según el rol) en CADA evento del
+      // listener, aunque solo hubiera cambiado 1 documento. Con 9 sesiones
+      // conectadas, cada escritura ajena repetía ese trabajo en el teléfono
+      // de cada quien. snapshot.docChanges() entrega solo lo que en verdad
+      // cambió (added/modified/removed) con newIndex/oldIndex ya calculados
+      // por el SDK para la posición correcta según el orderBy(fecha1 desc)
+      // de la query — se usa eso para actualizar `db` con splice puntual.
+      // OJO: esto NO reduce lecturas de Firestore (ya se facturan por
+      // documento cambiado, sin importar cómo lo procese el cliente) — es
+      // una mejora de CPU/memoria en el dispositivo, no de cupo (por eso
+      // quedó como el pendiente menos urgente de los 3 de la sección 79).
+      snapshot.docChanges().forEach((change) => {
+        const item = { _fid: change.doc.id, ...change.doc.data() };
+        if (change.type === 'added') {
+          db.splice(change.newIndex, 0, item);
+        } else if (change.type === 'modified') {
+          if (change.oldIndex !== -1) db.splice(change.oldIndex, 1);
+          db.splice(change.newIndex, 0, item);
+        } else if (change.type === 'removed') {
+          if (change.oldIndex !== -1) db.splice(change.oldIndex, 1);
+        }
+      });
       window.db = db;
       const recortado = db.length >= tope;
       if (!isInitialized) {
@@ -2762,6 +2811,36 @@ window.guardarCorreccionFlota = async function() {
 
 window.dbFilaBasculaActualizar = async function (filaId, campos) {
   await updateDoc(doc(db_f, 'fila_bascula', filaId), campos);
+};
+
+// 27-jul-2026 (ver INSTRUCCIONESAPP.md sección 79/82, hallazgo H3):
+// dbFilaBasculaActualizar() es un merge plano — si dos capturistas dan
+// clic en "Entra a fila" (reclamar) o en "Destarado" sobre el MISMO
+// camión casi al mismo instante, ambas escrituras se aceptan (Firestore
+// no rechaza nada) y la segunda pisa en silencio el `reclamado_por` /
+// `destarado_por` de la primera. El mensaje de la UI le promete a quien
+// reclama que el camión "quedará exclusivo para ti" (línea ~8172) — pero
+// esa exclusividad nunca se verificaba de verdad contra el servidor.
+// Esta función SÍ lo verifica: lee el doc dentro de una transacción y
+// rechaza la escritura si el campo de reclamo ya tiene dueño, en vez de
+// sobrescribirlo. Quien pierde la carrera ve un error claro (mensajeErrorFilaBascula
+// ya sabe mostrar esto) y puede refrescar, en vez de creer que reclamó el
+// camión cuando en realidad no.
+window.dbFilaBasculaReclamarSiLibre = async function (filaId, campoReclamo, campos) {
+  return await runTransaction(db_f, async (tx) => {
+    const ref = doc(db_f, 'fila_bascula', filaId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Este camión ya no existe en la fila — puede que alguien más ya haya cerrado su ciclo. Refresca la lista.');
+    const actual = snap.data();
+    if (actual[campoReclamo]) {
+      const miUid = window._currentUserUid || '';
+      const yaEsMio = actual[campoReclamo] === miUid;
+      throw new Error(yaEsMio
+        ? 'Ya lo habías reclamado tú mismo — refresca la lista, puede que la pantalla esté desactualizada.'
+        : 'Otro capturista acaba de reclamar este camión unos segundos antes que tú. Refresca la lista y elige otro.');
+    }
+    tx.update(ref, campos);
+  });
 };
 
 window.dbFilaBasculaSuscribir = function (onData, onError) {
@@ -8159,7 +8238,11 @@ window.registrarEntradaFilaSegunda = async function(filaId, btn) {
     // 32.4: reclamado_por marca de quién es exclusivo este camión mientras
     // dure el destare — ver filtrarBuscadorDestare() para la visibilidad
     // y liberarCamionFilaSegunda() para deshacerlo.
-    await window.dbFilaBasculaActualizar(filaId, { t1b_fila_ts: Date.now(), reclamado_por: window._currentUserUid || '' });
+    // 27-jul-2026 (sección 82, hallazgo H3): antes era updateDoc() plano —
+    // dos capturistas podían "reclamar" el mismo camión casi al mismo
+    // tiempo y el segundo pisaba al primero en silencio. Ahora se usa el
+    // bridge transaccional que rechaza el reclamo si alguien ya lo tomó.
+    await window.dbFilaBasculaReclamarSiLibre(filaId, 'reclamado_por', { t1b_fila_ts: Date.now(), reclamado_por: window._currentUserUid || '' });
     window.showSyncToast('✅', '2da entrada a fila registrada', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;
@@ -8197,7 +8280,10 @@ window.registrarSalidaFilaSegunda = async function(filaId, btn) {
     // a teclear) frente a él, así que "Pendientes" usa este campo para que
     // cada quien vea únicamente lo que él mismo destaró (ver
     // puedeVerPendiente()/renderPendientes()).
-    await window.dbFilaBasculaActualizar(filaId, { t3b_salida_ts: Date.now(), destarado_por: window._currentUserUid || '' });
+    // 27-jul-2026 (sección 82, hallazgo H3): mismo fix que en reclamar —
+    // bridge transaccional en vez de updateDoc() plano, para no perder en
+    // silencio el "Destarado" si dos capturistas lo tocan casi a la vez.
+    await window.dbFilaBasculaReclamarSiLibre(filaId, 'destarado_por', { t3b_salida_ts: Date.now(), destarado_por: window._currentUserUid || '' });
     window.showSyncToast('✅', 'Destarado registrado — ya puedes capturar el peso en Pendientes', 'ok');
   } catch (e) {
     if (btn) btn.disabled = false;

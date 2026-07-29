@@ -5370,3 +5370,157 @@ de entregar, no en producción.
 
 **Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
 duplicados, confirmado que ningún call site externo cambió de firma.
+
+## 79. 27-jul-2026 — Prueba de uso simulada (12 sesiones concurrentes) — SOLO HALLAZGOS, sin código tocado
+
+**Sesión:** Sonnet5-20260726-A
+
+Simulación pedida por Jesús: 3 visores, 1 master, 2 admin, 1 coordinador, 5
+capturistas conectados a la vez, cada capturista capturando ~3 viajes/2min
+(450 viajes/hora combinado — 8-10x el supuesto de 300-500/día). Simulación
+de código (trazado función por función), no prueba de carga real contra
+Firebase.
+
+**H1 (menor):** el listener global de `fila_bascula` (línea 665) corre para
+los 12 roles sin excepción, incluido visor — el comentario de la sección
+20/77 dice que visor "no usa listener en tiempo real", cierto solo para el
+listener grande de tickets. Impacto bajo (tope 80).
+
+**H2 (grave):** el costo dominante NO son las capturas, es conectar 9
+sesiones con listener vivo (master+2admin+1coord+5capturistas): hasta
+~37,000 lecturas SOLO por abrir la app, antes de capturar nada — ~74% del
+cupo diario compartido de 50,000. Sostenido un turno completo a la tasa
+pedida, el estimado total (~70,000-80,000 lecturas) rompe el cupo diario y
+tumba también al bot de Telegram (cupo compartido).
+
+**H3 (correctness, no escala):** `fila_bascula` se actualiza con
+`updateDoc()` plano (línea 2764), sin `runTransaction` ni verificación de
+versión. Dos capturistas tocando el MISMO camión casi al mismo tiempo
+pueden pisarse campos en silencio (ej. perder `destarado_por`). Raro a
+300-500/día, más probable bajo carga simultánea alta.
+
+**Lo que sí aguanta:** gating de `renderDB()` (sección 75), cache de 60s
+(sección 78), `increment()` en resumenes (atómico, sin riesgo de carrera).
+
+**Pendiente, sin decidir todavía:** cuál atacar primero — H2 (más grave,
+cupo), `docChanges()` (ya discutido, ayuda CPU no cupo), o H3 (transacción
+en fila_bascula, correctness).
+
+## 80. 27-jul-2026 — H2 de la sección 79 (el más grave): ventana de listener por rol — CORREGIDO (parcial, ver alcance)
+
+**Sesión:** Sonnet5-20260726-A
+
+**Qué se cambió:** `startRealtimeSync(rol)` ahora usa una ventana fija de
+2 días / tope 1,500 documentos para `capturista` (no ve la pestaña "Base de
+Datos", solo necesita Pendientes reciente + un pre-check de duplicado que
+de todos modos tiene respaldo real en Firestore). Coordinador/admin/master
+siguen usando el selector `ventanaDias` normal (7/15/30 días).
+
+**Impacto estimado (mismo método de trazado de código de la sección 79):**
+el costo de "solo abrir la app" con 5 capturistas + 1 master + 2 admin + 1
+coordinador conectados baja de ~37,000 a ~23,500 lecturas estimadas
+(-36%) — capturistas pasan de hasta 4,000 docs c/u a hasta 1,500 c/u.
+
+**Alcance, explícito (30.3) — esto NO cierra H2 por completo:** el ahorro
+es sobre la lectura INICIAL al conectarse. El costo de propagación
+continua (cada escritura se reparte a las 9 sesiones vivas, sin importar
+el tamaño de su ventana — un ticket nuevo siempre cae dentro de cualquier
+ventana) NO se reduce con este cambio. En el escenario sostenido de la
+sección 79 (450 viajes/hora todo el día), ese costo de propagación
+(~32,000-40,000/día) sigue ahí y sigue pudiendo romper el cupo compartido
+de 50,000/día. Cerrar eso de raíz requeriría que capturista deje de tener
+listener EN VIVO (pasar a un modelo de "pull" tipo visor, sección 77) —
+cambio con trade-off de UX (Pendientes deja de ser instantáneo) que no se
+implementó hoy porque necesita decisión explícita de Jesús.
+
+**Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
+duplicados, confirmado que `cambiarVentana()` (el único otro call site de
+`startRealtimeSync`, sin argumento de rol) no es alcanzable por capturista
+(no tiene el selector en su UI), así que sigue usando la ruta normal sin
+riesgo.
+
+## 81. 27-jul-2026 — Corrección de volumen: la sección 79 exageró la tasa sostenida
+
+**Sesión:** Sonnet5-20260726-A
+
+Jesús corrigió el supuesto de la sección 79: el tope real es **150 camiones
+× 3 viajes = 450 entradas + 450 destares (900 en `fila_bascula`)**, hasta
+~1,500 registros/día contando barcaza — MUY cerca del supuesto original de
+300-500 viajes/día con el que ya está calibrado el resto de la app
+(LIMITE_VENTANA, cooldowns), no las 3,600-4,500/día que asumía el
+escenario B ("sostenido todo el día") de la sección 79.
+
+**Recalculado con el volumen correcto (post-fix sección 80):** propagación
+continua ≈ 1,000 escrituras `acarreos`/día × 9 sesiones + ~900 escrituras
+`fila_bascula`/día × 12 sesiones ≈ ~19,800 lecturas/día de fan-out, más
+~24,500 de lectura inicial (ya con el fix de la sección 80) ≈ **~44,000
+lecturas/día estimadas** — cerca del límite de 50,000 compartido con el
+bot de Telegram, pero NO el reventón catastrófico de 70,000-80,000 que
+calculaba la sección 79 con la tasa exagerada. El fix de la sección 80
+sigue siendo válido y necesario (da margen real), pero la severidad de H2
+bajo volumen real es "ajustado, sin margen sobrado" — no "se rompe seguro".
+
+**Sobre la pregunta de Jesús (Pendientes sin sync instantáneo):** confirmado
+antes de descartar esa opción — el emparejamiento en vivo entre básculas
+(1er pesaje ↔ destare) pasa por el listener GLOBAL de `fila_bascula`
+(línea 665, chico, tope 80, vive para los 12 roles) que la sección 80 NO
+tocó. La pestaña "Pendientes" (basada en `db`, el array grande) es más
+bien una vista de supervisión para tickets atorados +12h, no el mecanismo
+que usan los capturistas para cerrar un ciclo en el momento. Aun así,
+Jesús decidió no arriesgar el flujo de trabajo con ese cambio — queda
+descartado por ahora, no se implementa.
+
+## 82. 27-jul-2026 — H3 de la sección 79: transacción para reclamar/destarar en fila_bascula — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Qué se cambió:** nuevo bridge `window.dbFilaBasculaReclamarSiLibre(filaId,
+campoReclamo, campos)` — lee el documento dentro de un `runTransaction` y
+RECHAZA la escritura (con mensaje claro) si el campo de reclamo
+(`reclamado_por` o `destarado_por`) ya tiene dueño, en vez de pisarlo en
+silencio como hacía `dbFilaBasculaActualizar()` (updateDoc plano).
+Conectado en los dos puntos donde la UI promete exclusividad:
+`registrarEntradaFilaSegunda` (reclamar para destare) y
+`registrarSalidaFilaSegunda` (marcar destarado).
+
+**Por qué solo esos dos, no todo `fila_bascula`:** son los únicos dos
+lugares donde la UI le promete al capturista "esto es tuyo en exclusiva"
+(línea ~8172). El resto de las actualizaciones (t3_salida_ts de "sale a
+tiro", liberar camión, cerrar ciclo desde `procesarFilaBasculaDeTicket`)
+son timestamps o limpiezas de estado sin esa promesa de exclusividad —
+seguir usando `dbFilaBasculaActualizar()` (updateDoc plano) para esos es
+correcto y no se tocó.
+
+**Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
+duplicados, `runTransaction` importado en el módulo (línea 461) y usado
+solo ahí — el helper viejo sigue intacto para sus otros 3 call sites.
+
+## 83. 27-jul-2026 — docChanges(): pendiente restante de la sección 79 — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+**Qué se cambió:** el listener principal (`startRealtimeSync`) ya no hace
+`db = snapshot.docs.map(...)` (remapeo COMPLETO del array, hasta
+17,000/4,000/1,500 objetos según el rol, en CADA evento del listener, sin
+importar que solo cambiara 1 documento). Ahora usa `snapshot.docChanges()`
+y actualiza `db` con `splice()` puntual usando `newIndex`/`oldIndex` que
+ya calcula el SDK según el `orderBy(fecha1 desc)` de la query. `db` se
+reinicia explícito (`db = []`) justo antes de suscribirse — necesario
+porque los índices de docChanges() son relativos a ESTA query; sin el
+reset, cambiar de ventana (`cambiarVentana()`) dejaría splices mal
+alineados sobre datos de la ventana anterior.
+
+**Qué mejora y qué NO (dicho explícito, igual que en las entregas
+anteriores):** esto es CPU/memoria del dispositivo, no cupo de Firestore —
+las lecturas ya se facturan por documento cambiado sin importar cómo las
+procese el cliente. Con 9 sesiones conectadas, cada escritura ajena pasa
+de reconstruir hasta miles de objetos en cada teléfono a tocar 1-3.
+
+**Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
+duplicados. Confirmado que Firestore emite `removed` correctamente cuando
+un doc nuevo empuja fuera del `limit(tope)` a uno viejo (comportamiento
+documentado del SDK), así que `db` se mantiene acotado sin lógica extra.
+
+**Cierre de la sección 79:** con esto quedan atendidos los 3 hallazgos de
+la prueba de uso simulada (H2 sección 80, H3 sección 82, docChanges()
+sección 83).

@@ -700,11 +700,15 @@ no queda claro en el código revisado si también existen Custom Claims
       copia los 4 tiempos al documento de `stats_analisis` de ese ticket
       (t2/t4 se calculan de fecha1+hora1 / fecha2+hora2). Todo best-effort,
       sin bloquear el guardado real del ticket.
-- [ ] Implementar Bloque B.1 (panel Master), una vez haya datos reales
-      de los tres bloques anteriores para mostrar.
-- [ ] Escribir las reglas de seguridad definitivas de `stats_analisis`
-      en Firebase Console (o `firestore.rules` si el proyecto lo
-      maneja como archivo — verificar).
+- [x] Implementar Bloque B.1 (panel Master). **Resuelto — confirmado
+      construido y en producción el 28-jul-2026** (ver sección 5 y
+      sección 85 para el detalle; este checklist se había quedado
+      desactualizado, el código ya lo tenía completo desde antes).
+- [x] Escribir las reglas de seguridad definitivas de `stats_analisis`.
+      **Resuelto:** ya están en `firestore.rules` (match
+      `/stats_analisis/{docId}`, sección "Six Sigma Bloque B.1" del
+      archivo) — el proyecto sí maneja las reglas como archivo versionado,
+      no solo en Firebase Console. Confirmado 28-jul-2026.
 - [ ] Actualizar este archivo al cerrar cada bloque, con fecha, qué se
       tocó y qué quedó pendiente — mismo formato que las entradas de
       `BOT.MD`.
@@ -5163,7 +5167,7 @@ reales (no solo contra la documentación):**
   guardado de un ticket con destino "Área de Prefabricados" en cuanto
   se despliegue, para confirmar en producción real.
 
-## 70. 26-jul-2026 — Prueba de campo del fix de la sección 69 encuentra 2 hallazgos nuevos: regla de negocio de Rezaga/Prefabricados (🟡 pendiente de decisión) y ticket eliminado deja huérfana su fila de báscula (🔴 CORREGIDO)
+## 70. 26-jul-2026 — Prueba de campo del fix de la sección 69 encuentra 2 hallazgos nuevos: regla de negocio de Rezaga/Prefabricados (✅ RESUELTO el mismo día, ver sección 71) y ticket eliminado deja huérfana su fila de báscula (🔴 CORREGIDO)
 
 **Sesión:** Sonnet5-20260726-A
 
@@ -5172,8 +5176,9 @@ reales (no solo contra la documentación):**
 que el fix de `firestore.rules` quedó bien publicado). Durante la
 prueba encontró 2 cosas más.
 
-**🟡 Hallazgo 1 — regla de negocio, PENDIENTE de decisión de Jesús (no
-corregido todavía):** el campo de rango no deja capturar nada para
+**✅ Hallazgo 1 — regla de negocio, RESUELTO el mismo día (ver sección
+71 para la decisión final y los cambios de código):** el campo de rango
+no deja capturar nada para
 "Área de Prefabricados" — esto NO es un bug, es diseño intencional (el
 campo es `readonly` para todo destino que no sea Cuerpo/Acopio, se
 llena solo desde catálogo o se marca "pendiente"). Pero al probarlo,
@@ -5544,3 +5549,56 @@ Admin." No afecta el resumen del mes en curso, solo el total rápido de
 "TODO el histórico" (Gráficos/Resumen/Reportes/Bancos).
 
 **Verificación:** `node --check` limpio en los 4 bloques, sin IDs duplicados.
+
+## 85. 28/29-jul-2026 — Auditoría de bitácora: 3 marcadores de "pendiente" desactualizados contra código/decisión real, sin código tocado
+
+**Sesión:** Sonnet5-20260729-A
+
+**Contexto:** Jesús pidió armar el panel B.1 asumiendo que estaba
+pendiente (así lo decía el checklist de la sección 7). Al hacer el
+`grep` obligatorio de la sección 0.5 antes de programar, se encontró
+que el panel ya está completo y en producción — mismo patrón de la
+sección 47 (afirmar "no construido" sin haber verificado), esta vez
+en el checklist en vez de en una entrada de bitácora nueva.
+
+**Qué se corrigió (solo texto de `INSTRUCCIONESAPP.md`, cero cambios
+en `index.html`/`firestore.rules`):**
+1. Sección 5, Bloque B.1: `Estado: pendiente de construir` →
+   confirmado hecho, con referencia a las líneas reales de
+   `index.html` (`initSixSigmaTab` ~8514, `descargarExcelSixSigma`
+   ~8604, etc.).
+2. Sección 7 (checklist): 2 ítems cerrados —
+   - Bloque B.1 (ya construido, ver punto 1).
+   - Reglas de `stats_analisis` en `firestore.rules` (ya existen,
+     match `/stats_analisis/{docId}`, confirmado contra el archivo
+     real pegado por Jesús en esta misma sesión — coincide byte a
+     byte con el repo).
+3. Sección 70: el título y el hallazgo 1 decían "🟡 pendiente de
+   decisión de Jesús", pero la sección 71 (mismo día, 26-jul-2026) ya
+   documentaba esa decisión tomada y aplicada. Confirmado contra
+   `EXCLUSIONES_DESTINO_POR_MATERIAL` en `index.html` (línea ~4844,
+   `'REZAGA': ['ACOPIO MARINO', 'ACOPIO TERRESTRE']` ya existe).
+
+**Alcance de esta auditoría — explícito para no sobre-prometer:**
+solo se verificaron los 3 puntos de arriba (los que salieron en el
+resumen de la sesión anterior). Un `grep` rápido de `🟡`/`🔴`/`- [ ]`
+en el resto del archivo muestra **varias decenas** de checklists de
+prueba de secciones anteriores (ej. rondas de QA de dark mode,
+Fila Báscula, Metas, Auditar) que siguen con casillas sin marcar — no
+se verificó ninguna de ellas contra el código real en esta sesión, así
+que **no** se puede asumir que sigan siendo pendientes válidas ni que
+ya estén resueltas. Queda como tarea aparte (potencialmente grande)
+si Jesús quiere una auditoría completa de esos checklists viejos.
+
+**Lo que sí sigue genuinamente abierto, de lo que sí se revisó:**
+- Costo de lecturas H2 (sección 79-81): mitigado, no cerrado del
+  todo — el modelo de "pull" para capturista quedó descartado por
+  Jesús (sección 81), no hay nada más que decidir ahí salvo que
+  cambie el volumen real de operación.
+- Punto 3 del checklist de la sección 7 ("actualizar este archivo al
+  cerrar cada bloque") es una disciplina recurrente, no un pendiente
+  cerrable.
+
+**Verificación:** no aplica `node --check` (sin cambios de código);
+confirmé con `diff` que el `firestore.rules` pegado por Jesús en esta
+sesión es idéntico al del repo antes de citar líneas de él.

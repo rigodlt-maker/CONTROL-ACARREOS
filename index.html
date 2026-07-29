@@ -1446,9 +1446,20 @@ async function aplicarResumen(rec, signo) {
         await updateDoc(refGlobal, payloadGlobal);
       } catch (e2) {
         console.error('No se pudo crear/actualizar resumenes/historico_global:', e2);
+        // 27-jul-2026 (ver INSTRUCCIONESAPP.md sección 84): este era el
+        // tercer punto de escritura de aplicarResumen() (mensual,
+        // avance_acopio, historico_global) — los otros dos ya tenían aviso
+        // visual desde la sección 68 (26-jul), este se quedó silencioso por
+        // descuido. El ticket se guarda bien; lo que queda desactualizado es
+        // el total rápido de "TODO el histórico" que leen Gráficos/Resumen/
+        // Reportes/Bancos (leerDocResumen('historico_global')) — no afecta
+        // el resumen del mes en curso, ese usa `ref`/refGlobal por separado.
+        if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el total histórico no se pudo actualizar. Usa "Recalcular total histórico" en Admin.', 'err', 7000);
       }
     } else {
       console.error('No se pudo actualizar resumenes/historico_global:', e);
+      // 27-jul-2026 (ver sección 84): mismo criterio que arriba.
+      if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el total histórico no se pudo actualizar. Usa "Recalcular total histórico" en Admin.', 'err', 7000);
     }
   }
   window.historicoGlobalData = null; // invalida caché: el próximo panel lo lee fresco

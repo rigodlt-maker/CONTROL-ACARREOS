@@ -5530,3 +5530,17 @@ documentado del SDK), así que `db` se mantiene acotado sin lógica extra.
 **Cierre de la sección 79:** con esto quedan atendidos los 3 hallazgos de
 la prueba de uso simulada (H2 sección 80, H3 sección 82, docChanges()
 sección 83).
+
+## 84. 27-jul-2026 — Fallo silencioso restante en aplicarResumen() (historico_global) — CORREGIDO
+
+**Sesión:** Sonnet5-20260726-A
+
+De los 3 puntos de escritura de `aplicarResumen()` (mensual, avance_acopio,
+historico_global), los dos primeros ya tenían aviso visual desde la
+sección 68 — `historico_global` se quedó fuera por descuido, solo
+`console.error`. Se agregó el mismo toast: "Ticket guardado, pero el total
+histórico no se pudo actualizar. Usa 'Recalcular total histórico' en
+Admin." No afecta el resumen del mes en curso, solo el total rápido de
+"TODO el histórico" (Gráficos/Resumen/Reportes/Bancos).
+
+**Verificación:** `node --check` limpio en los 4 bloques, sin IDs duplicados.

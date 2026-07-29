@@ -5134,6 +5134,12 @@ aparezca. Impacto bajo hoy (el auto-registro público ya se eliminó,
 casi no deberían existir pendientes con otro rol) — queda pendiente
 por decidir si se corrige.
 
+**[CERRADO — ver sección 73, 26-jul-2026]** Este hallazgo ya se corrigió
+en una sesión posterior de ese mismo día; esta nota se quedó sin
+actualizar. Confirmado contra el código real el 27-jul-2026 (sesión
+Sonnet5-20260726-A): línea ~792 ya usa `puedeEliminar` igual que
+Eliminar/Revocar. No requiere ningún cambio adicional.
+
 **✅ Verificado sin hallazgos, cruzando código real contra reglas
 reales (no solo contra la documentación):**
 - `origen_tipo` ('BANCO'/'ACOPIO'), `tipo_camion`

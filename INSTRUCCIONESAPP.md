@@ -5585,3 +5585,81 @@ agregó `<p id="app-loading-msg">` debajo de "Conectando…".
 
 **Verificación:** `node --check` limpio en los 4 bloques, sin IDs
 duplicados. No se encontró nada roto en el resto de la app.
+
+## 87. 03-ago-2026 — 🔴 Bug real reportado por Jesús: editar un ticket ya destarado lo "regresaba" a pendiente y le borraba fecha2/tara/neto — CORREGIDO (3 causas relacionadas)
+
+**Sesión:** Sonnet5-20260803-A
+
+Jesús reportó que al editar un ticket ya completo (ej. corregir el peso),
+el ticket aparecía en "Base de Datos" con el badge "⏳ Pendiente" aunque
+ya tenía sus dos pesajes, ya estaba destarado y ya contaba en gráficas de
+material/metas. La edición no se aplicaba de verdad ("no se reclasifica
+ni se reedita"). Pidió también, explícitamente, que ninguna edición
+altere el timestamp original de creación del ticket.
+
+**Diagnóstico (sesión de preguntas con Jesús para descartar hipótesis):**
+pasaba con tickets recientes capturados 100% dentro de la app (no solo
+importados de Excel), y encontrando el ticket directo en la lista en vivo
+de "Base de Datos" (se descartó que fuera por una copia vieja de
+`dbHistorial`/"Ver TODO el histórico" — ese listener SÍ se confirmó en
+vivo, con `docChanges()` reemplazando el registro completo en cada
+edición). La causa exacta de por qué el `status` de un ticket puede
+quedar en `'pendiente'` estando de hecho completo no se pudo confirmar
+100% sin acceso de lectura en vivo a Firestore (se necesitaría inspeccionar
+el documento real de una boleta afectada, ej. "DTFMH") — el fix aplicado
+es defensivo por diseño: cierra la clase completa del bug en vez de
+apostar a una sola causa raíz.
+
+**Causas encontradas y corregidas, las tres en el mismo patrón recurrente
+de la sección 24.1 ("función pensada solo para un flujo se ejecuta sin
+distinguir el otro"):**
+
+1. **`getFormData()` confiaba ciegamente en `status` para decidir
+   `esPendiente` al editar** (línea ~5832). Si ese campo quedaba
+   desincronizado de la realidad del ticket por cualquier motivo (incluida
+   una edición previa ya afectada por este mismo bug — el bug se
+   auto-perpetuaba), la siguiente edición volvía a marcar el ticket como
+   pendiente y `getFormData()` vaciaba `fecha2`/`hora2`/`ciclo`/`tara_kg`/
+   `neto_kg`/`ton` (línea 5841-5871, ya diseñado así a propósito para
+   captura NUEVA). **Fix:** además de `status`, ahora se verifica evidencia
+   real de que el destare ya se hizo (`fecha2`+`hora2`+`tara_kg>0` en
+   `window._editOriginal`) — si existe, se trata como completo sin
+   importar lo que diga `status`. Blindaje, no solo corrección del síntoma.
+2. **`ts` (timestamp original de creación) se sobrescribía en cada edición.**
+   `getFormData()` siempre agrega `ts: new Date().toISOString()` al
+   payload — necesario para la rama de CREAR (que lo pisa con
+   `serverTimestamp()`), pero nadie lo pisaba ni lo borraba en la rama de
+   EDITAR (`saveRecord()`, ambos casos online y cola offline en
+   `procesarColaOffline()`). **Fix:** `delete payload.ts` / `delete nuevo.ts`
+   antes de escribir en ambos flujos de edición — una edición ahora nunca
+   toca el timestamp original, tal como pidió Jesús.
+3. **Doble conteo en el panel Six Sigma al editar un ticket ya cerrado.**
+   `procesarFilaBasculaDeTicket()` se llama igual desde captura nueva/
+   `completarPendiente()` que desde `saveRecord()` en modo edición, sin
+   distinguir los dos casos — cada edición de un ticket ya completo volvía
+   a sumar sus tiempos de ciclo a `incrementarStatsResumen()` (línea
+   ~8379), inflando `ciclos_bascula_cerrados` y las sumas de espera cada
+   vez que alguien corregía algo. **Fix:** se lee `fila.cerrado` ANTES de
+   actualizar el documento de `fila_bascula`; si ya estaba cerrado, se
+   sigue actualizando `stats_analisis` (para reflejar correcciones de
+   fecha/hora) pero se salta el incremento del agregado — solo cuenta la
+   primera vez que el ciclo se cierra.
+
+**Verificación:** `node --check` limpio en los 4 bloques de `<script>`,
+cero IDs de DOM duplicados, los 5 puntos de cambio quedaron en el bloque
+de `<script>` correcto según su dependencia (imports de Firebase
+`serverTimestamp`/`updateDoc` dentro del `<script type="module">`; lógica
+de `getFormData()`/`procesarFilaBasculaDeTicket()` en el `<script>` normal,
+usando solo los puentes `window.dbFilaBascula*`/`window.dbStatsAnalisis*`
+ya existentes, sin llamadas nuevas a Firebase fuera del módulo).
+
+**Pendiente real que queda, requiere decisión de Jesús (no corregido en
+esta sesión, es dato ya escrito, no código):** este fix previene que el
+bug se repita hacia adelante, pero **no corrige tickets que ya quedaron
+mal marcados en el pasado** (status:'pendiente' con datos completos, y los
+agregados de `resumenes`/panel Six Sigma potencialmente ya inflados por
+ediciones previas afectadas). Antes de dar esto por cerrado del todo,
+sería sano correr una auditoría puntual (ej. `where('status','==','pendiente')
+AND fecha2 != null`) para ver el tamaño real del problema y decidir si
+hace falta una corrección de datos aparte — se deja pendiente de que
+Jesús confirme si quiere esa auditoría ahora o después.

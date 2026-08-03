@@ -1737,6 +1737,12 @@ window.procesarColaOffline = async function() {
         await aplicarAgregadoAvanceAcopio(payload, +1);
       } else if (reg.type === 'UPDATE') {
         const { fid, original, nuevo } = reg.payload;
+        // 03-ago-2026 (sección 87, misma causa que en saveRecord()): por si
+        // un registro viejo quedó en la cola de antes de este fix con `ts`
+        // todavía adentro, se borra aquí también antes de escribir — nunca se
+        // debe tocar el timestamp original de creación al sincronizar una
+        // edición.
+        delete nuevo.ts;
         nuevo.ts_updated = serverTimestamp();
         nuevo.ediciones_contador = increment(1); // Six Sigma Bloque B.3: First Pass Yield
         await updateDoc(doc(db_f, COL, fid), nuevo);
@@ -1938,6 +1944,17 @@ window.saveRecord = async function() {
 
     } else {
       const original = window._editOriginal || null;
+      // 03-ago-2026 (bug real reportado por Jesús, sección 87): getFormData()
+      // siempre agrega `ts: new Date().toISOString()` al payload (lo necesita
+      // la rama de CREAR, que lo pisa con serverTimestamp() dos líneas abajo
+      // de esa rama). En EDITAR nadie lo pisaba ni lo borraba, así que cada
+      // corrección de un ticket (aunque fuera solo el peso) reemplazaba su
+      // timestamp original de creación por un string del momento de la
+      // edición — se pierde el dato real de "cuándo se capturó por primera
+      // vez". Una edición debe corregir valores del ticket, nunca su
+      // timestamp de creación ni sus tiempos originales: se borra aquí antes
+      // de escribir, para online y para la cola offline por igual.
+      delete payload.ts;
 
       if (!navigator.onLine) {
         await window.saveToOutbox({ fid: window._editFid, original, nuevo: payload }, 'UPDATE');
@@ -5829,7 +5846,23 @@ function getFormData() {
   // ticket NUEVO nace pendiente (el 2do pesaje/destare se captura después
   // en "Pendientes", disparado por "Destarado" en Fila Báscula). Si se
   // está EDITANDO un ticket existente, se respeta el status que ya tenía.
-  const esPendiente = window._editFid ? (window._editOriginal && window._editOriginal.status === 'pendiente') : true;
+  // 03-ago-2026 (bug real reportado por Jesús, ver INSTRUCCIONESAPP.md
+  // sección 87): antes esto confiaba ciegamente en el string `status` del
+  // ticket. Si ese campo quedaba desincronizado de la realidad por CUALQUIER
+  // motivo, editar un ticket ya completo (ej. corregir el peso) lo
+  // "regresaba" a pendiente y le borraba fecha2/hora2/ciclo/tara/neto ya
+  // capturados — aunque el ticket llevara rato completo y ya contara en
+  // gráficas/metas (esos agregados no se revierten solos al pisar el
+  // ticket, así que quedaban inflados con datos que ya no existían en el
+  // ticket real). Ahora, al editar, se blinda contra eso: si el ticket
+  // ORIGINAL ya trae fecha2+hora2+tara_kg (evidencia real de que el destare
+  // ya se hizo), se trata como completo sin importar lo que diga `status`.
+  // Esto NO cambia nada para captura nueva (ahí _editFid es null, sigue
+  // naciendo pendiente como siempre).
+  const _origYaCompleto = !!(window._editOriginal && window._editOriginal.fecha2 && window._editOriginal.hora2 && (window._editOriginal.tara_kg > 0));
+  const esPendiente = window._editFid
+    ? (window._editOriginal && window._editOriginal.status === 'pendiente' && !_origYaCompleto)
+    : true;
   const origenTipo  = document.getElementById('f-origen-tipo').value || 'BANCO';
   const destino     = document.getElementById('f-destino').value;
   const tipoCamion  = document.getElementById('f-tipo-camion').value;
@@ -8336,6 +8369,15 @@ window.procesarFilaBasculaDeTicket = async function(data, ticketId, esPendiente)
     const filaSnap = await window.dbFilaBasculaLeer(data.fila_bascula_id);
     if (!filaSnap.exists()) return;
     const fila = filaSnap.data();
+    // 03-ago-2026 (bug real reportado por Jesús, sección 87): se guarda ANTES
+    // de tocar nada si este ciclo de báscula ya estaba cerrado de una vez
+    // anterior (creación o edición previa). Esta función se llama igual desde
+    // captura nueva/completarPendiente() que desde editar un ticket ya
+    // completo (ej. solo corregir el peso) — sin este candado, cada edición
+    // de un ticket ya cerrado volvía a sumar sus tiempos de ciclo al
+    // acumulado del panel Six Sigma más abajo, inflando ciclos_bascula_cerrados
+    // y las sumas de espera cada vez que alguien lo editaba.
+    const yaEstabaCerrado = !!fila.cerrado;
 
     const camposFila = { id_ticket: ticketId, boleta: data.boleta || null };
     if (!esPendiente) camposFila.cerrado = true;
@@ -8359,6 +8401,13 @@ window.procesarFilaBasculaDeTicket = async function(data, ticketId, esPendiente)
         t4_destare_ts: t4
       });
     }
+
+    // 03-ago-2026 (sección 87): si el ciclo YA estaba cerrado antes de esta
+    // llamada, stats_analisis ya se actualizó arriba (para reflejar cualquier
+    // corrección de fecha/hora que haya traído la edición), pero el
+    // acumulado del panel Six Sigma de abajo NO se vuelve a incrementar — ya
+    // se contó la primera vez que se cerró.
+    if (yaEstabaCerrado) return;
 
     // Six Sigma Bloque B.1: acumular tiempos de báscula en el agregado, con
     // su propio contador por métrica (no todas están disponibles siempre)

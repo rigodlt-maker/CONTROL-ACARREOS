@@ -5377,6 +5377,127 @@ de entregar, no en producción.
 **Verificación:** `node --check` limpio en los 4 bloques reales, cero IDs
 duplicados, confirmado que ningún call site externo cambió de firma.
 
+---
+
+## 79. 03-ago-2026 — PDF de Bancos: 3 columnas nuevas + reordenado por fecha/hora ascendente; Gráficos: pastel por Banco con % (mismos colores que la barra existente)
+
+**Sesión:** Sonnet5-20260803-A
+
+**Contexto:** primera entrega de esta sesión. Se leyó `INSTRUCCIONESAPP.md`
+completo (0, 0.5, 0.6, 0.7, 1, 2, 6, 7, 8, 30 y 69–78) y se verificó contra
+`index.html` real (roles, `stats_analisis`, `fila_bascula`, catálogo REZAGA,
+campo `hora1`/`hora2`/`ciclo` ya existente en cada ticket) antes de tocar
+código — sin junta Obeya completa: son 2 cambios acotados de UI/reporte,
+sin impacto de arquitectura, financiero ni de flujo de báscula/camión, así
+que no aplicaba convocar el comité completo (regla de la sección 0.7,
+punto 1). Sí se aplicó el criterio de Arquitecto/UX de campo de forma
+puntual (ver aclaración de layout responsivo abajo).
+
+**Nota de protocolo (sección 0.6, punto 3):** esta sesión partió de
+`index.html`/`INSTRUCCIONESAPP.md` subidos directo por Jesús al chat, no
+del repo de GitHub — no fue técnicamente posible comparar contra la
+versión actual del repo antes de generar estos archivos (sin acceso a red
+en este entorno). **Verificar contra el repo antes de subir**, por si hubo
+cambios de otra sesión que esta copia no conoce.
+
+### 79.1 — PDF de Bancos (`descargarPdfBancos()`)
+
+**Aclaración antes de listar el cambio:** Jesús pidió 4 columnas nuevas
+("Fecha", "Hora primer pesaje", "Hora segundo pesaje", "Ciclo"), pero
+**"Fecha" ya existía** en el PDF desde antes (sección 11.2/12.5). Se
+interpretó como que se refería a las otras 3, y se dejó la columna Fecha
+donde ya estaba (no se duplicó). Si la intención era otra cosa con
+"Fecha", decírmelo y se ajusta.
+
+**Qué se cambió:**
+1. **3 columnas nuevas**, colocadas junto a Fecha: `1er PESAJE` (`hora1`),
+   `2do PESAJE` (`hora2`), `CICLO` (`r.ciclo`, string ya calculado y
+   guardado en cada ticket al completar el destare — sección 12.5/26, no
+   se recalculó nada nuevo). Tickets con `status: 'pendiente'` (sin 2do
+   pesaje todavía) muestran `⏳` en esas dos columnas, en vez de un dato
+   falso.
+2. **Orden dentro de cada grupo banco+material** cambió de "por número de
+   folio" a **ascendente por fecha+hora del 1er pesaje** (de la primera
+   fecha/hora a la última), usando `combinarFechaHora()` ya existente
+   (sección 72, mismo criterio CDMX -06:00 que el resto de la app). **La
+   división física por banco+material con su renglón de subtotal (sección
+   19) no se tocó** — Jesús pidió explícitamente seguir respetándola, y
+   el cambio de orden es *dentro* de cada grupo, no reemplaza la
+   agrupación.
+3. Tabla reacomodada a 12 columnas (antes 9): `BANCO, FECHA, 1er PESAJE,
+   2do PESAJE, CICLO, BOLETA, PLACA, FOLIO, MATERIAL, VIAJE, TONELADA,
+   TON/VIAJE`. Anchos de columna redimensionados para caber en la misma
+   hoja landscape carta (9.65" de 9.8" útiles) — fuente bajada de 8pt a
+   7.5pt (7pt en encabezado) para no perder legibilidad de las columnas
+   ya angostas como Placa (dobles de góndola/articulado).
+
+**Explícitamente NO tocado:** la tabla en pantalla de Bancos
+(`renderBancosTabla`), el filtro por banco/periodo, ni el Excel de Bancos
+— solo el PDF, mismo alcance que la sección 11.2 original.
+
+### 79.2 — Gráficos: pastel de Bancos con % + recoloreo de la barra existente
+
+**Qué se construyó:**
+1. Gráfica de pastel nueva (`chart-banco-pie`), junto a la dona de
+   Material existente, con las mismas toneladas por banco que ya calcula
+   `renderDashboard()` (`porBancoAgg`, agregado mensual — no se agregó
+   ninguna lectura nueva a Firestore, se reusa el mismo dato que ya
+   alimentaba la gráfica de barras).
+2. **Layout responsivo** (`.charts-row-2`, mismo breakpoint de 1024px que
+   ya usa `.nav-drawer`): en escritorio/PWA con espacio de sobra, dona y
+   pastel van lado a lado, como pidió Jesús ("a un lado de la gráfica de
+   dona"). **En celular se apilan** (una sola columna) — criterio de UX
+   de campo (sección 0.7): dos gráficas circulares a media pantalla en un
+   teléfono se vuelven ilegibles con una mano, y ningún otro `.chart-card`
+   de la app va lado a lado en móvil.
+3. **% dentro de cada rebanada**: no hay plugin de etiquetas de datos
+   cargado (el proyecto no trae `chartjs-plugin-datalabels` por CDN, y no
+   se agregó dependencia nueva) — se escribió un plugin propio
+   (`pieBancoLabelsPlugin`), mismo patrón ya usado en el proyecto
+   (`customBubblePlugin`, sección 20.3/tendencia). Rebanadas menores al 3%
+   no imprimen texto (no cabe legible) — el tooltip sí muestra el % exacto
+   siempre, al tocar/pasar el mouse.
+4. **Mismo color por banco en pastel y barra**: `colorParaBanco()`, paleta
+   fija de 8 colores muy distintos entre sí a propósito (pedido explícito:
+   "no usar colores similares"), asignados por posición en el catálogo
+   real `ORIGEN_BANCOS` (5 bancos hoy) — determinístico, no depende del
+   orden en que el agregado filtrado devuelva las llaves. Bancos fuera del
+   catálogo fijo (dato legado inesperado) caen a un color estable por hash
+   del nombre, para no repetir sin querer el color de un banco real.
+
+**Explícitamente NO construido en esta entrega (a propósito):** la
+descarga a PDF de la sección de Gráficos. Jesús pidió dejarlo aparte
+porque va a ser más específico de lo que parece a primera vista y se va a
+necesitar varias sesiones — queda como **pendiente abierto explícito**,
+no implementado ni parcialmente empezado. Cuando se retome, aplica la
+sección 0.7 completa (Arquitecto para decidir si reusa `jsPDF` +
+`html2canvas`/captura de `<canvas>` vs. tabla tipo `autoTable`, UX de
+campo para el tamaño de página, más el alcance exacto que Jesús vaya a
+precisar).
+
+**Verificación antes de entregar (checklist 30.5):**
+- 4 bloques `<script>` reales extraídos por posición exacta de
+  apertura/cierre (no por regex simple — el archivo tiene comentarios que
+  mencionan literalmente el texto `<script>`, ver nota 24.4): `node
+  --check` limpio en los 4.
+- `grep` de IDs de DOM duplicados fuera del `<script type="module">`:
+  cero.
+- Confirmado que `colorParaBanco()`/`pieBancoLabelsPlugin`/
+  `chartBancoPie` viven en el mismo `<script>` normal donde ya vivía
+  `renderDashboard()` (bloque grande, 4730–10756) — no hay llamada
+  cruzada de módulo a normal ni viceversa que necesite puente nuevo.
+- `fechaHoraTs()`/`combinarFechaHora()` usados en el PDF viven en el mismo
+  bloque normal que `descargarPdfBancos()` — sin puente `window.*`
+  necesario más allá del ya existente (`window.combinarFechaHora`).
+- No se tocaron los 3 puntos de guardado de tickets (sección 1.1.5) — este
+  cambio es de lectura/reporte, no de escritura.
+
+**Pendiente de que Jesús pruebe en campo:** que el PDF de Bancos siga
+abriendo bien en celular con las 12 columnas (verificar que no se vea
+apretado en pantallas más chicas al abrir el PDF desde el navegador
+móvil), y que el layout lado-a-lado de las gráficas se vea bien en el
+PWA de escritorio/Windows que ya usan algunos roles.
+
 ## 79. 27-jul-2026 — Prueba de uso simulada (12 sesiones concurrentes) — SOLO HALLAZGOS, sin código tocado
 
 **Sesión:** Sonnet5-20260726-A

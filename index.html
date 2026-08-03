@@ -330,6 +330,17 @@ body.modal-open { position: fixed; inset: 0; overflow: hidden; width: 100%; }
 .chart-card { background: var(--surface); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 14px; margin-bottom: 14px; }
 .chart-card h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 .chart-wrap { position: relative; width: 100%; height: 260px; }
+
+/* 03-ago-2026: fila de 2 gráficas (dona Material + pastel Banco). En
+   celular se apilan igual que cualquier otra .chart-card (una sola
+   columna, pantalla angosta con una mano); en escritorio/PWA con espacio
+   de sobra van lado a lado. Mismo breakpoint que .nav-drawer arriba. */
+.charts-row-2 { display: flex; flex-direction: column; gap: 0; }
+.charts-row-2 > .chart-card { margin-bottom: 14px; }
+@media (min-width: 1024px) {
+  .charts-row-2 { flex-direction: row; gap: 14px; align-items: stretch; }
+  .charts-row-2 > .chart-card { flex: 1 1 0; min-width: 0; margin-bottom: 14px; }
+}
 .dash-empty { text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 13px; }
 </style>
 
@@ -3694,9 +3705,19 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     </div>
   </div>
 
-  <div class="chart-card">
-    <h3>Toneladas totales por Material</h3>
-    <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
+  <div class="charts-row-2">
+    <div class="chart-card">
+      <h3>Toneladas totales por Material</h3>
+      <div class="chart-wrap"><canvas id="chart-material"></canvas></div>
+    </div>
+
+    <!-- 03-ago-2026: gráfica de pastel por Banco, pedida por Jesús junto a
+         la de Material. Mismos colores por banco que la gráfica de barras
+         de abajo (ver colorParaBanco() en renderDashboard()). -->
+    <div class="chart-card">
+      <h3>Toneladas totales por Banco (% del total)</h3>
+      <div class="chart-wrap"><canvas id="chart-banco-pie"></canvas></div>
+    </div>
   </div>
 
   <div class="chart-card">
@@ -6259,7 +6280,67 @@ const customBubblePlugin = {
 
 let chartMaterial = null;
 let chartBanco    = null;
+let chartBancoPie = null;
 let chartMeses    = null;
+
+// 03-ago-2026: paleta fija para BANCOS (pastel + barras) — pedido explícito
+// de Jesús: colores muy distintos entre sí (no tonos parecidos), y el mismo
+// color para el mismo banco en ambas gráficas. Orden fijo según el catálogo
+// real de bancos (ORIGEN_BANCOS, sección "3. Contexto de negocio" de
+// INSTRUCCIONESAPP.md) para que sea determinístico sin importar el orden en
+// que Object.keys() devuelva el agregado filtrado.
+const PALETA_COLORES_BANCO = ['#c0392b', '#1f618d', '#1e8449', '#b7950b', '#6c3483', '#ca6f1e', '#117864', '#a12f72'];
+const _ORDEN_COLOR_BANCO = ORIGEN_BANCOS.map(b => b.value);
+function colorParaBanco(nombreBancoValor) {
+  let idx = _ORDEN_COLOR_BANCO.indexOf(nombreBancoValor);
+  if (idx === -1) {
+    // Banco fuera del catálogo fijo (dato legado/inesperado): color estable
+    // por hash del nombre, para no repetir por accidente el color de un
+    // banco del catálogo.
+    let hash = 0;
+    const s = String(nombreBancoValor || '');
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    idx = _ORDEN_COLOR_BANCO.length + (hash % PALETA_COLORES_BANCO.length);
+  }
+  return PALETA_COLORES_BANCO[idx % PALETA_COLORES_BANCO.length];
+}
+
+// Plugin propio (mismo criterio que customBubblePlugin, sin depender de
+// librerías extra tipo chartjs-plugin-datalabels) para pintar el % dentro
+// de cada rebanada del pastel de Bancos.
+const pieBancoLabelsPlugin = {
+  id: 'pieBancoLabels',
+  afterDatasetsDraw(chart) {
+    if (chart.config.type !== 'pie') return;
+    const meta = chart.getDatasetMeta(0);
+    const dataArr = (chart.data.datasets[0] || {}).data || [];
+    const total = dataArr.reduce((s, v) => s + (v || 0), 0);
+    if (!total) return;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillStyle = '#ffffff';
+    meta.data.forEach((arc, i) => {
+      const val = dataArr[i];
+      if (!val) return;
+      const pct = (val / total) * 100;
+      if (pct < 3) return; // rebanada muy delgada: el texto no cabe legible
+      const props = arc.getProps(['startAngle', 'endAngle', 'innerRadius', 'outerRadius', 'x', 'y'], true);
+      const midAngle = (props.startAngle + props.endAngle) / 2;
+      const r = (props.innerRadius + props.outerRadius) / 2 * 0.92;
+      const px = props.x + Math.cos(midAngle) * r;
+      const py = props.y + Math.sin(midAngle) * r;
+      const text = pct.toFixed(1) + '%';
+      ctx.strokeText(text, px, py);
+      ctx.fillText(text, px, py);
+    });
+    ctx.restore();
+  }
+};
 
 function getMsSelected(key) {
   const dd = document.getElementById('ms-' + key + '-dd');
@@ -6436,13 +6517,42 @@ async function renderDashboard() {
     }
   });
 
+  // 03-ago-2026: mismos colores por banco en el pastel y en la barra (pedido
+  // explícito de Jesús) — se calculan una sola vez aquí y se reusan en las
+  // dos gráficas, para no repetir la lógica ni arriesgar que se desincronicen.
+  const bancoLabels  = Object.keys(porBanco);
+  const bancoValores  = Object.values(porBanco).map(v => +v.toFixed(2));
+  const bancoColores  = bancoLabels.map(colorParaBanco);
+
+  const ctxBancoPie = document.getElementById('chart-banco-pie').getContext('2d');
+  if (chartBancoPie) chartBancoPie.destroy();
+  chartBancoPie = new Chart(ctxBancoPie, {
+    type: 'pie',
+    data: {
+      labels: bancoLabels,
+      datasets: [{ data: bancoValores, backgroundColor: bancoColores, borderWidth: 1, borderColor: '#ffffff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => {
+          const total = (ctx.dataset.data || []).reduce((s, v) => s + (v || 0), 0);
+          const pct = total ? (ctx.parsed / total * 100) : 0;
+          return ctx.label + ': ' + ctx.parsed.toFixed(2) + ' t (' + pct.toFixed(1) + '%)';
+        } } }
+      }
+    },
+    plugins: [pieBancoLabelsPlugin]
+  });
+
   const ctxBanco = document.getElementById('chart-banco').getContext('2d');
   if (chartBanco) chartBanco.destroy();
   chartBanco = new Chart(ctxBanco, {
     type: 'bar',
     data: {
-      labels: Object.keys(porBanco),
-      datasets: [{ label: 'Toneladas', data: Object.values(porBanco).map(v=>+v.toFixed(2)), backgroundColor: '#0f6e56', borderRadius: 6 }]
+      labels: bancoLabels,
+      datasets: [{ label: 'Toneladas', data: bancoValores, backgroundColor: bancoColores, borderRadius: 6 }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -10129,13 +10239,19 @@ async function descargarPdfBancos() {
   // (por si acaso) van al final, no se excluyen.
   const ORDEN_MATERIAL_PDF = ['NUCLEO', 'SECUNDARIA 1', 'SECUNDARIA 2', 'BERMA', 'BERMA DE APOYO', 'CORAZA', 'REZAGA'];
   const ordenMaterialPdf = (m) => { const i = ORDEN_MATERIAL_PDF.indexOf(m); return i === -1 ? ORDEN_MATERIAL_PDF.length : i; };
-  const folioNum = (r) => parseInt(String(r.folio || '').replace(/\D/g, ''), 10) || 0;
+  // 03-ago-2026 (pedido de Jesús): antes el orden dentro de cada grupo
+  // banco+material era por número de folio. Ahora es ascendente por
+  // fecha+hora del 1er pesaje (de la primera fecha/hora a la última) —
+  // la división física por banco+material (renglón separador con
+  // subtotal) se sigue respetando igual que antes, esto solo cambia el
+  // criterio de orden DENTRO de cada grupo.
+  const fechaHoraTs = (r) => { const t = window.combinarFechaHora(r.fecha1, r.hora1 || '00:00'); return t === null ? 0 : t; };
   const filas = filtered.slice().sort((a, b) => {
     const nb = nombreBanco(a.banco).localeCompare(nombreBanco(b.banco));
     if (nb !== 0) return nb;
     const om = ordenMaterialPdf(a.material) - ordenMaterialPdf(b.material);
     if (om !== 0) return om;
-    return folioNum(a) - folioNum(b);
+    return fechaHoraTs(a) - fechaHoraTs(b);
   });
 
   // Agrupa filas consecutivas (ya vienen ordenadas) por banco+material.
@@ -10157,11 +10273,16 @@ async function descargarPdfBancos() {
     const tonGrupo = g.registros.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
     const promedioGrupo = g.registros.length ? tonGrupo / g.registros.length : 0;
     filasHeaderMaterial.push(body.length);
-    body.push([`${g.banco} — ${g.material}`, '', '', '', '', '', String(g.registros.length), fmtTon(tonGrupo), fmtTon(promedioGrupo)]);
+    // 8 columnas en blanco entre el texto del grupo y los 3 totales
+    // (Fecha, 1er Pesaje, 2do Pesaje, Ciclo, Boleta, Placa, Folio, Material).
+    body.push([`${g.banco} — ${g.material}`, '', '', '', '', '', '', '', '', String(g.registros.length), fmtTon(tonGrupo), fmtTon(promedioGrupo)]);
     g.registros.forEach(r => {
       const ton = r.ton || (r.neto_kg || 0) / 1000;
+      const esPendiente = r.status === 'pendiente';
       body.push([
-        nombreBanco(r.banco), fmtFechaCorta(r.fecha1), r.boleta || '—', r.placas || '—', r.folio || '—',
+        nombreBanco(r.banco), fmtFechaCorta(r.fecha1),
+        r.hora1 || '—', esPendiente ? '⏳' : (r.hora2 || '—'), esPendiente ? '⏳' : (r.ciclo || '—'),
+        r.boleta || '—', r.placas || '—', r.folio || '—',
         nombreMaterial(r.material), '1', fmtTon(ton), fmtTon(ton)
       ]);
     });
@@ -10170,7 +10291,7 @@ async function descargarPdfBancos() {
   const totalViajes = filtered.length;
   const totalTon = filtered.reduce((s, r) => s + (r.ton || (r.neto_kg || 0) / 1000), 0);
   const promedioGeneral = totalViajes ? totalTon / totalViajes : 0;
-  body.push(['TOTAL GENERAL', '', '', '', '', '', String(totalViajes), fmtTon(totalTon), fmtTon(promedioGeneral)]);
+  body.push(['TOTAL GENERAL', '', '', '', '', '', '', '', '', String(totalViajes), fmtTon(totalTon), fmtTon(promedioGeneral)]);
   const filaTotalIdx = body.length - 1;
 
   // 11.2: encabezado del rango de fechas REAL que se está mostrando (no
@@ -10238,20 +10359,23 @@ async function descargarPdfBancos() {
 
   doc.autoTable({
     startY: y,
-    head: [['BANCO', 'FECHA', 'BOLETA', 'PLACA', 'FOLIO', 'MATERIAL', 'VIAJE', 'TONELADA', 'TON/VIAJE']],
+    head: [['BANCO', 'FECHA', '1er PESAJE', '2do PESAJE', 'CICLO', 'BOLETA', 'PLACA', 'FOLIO', 'MATERIAL', 'VIAJE', 'TONELADA', 'TON/VIAJE']],
     body: body,
-    styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak' },
-    headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold' },
+    styles: { fontSize: 7.5, cellPadding: 0.035, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 100, 160], textColor: 255, fontStyle: 'bold', fontSize: 7 },
     columnStyles: {
-      0: { cellWidth: 1.5 },                    // Banco
-      1: { cellWidth: 0.7, halign: 'center' },  // Fecha
-      2: { cellWidth: 0.7, halign: 'center' },  // Boleta
-      3: { cellWidth: 1.2 },                    // Placa (dobles de góndola/articulado)
-      4: { cellWidth: 0.85 },                   // Folio
-      5: { cellWidth: 1.2 },                    // Material
-      6: { cellWidth: 0.5, halign: 'right' },   // Viaje
-      7: { cellWidth: 0.8, halign: 'right' },   // Tonelada
-      8: { cellWidth: 0.85, halign: 'right' }   // Ton/Viaje
+      0: { cellWidth: 1.3 },                     // Banco
+      1: { cellWidth: 0.7,  halign: 'center' },  // Fecha
+      2: { cellWidth: 0.6,  halign: 'center' },  // Hora 1er pesaje
+      3: { cellWidth: 0.6,  halign: 'center' },  // Hora 2do pesaje
+      4: { cellWidth: 0.65, halign: 'center' },  // Ciclo
+      5: { cellWidth: 0.65, halign: 'center' },  // Boleta
+      6: { cellWidth: 1.05 },                    // Placa (dobles de góndola/articulado)
+      7: { cellWidth: 0.85 },                    // Folio
+      8: { cellWidth: 1.05 },                    // Material
+      9: { cellWidth: 0.5,  halign: 'right' },   // Viaje
+      10: { cellWidth: 0.85, halign: 'right' },  // Tonelada
+      11: { cellWidth: 0.85, halign: 'right' }   // Ton/Viaje
     },
     margin: { left: marginX, right: marginX },
     didParseCell: (data) => {

@@ -3043,6 +3043,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
 <div id="fb-loading">
   <div class="spin-lg"></div>
   <p>Conectando…</p>
+  <p id="app-loading-msg" style="font-size:12px;color:var(--text-muted);"></p>
 </div>
 
 <div id="fb-error">
@@ -4509,6 +4510,20 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     <button class="btn btn-secondary" style="width:100%;" onclick="auditarEconomicosDuplicados()">🔍 Revisar duplicados</button>
     <div id="aud-dup-resultado" style="font-size:12px;margin-top:10px;"></div>
   </div>
+
+  <div class="chart-card" style="margin-bottom:14px;display:none;" id="aud-corregir-economico-card">
+    <h3>Corregir económico de una placa</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+      Solo para placas YA registradas en flota con el económico mal
+      capturado desde el principio — no crea un vehículo nuevo. No
+      corrige tickets ya guardados con el valor anterior.
+    </p>
+    <input type="text" id="aud-corr-placas" placeholder="Placas, igual a como se guardó (ej. ABC-123)" style="width:100%;margin-bottom:8px;padding:8px;border:0.5px solid var(--border);border-radius:6px;">
+    <input type="text" id="aud-corr-economico" placeholder="Económico correcto" style="width:100%;margin-bottom:8px;padding:8px;border:0.5px solid var(--border);border-radius:6px;">
+    <button class="btn btn-secondary" style="width:100%;" onclick="corregirEconomicoFlota()">✏️ Corregir económico</button>
+    <div id="aud-corr-resultado" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+
 
   <div class="chart-card" style="margin-bottom:14px;">
     <h3>Camiones sin # económico</h3>
@@ -8375,7 +8390,46 @@ function formatearDuracionSeg(seg) {
 }
 
 window.initAuditarTab = function() {
-  // Reservado — los 4 chequeos son a demanda (botón), nada que cargar al entrar.
+  // 27-jul-2026 (sección 85): la tarjeta de corrección de económico es
+  // solo para master (mismo criterio que otras herramientas de corrección
+  // de datos ya existentes, ej. "Recalcular resumen") — las reglas de
+  // Firestore técnicamente permiten escribir `flota` a cualquier rol con
+  // puedeCapturar(), pero corregir un dato ya capturado por otra persona
+  // se restringe aquí en la UI, no en las reglas.
+  const card = document.getElementById('aud-corregir-economico-card');
+  if (card) card.style.display = (window._currentUserRol === 'master') ? '' : 'none';
+};
+
+// 27-jul-2026 (ver INSTRUCCIONESAPP.md sección 85, pendiente de la
+// sección 24): antes, si una placa ya registrada en `flota` tenía el
+// económico mal capturado desde el principio, no había forma de
+// corregirlo desde la app (había que editar directo en Firestore
+// Console). Solo corrige el catálogo `flota` — a propósito NO toca
+// tickets ya guardados en `acarreos` con el económico viejo (eso
+// requeriría decidir cuáles corregir y es una operación distinta, más
+// riesgosa; se deja fuera de este alcance).
+window.corregirEconomicoFlota = async function() {
+  if (window._currentUserRol !== 'master') { alert('Solo un usuario master puede corregir el económico de flota.'); return; }
+  const placas = (document.getElementById('aud-corr-placas').value || '').trim();
+  const economico = (document.getElementById('aud-corr-economico').value || '').trim();
+  const out = document.getElementById('aud-corr-resultado');
+  if (!out) return;
+  if (!placas || !economico) { out.innerHTML = '⚠️ Captura placas y económico.'; return; }
+  if (!confirm(`¿Corregir el económico de "${placas}" a "${economico}"?\n\nEsto NO corrige tickets ya guardados con el económico anterior.`)) return;
+  out.innerHTML = '⏳ Corrigiendo…';
+  try {
+    const snap = await window.dbFlotaLeer(placas);
+    if (!snap.exists()) {
+      out.innerHTML = '❌ No existe ninguna placa "' + escHtml(placas) + '" en flota (este botón solo corrige registros que ya existen, no crea nuevos).';
+      return;
+    }
+    const anterior = snap.data().economico || '(vacío)';
+    await window.dbFlotaGuardar(placas, { economico });
+    window._auditFlotaCache = null; // invalida el cache de Auditar (sección 32.7) para que el próximo chequeo lo vea corregido
+    out.innerHTML = `✅ Económico de "${escHtml(placas)}" corregido: ${escHtml(anterior)} → ${escHtml(economico)}.`;
+  } catch (e) {
+    out.innerHTML = '❌ Error: ' + escHtml(e.message);
+  }
 };
 
 // Auditar (32.7, 21-jul-2026): 1 sola lectura de la colección `flota`,

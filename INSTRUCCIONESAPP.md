@@ -5784,3 +5784,82 @@ sería sano correr una auditoría puntual (ej. `where('status','==','pendiente')
 AND fecha2 != null`) para ver el tamaño real del problema y decidir si
 hace falta una corrección de datos aparte — se deja pendiente de que
 Jesús confirme si quiere esa auditoría ahora o después.
+
+## 88. 04-ago-2026 — PDF de la pestaña "Gráficos" (dona Material + pastel Banco + barra Banco + barra Mes/Año, con tabla resumen)
+
+**Sesión:** Sonnet5-20260803-A (continuación — nota: se etiqueta con la
+fecha de arranque de la sesión, aunque el reloj del sistema ya marcaba
+04-ago-2026 al momento de esta entrega puntual).
+
+**Contexto:** pendiente explícito dejado en la sección 79.2 ("va a ser más
+específico de lo que parece, se van a necesitar varias sesiones"). Antes
+de tocar código se releyó el repo desde GitHub (confirmando que los
+commits de la sesión anterior, secciones 79 y 87, ya estaban ahí) y se
+acordó el alcance exacto con Jesús con 3 preguntas puntuales en vez de
+adivinar: qué gráficas entran, si respeta filtros, y cómo se ve el
+resultado. Sin junta Obeya completa — mismo criterio que la sección 79
+(cambio acotado de UI/reporte, sin impacto de arquitectura, financiero ni
+de flujo de báscula/camión).
+
+**Alcance acordado con Jesús:**
+1. Las 4 gráficas de la pestaña "Gráficos": dona de Material, pastel de
+   Banco (%), barra de Banco (Origen), barra de Toneladas por Mes/Año.
+2. Debe respetar EXACTAMENTE los filtros que ya estén puestos en pantalla
+   (banco/material/cuerpo/periodo) — "lo que estoy viendo filtrado".
+3. Layout: gráficas arriba (una por una / dona+pastel lado a lado como en
+   pantalla) y, aparte, una tabla resumen general al final con todos los
+   datos exactos.
+
+**Qué se construyó (`descargarPdfGraficos()`):**
+- Sin agregar ninguna librería nueva: se reusa `jsPDF` + `jspdf-autotable`
+  (ya cargados desde antes, sección 16.2/16.4). Como las 4 gráficas ya son
+  `<canvas>` de Chart.js, se exportan directo a imagen con
+  `chart.toBase64Image()` — nada de `html2canvas` ni captura de pantalla.
+- **Respeta filtros sin leer Firestore de nuevo:** se exportan las MISMAS
+  instancias de Chart.js (`chartMaterial`, `chartBancoPie`, `chartBanco`,
+  `chartMeses`, variables ya existentes de `renderDashboard()`) tal como
+  estén en pantalla en el momento del clic — cero lecturas nuevas, cero
+  riesgo de que el PDF no coincida con lo que Jesús está viendo.
+- Encabezado del PDF con periodo, filtros activos (Banco/Material/Cuerpo,
+  igual que el resto de los PDF de la app) y los 2 KPI (viajes/toneladas)
+  ya visibles arriba de las gráficas en pantalla.
+- Página 1: dona Material + pastel Banco lado a lado (igual que en
+  pantalla), barra Banco (Origen) ancho completo, barra Mes/Año ancho
+  completo — con salto de página automático si no cabe verticalmente
+  (`addChartImageToPdf()` calcula el alto real según el aspect ratio del
+  canvas, nunca se estira/deforma la imagen).
+- Página(s) siguiente(s): tabla resumen general (`autoTable`) con 3 bloques
+  — Por Material, Por Banco, Por Mes/Año — cada uno con Concepto /
+  Toneladas / % del total y renglón de TOTAL en negro. "Por Banco"
+  alimenta tanto al pastel como a la barra de banco, así que no se duplicó
+  esa tabla dos veces (mismos números).
+- Botón `📄 Descargar PDF` agregado arriba de las gráficas en la pestaña
+  (mismo lugar/estilo que en Bancos), con spinner mientras genera y usando
+  el mismo `guardarPdfDescarga()` compartido (Web Share en PWA
+  standalone/iOS/Android/Windows, `doc.save()` en navegador normal — Fix
+  10-jul-2026 v2/v4, sección 16.2).
+
+**Explícitamente NO tocado:** `renderDashboard()`, los filtros/slicers de
+la pestaña, ni las 4 gráficas en pantalla — solo lectura de las instancias
+ya renderizadas y del DOM de KPIs/filtros para el encabezado del PDF.
+
+**Verificación antes de entregar (checklist 30.5):**
+- 4 bloques `<script>` reales extraídos por posición exacta: `node
+  --check` limpio en los 4.
+- `grep` de IDs de DOM duplicados en todo el archivo: cero (`btn-graficos-pdf`
+  es el único ID nuevo).
+- Confirmado que `descargarPdfGraficos()`/`addChartImageToPdf()` viven en
+  el mismo `<script>` normal donde ya viven `chartMaterial`/`chartBanco`/
+  `chartBancoPie`/`chartMeses`/`renderDashboard()`/`nombreBanco()`/
+  `nombreMaterial()`/`getMsSelected()`/`isoHoy()`/`guardarPdfDescarga()` —
+  cero puentes `window.*` nuevos necesarios.
+- No se tocaron los 3 puntos de guardado de tickets (sección 1.1.5) — este
+  cambio es de lectura/reporte, no de escritura.
+
+**Pendiente de que Jesús pruebe en campo:** que el PDF se genere bien
+tanto en la app instalada (PWA) como en navegador normal, en los 3
+sistemas operativos que ya usan los roles (iOS, Android, Windows); y que
+la calidad/nitidez de las gráficas exportadas como imagen se vea bien
+impresa (si se ve borrosa al imprimir, la corrección es forzar mayor
+resolución del canvas antes de exportar — pendiente de decidir SOLO si
+hace falta, no se tocó preventivamente).

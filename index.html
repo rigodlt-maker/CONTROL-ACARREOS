@@ -7983,19 +7983,40 @@ function diasTrabajadosDe(regs) {
 
 // "Vueltas por camión al día" (pregunta 4 de la sección 88, respuesta de
 // Jesús): identifica camiones por PLACA COMPLETA dentro del grupo (ej. los
-// que visitaron un banco puntual), y luego cuenta TODOS los viajes de esas
-// placas dentro de `universo` (no solo los que caen en el grupo) — un
-// camión puede desviarse a otro banco el mismo día por cierre de vialidad,
-// así que no se subestima su actividad real. `universo` ya viene acotado
-// por los filtros activos de banco/material/cuerpo/fecha (nunca el
-// histórico completo fuera de esos filtros).
+// que visitaron un banco puntual), y cuenta los viajes de esas placas
+// dentro de `universo` (no solo los que caen en el grupo) — un camión
+// puede desviarse a otro banco el mismo día por cierre de vialidad, así
+// que no se subestima su actividad real. `universo` ya viene acotado por
+// los filtros activos de banco/material/cuerpo/fecha.
+//
+// 04-ago-2026 (corrección pedida por Jesús, con ejemplo numérico): NO es
+// total_viajes / total_camiones / total_días (eso pesa distinto según
+// cuántos camiones hubo cada día — un día con muchos camiones "diluye" el
+// promedio de un día con pocos). El cálculo correcto es: por cada día,
+// promedio = viajes_ese_día / camiones_distintos_ese_día; luego se SUMAN
+// esos promedios diarios y se dividen entre el número de días. Puede dar
+// decimales, y ahí sí es correcto (confirmado por Jesús).
 function vueltasPorCamionDia(regsGrupo, universo) {
   const placas = new Set(regsGrupo.map(r => r.placas).filter(Boolean));
   if (!placas.size) return 0;
   const viajesDeEsasPlacas = universo.filter(r => placas.has(r.placas));
-  const dias = diasTrabajadosDe(viajesDeEsasPlacas);
-  if (!dias) return 0;
-  return viajesDeEsasPlacas.length / placas.size / dias;
+  if (!viajesDeEsasPlacas.length) return 0;
+
+  const porDia = {}; // fecha1 -> { viajes: n, placas: Set }
+  viajesDeEsasPlacas.forEach(r => {
+    if (!r.fecha1) return;
+    if (!porDia[r.fecha1]) porDia[r.fecha1] = { viajes: 0, placas: new Set() };
+    porDia[r.fecha1].viajes++;
+    porDia[r.fecha1].placas.add(r.placas);
+  });
+
+  const diasKeys = Object.keys(porDia);
+  if (!diasKeys.length) return 0;
+  const sumaPromediosDiarios = diasKeys.reduce((s, d) => {
+    const info = porDia[d];
+    return s + (info.placas.size ? info.viajes / info.placas.size : 0);
+  }, 0);
+  return sumaPromediosDiarios / diasKeys.length;
 }
 
 function agruparRegs(regs, campo, nombreFn) {
@@ -8037,7 +8058,15 @@ function agruparRegsPorMesVista(regs) {
 function armarAnalisisTexto(grupos, universo, etiquetaSingular, etiquetaAccion) {
   if (!grupos.length) return `No hay datos de ${etiquetaSingular}s en el periodo/filtro seleccionado.`;
   const fmtT = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtV = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  // 04-ago-2026: "viajes por día" (total del grupo ÷ días, sin desglose
+  // por camión) sigue siendo un conteo de eventos — se redondea a entero
+  // al mostrarlo, mismo criterio que el ejemplo de Jesús ("60 viajes por
+  // día"). "Vueltas por camión al día" SÍ se muestra con 1 decimal desde
+  // el fix de la fórmula (promedio de promedios diarios, ver
+  // vueltasPorCamionDia más arriba) — Jesús confirmó que ahí el decimal
+  // es correcto.
+  const fmtV = (v) => Math.round(v).toLocaleString('es-MX');
+  const fmtVueltas = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
   const stats = grupos.map(g => {
     const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
@@ -8049,7 +8078,7 @@ function armarAnalisisTexto(grupos, universo, etiquetaSingular, etiquetaAccion) 
 
   const detalle = (s) => {
     let t = `${fmtT(s.ton)} toneladas ${etiquetaAccion}, un promedio de ${fmtV(s.viajesDia)} viajes por día`;
-    if (s.vueltas !== null) t += ` y ${fmtV(s.vueltas)} vueltas por camión al día`;
+    if (s.vueltas !== null) t += ` y ${fmtVueltas(s.vueltas)} vueltas por camión al día`;
     return t;
   };
 
@@ -8244,7 +8273,8 @@ async function descargarPdfGraficos() {
   // con un solo `universo` compartido, se arma manual aquí mismo.
   (function () {
     const fmtT = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const fmtV = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const fmtV = (v) => Math.round(v).toLocaleString('es-MX'); // viajes/día: entero
+    const fmtVueltas = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); // vueltas/camión: 1 decimal, ver nota arriba
     if (!gruposMes.length) { escribirParrafo(`No hay datos por ${etiquetaMes} en el periodo/filtro seleccionado.`, y, anchoUtil); return; }
     const stats = gruposMes.map(g => {
       const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
@@ -8253,7 +8283,7 @@ async function descargarPdfGraficos() {
       const vueltas = vueltasPorCamionDia(g.regs, g.regs);
       return { nombre: g.nombre, ton, viajesDia, vueltas };
     }).sort((a, b) => b.ton - a.ton);
-    const detalle = (s) => `${fmtT(s.ton)} toneladas suministradas, un promedio de ${fmtV(s.viajesDia)} viajes por día (solo días con datos) y ${fmtV(s.vueltas)} vueltas por camión al día`;
+    const detalle = (s) => `${fmtT(s.ton)} toneladas suministradas, un promedio de ${fmtV(s.viajesDia)} viajes por día (solo días con datos) y ${fmtVueltas(s.vueltas)} vueltas por camión al día`;
     let txt;
     if (stats.length === 1) {
       txt = `Se identificó un solo ${etiquetaMes}: "${stats[0].nombre}", con ${detalle(stats[0])}.`;

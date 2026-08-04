@@ -5904,3 +5904,58 @@ pantalla, ni `por_combinacion`/Metas.
 3. Que los números de "vueltas por camión" cuadren con lo que Jesús
    espera ver en campo — es una métrica nueva, vale la pena que la
    revise con un caso real antes de repartir el PDF a Dirección.
+
+---
+
+## 89. 04-ago-2026 — Fix: "vueltas por camión al día" del PDF de Gráficos usaba la fórmula equivocada — CORREGIDO (promedio de promedios diarios, no total/total)
+
+**Sesión:** Sonnet5-20260803-B (continuación).
+
+**Primer intento (INCOMPLETO, corregido en la misma sesión):** Jesús
+reportó que "vueltas por camión al día" salía con decimal y dijo que "no
+puede ser así". El primer diagnóstico fue de FORMATO (redondear a entero
+al mostrarlo, dejando el cálculo igual) — quedó registrado y aplicado,
+pero Jesús aclaró que el problema real era la FÓRMULA, no el formato: con
+la fórmula correcta el decimal es válido y esperado.
+
+**Fórmula correcta (dada por Jesús con ejemplo numérico):** NO es
+`total_viajes ÷ total_camiones_distintos ÷ total_días` (así estaba, y así
+quedó cuando solo se redondeaba) — ese cálculo pesa distinto según cuántos
+camiones trabajaron cada día (un día con muchos camiones diluye el
+promedio de un día con pocos). Lo correcto es: **por cada día, promedio =
+viajes de ese día ÷ camiones distintos de ese día; se suman esos
+promedios diarios y se dividen entre el número de días.**
+
+Ejemplo de Jesús (1-10 agosto): día 1 con 5 camiones e hicieron 2,3,2,3,3
+viajes (13 viajes) → promedio del día = 13/5 = 2.6. Día 2 con 3 camiones
+e hicieron 3,3,2 (8 viajes) → promedio = 8/3 ≈ 2.67. Así para cada día del
+periodo, y al final: (2.6 + 2.67 + … días 3 a 10) ÷ número de días = el
+resultado final, que sí puede (y debe) salir con decimal.
+
+**Fix:** `vueltasPorCamionDia()` reescrita — agrupa los viajes de las
+placas del grupo por `fecha1`, calcula el promedio diario
+(viajes_del_día / camiones_distintos_del_día) y devuelve el promedio de
+esos promedios diarios. El resto de la lógica no cambió: sigue
+identificando camiones por placa completa, sigue contando TODOS los
+viajes de esas placas dentro del `universo` filtrado (no solo los del
+grupo puntual — pregunta 4 de la sección 88), y en Mes/Año sigue usando
+como universo el propio grupo (no todo el rango — ver sección 88.2).
+
+**Formato final:** "viajes por día" (total del grupo ÷ días, sin desglose
+por camión) se queda en entero (`Math.round`) — no es la métrica que
+Jesús corrigió, y su propio ejemplo también la usa sin decimal. "Vueltas
+por camión al día" SÍ se muestra con 1 decimal ahora — dos formateadores
+separados (`fmtV` para viajes, `fmtVueltas` para vueltas) en las 2 partes
+del PDF que arman este texto (Banco/Material y Mes/Año).
+
+**Nota de proceso:** al aplicar el primer fix (el de redondeo) un
+`str_replace` borró por accidente una línea de código (`old_str` incluía
+la línea pero `new_str` no la repitió) — se detectó al revisar el archivo
+antes de correr `node --check` y se corrigió en el momento, antes de
+entregar nada. Se documenta aquí porque es justo el tipo de error que la
+verificación de la sección 30.5 existe para atrapar.
+
+**Verificación:** `node --check` limpio en los 4 bloques `<script>`
+reales; cero IDs de DOM duplicados (no se tocó HTML en esta entrega, solo
+la función `vueltasPorCamionDia()` y los formateadores de las 2 llamadas
+que arman el texto del PDF).

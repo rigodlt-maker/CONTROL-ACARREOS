@@ -3703,6 +3703,27 @@ window.dbFilaBasculaEliminar = async function (filaId) {
       <div class="val" id="dash-kpi-toneladas">0 t</div>
       <div class="lbl">Toneladas (filtradas)</div>
     </div>
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-vueltas">—</div>
+      <div class="lbl">Vueltas promedio</div>
+    </div>
+    <div class="kpi-card">
+      <div class="val" id="dash-kpi-camiones-dia">—</div>
+      <div class="lbl">Camiones promedio por día</div>
+    </div>
+  </div>
+
+  <!-- 04-ago-2026 (sección 90): "Vueltas promedio"/"Camiones promedio por
+       día" necesitan el detalle placa-por-placa (traerTodoFirestore), no
+       el agregado mensual barato que ya usa el resto de este dashboard
+       (calcularResumenGenericoAgregado, sin placas) — por eso NO se
+       calculan automático en cada renderDashboard()/cambio de filtro,
+       igual criterio de costo que "Ver TODO el histórico" (sección 66) y
+       el PDF de este mismo tab (sección 88). Se calculan solo al pedirlo. -->
+  <div style="padding:0 0 10px;">
+    <button class="btn btn-secondary" id="btn-calc-vueltas" onclick="calcularVueltasYCamionesDashboard()" style="width:100%;font-size:12px;">
+      🔄 Calcular vueltas y camiones promedio (lee el detalle del rango filtrado)
+    </button>
   </div>
 
   <div style="padding:0 0 10px;">
@@ -6492,6 +6513,12 @@ async function renderDashboard() {
 
   document.getElementById('dash-kpi-viajes').textContent    = totalViajes;
   document.getElementById('dash-kpi-toneladas').textContent = totalTon.toFixed(2) + ' t';
+  // 04-ago-2026 (sección 90): estos 2 sí dependen del detalle con placas
+  // (ver nota junto al botón "Calcular vueltas y camiones promedio") — se
+  // resetean aquí porque cambiaron los filtros, así no se queda pegado un
+  // número calculado con el filtro ANTERIOR sin que se note.
+  document.getElementById('dash-kpi-vueltas').textContent      = '—';
+  document.getElementById('dash-kpi-camiones-dia').textContent = '—';
   emptyState.style.display = totalViajes ? 'none' : 'block';
 
   const porMaterial = {};
@@ -8105,6 +8132,82 @@ function fmtFechaLarga(iso) {
   const dObj = new Date(y, m - 1, d);
   return `${d} de ${dObj.toLocaleString('es-MX', { month: 'long' })} de ${y}`;
 }
+
+// 04-ago-2026 (sección 90): "Vueltas promedio" y "Camiones promedio por
+// día" en pantalla, bajo demanda — mismo patrón de costo/aviso que
+// descargarPdfGraficos() (sección 88), que ya resolvía este mismo
+// problema (el detalle con placas no está en el agregado mensual barato).
+// "Vueltas promedio" usa la MISMA fórmula que ya corrigió Jesús para el
+// PDF (sección 89: promedio de promedios diarios, no total÷total) — se
+// reimplementa aquí en vez de llamar a vueltasPorCamionDia() porque esa
+// función espera (regsGrupo, universo) para un grupo específico (banco/
+// material) dentro del PDF; aquí el "grupo" es todo el filtrado a la vez,
+// así que el cálculo por día es más directo escribirlo una vez.
+window.calcularVueltasYCamionesDashboard = async function() {
+  const btn = document.getElementById('btn-calc-vueltas');
+  const desde = document.getElementById('dash-fecha-desde')?.value || '';
+  const hasta = document.getElementById('dash-fecha-hasta')?.value || '';
+
+  let avisoLecturaGrande = !desde || !hasta;
+  if (desde && hasta) {
+    const dias = Math.round((new Date(hasta) - new Date(desde)) / 86400000) + 1;
+    if (dias > 90) avisoLecturaGrande = true;
+  }
+  if (avisoLecturaGrande) {
+    const msg = (!desde || !hasta)
+      ? 'No fijaste un rango de fechas completo (Desde/Hasta) — se va a leer TODO el histórico filtrado para calcular esto. Puede tardar. ¿Continuar?'
+      : 'El rango de fechas filtrado es de más de 90 días — se va a leer el detalle completo de ese rango. Puede tardar. ¿Continuar?';
+    if (!confirm(msg)) return;
+  }
+
+  const htmlOriginal = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Leyendo…';
+  try {
+    const detalle = await window.traerTodoFirestore(desde, hasta);
+    const bancosSel     = getMsSelected('banco');
+    const materialesSel = getMsSelected('material');
+    const cuerposSel    = getMsSelected('cuerpo');
+    const filtrado = detalle.filter(r => {
+      if ((r.origen_tipo || 'BANCO') !== 'BANCO') return false;
+      if (bancosSel.length     && !bancosSel.includes(r.banco))     return false;
+      if (materialesSel.length && !materialesSel.includes(r.material)) return false;
+      if (cuerposSel.length    && !cuerposSel.includes(r.destino))  return false;
+      return true;
+    });
+
+    if (!filtrado.length) {
+      document.getElementById('dash-kpi-vueltas').textContent      = '0';
+      document.getElementById('dash-kpi-camiones-dia').textContent = '0';
+      return;
+    }
+
+    // Agrupa por día: viajes del día y placas distintas del día — mismo
+    // criterio que vueltasPorCamionDia() (sección 89), "no repitas un
+    // camión si tuvo 2 o 3 viajes, solo una vez por día" (pedido de Jesús).
+    const porDia = {};
+    filtrado.forEach(r => {
+      if (!r.fecha1) return;
+      if (!porDia[r.fecha1]) porDia[r.fecha1] = { viajes: 0, placas: new Set() };
+      porDia[r.fecha1].viajes++;
+      if (r.placas) porDia[r.fecha1].placas.add(r.placas);
+    });
+    const diasKeys = Object.keys(porDia);
+    const sumaVueltasDiarias  = diasKeys.reduce((s, d) => s + (porDia[d].placas.size ? porDia[d].viajes / porDia[d].placas.size : 0), 0);
+    const sumaCamionesDiarios = diasKeys.reduce((s, d) => s + porDia[d].placas.size, 0);
+    const vueltasPromedio      = diasKeys.length ? sumaVueltasDiarias  / diasKeys.length : 0;
+    const camionesPromedioDia  = diasKeys.length ? sumaCamionesDiarios / diasKeys.length : 0;
+
+    document.getElementById('dash-kpi-vueltas').textContent      = vueltasPromedio.toFixed(1);
+    document.getElementById('dash-kpi-camiones-dia').textContent = camionesPromedioDia.toFixed(1);
+  } catch (e) {
+    console.error('No se pudo calcular vueltas/camiones promedio:', e);
+    alert('No se pudo calcular: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = htmlOriginal;
+  }
+};
 
 async function descargarPdfGraficos() {
  // Mismo try/catch de diagnóstico que descargarPdfResumen()/descargarPdfBancos()

@@ -5959,3 +5959,35 @@ verificación de la sección 30.5 existe para atrapar.
 reales; cero IDs de DOM duplicados (no se tocó HTML en esta entrega, solo
 la función `vueltasPorCamionDia()` y los formateadores de las 2 llamadas
 que arman el texto del PDF).
+
+## 90. 04-ago-2026 — Gráficos (Suministros): 2 recuadros nuevos "Vueltas promedio" y "Camiones promedio por día" — CORREGIDO
+
+**Sesión:** Sonnet5-20260804-A (nueva sesión, continúa la numeración de la bitácora subida).
+
+Jesús pidió 2 recuadros nuevos junto a "Viajes (filtrados)"/"Toneladas
+(filtradas)" en Suministros: "Vueltas promedio" y "Camiones promedio por
+día" (camiones ÚNICOS por día — un camión con 2-3 viajes el mismo día
+cuenta 1 sola vez ese día).
+
+**Decisión de arquitectura, explícita antes de codear:** `renderDashboard()`
+usa el agregado mensual barato (`calcularResumenGenericoAgregado`, sin
+placas ni desglose diario) — a propósito, por todo el trabajo de costo de
+las secciones 78-83. Estos 2 KPIs SÍ necesitan detalle placa-por-placa, que
+solo existe leyendo `traerTodoFirestore()` (igual que ya resolvió el PDF de
+este mismo tab, sección 88). Ponerlos a calcularse automático en cada
+cambio de filtro habría reintroducido exactamente el problema de lecturas
+caras ya cerrado. Se implementaron BAJO DEMANDA: botón nuevo "🔄 Calcular
+vueltas y camiones promedio", mismo aviso que el PDF si el rango es >90
+días o no está fijado. Los 2 recuadros se resetean a "—" cada vez que
+cambian los filtros, para no dejar pegado un número de un filtro viejo.
+
+**Fórmula usada (misma que ya corrigió Jesús para el PDF, sección 89):**
+por cada día, promedio = viajes del día ÷ camiones distintos del día; se
+promedian esos promedios diarios (no total÷total). "Camiones promedio por
+día" usa el mismo agrupado por día, promediando camiones distintos del día
+directamente (sin dividir entre viajes).
+
+**Verificación:** `node --check` limpio en los 4 bloques, sin IDs
+duplicados. No se tocó `vueltasPorCamionDia()` (la función ya corregida y
+delicada de la sección 89) — se escribió una lógica de agrupado por día
+independiente para no arriesgar esa función ya probada.

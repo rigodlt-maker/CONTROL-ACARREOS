@@ -6495,8 +6495,16 @@ async function renderDashboard() {
   emptyState.style.display = totalViajes ? 'none' : 'block';
 
   const porMaterial = {};
+  // 04-ago-2026 (pedido de Jesús): por_combinacion guarda, para tickets de
+  // colocación, una ENTRADA ESPEJO bajo el pseudo-material "COLOCACION
+  // MARINA"/"COLOCACION TERRESTRE" (fix del 22-jul-2026 para que Metas
+  // viera avance por vertido — ver comentario en aplicarResumen()). Esa
+  // entrada es correcta para Metas, pero aquí (dona de Material de
+  // Suministros) duplica y no es un material real — se excluye.
+  const MATERIALES_EXCLUIR_DONA = ['COLOCACION MARINA', 'COLOCACION TERRESTRE'];
   Object.values(porBancoAgg).forEach(b => {
     Object.entries(b.materiales || {}).forEach(([mat, info]) => {
+      if (MATERIALES_EXCLUIR_DONA.includes(mat)) return;
       porMaterial[mat] = (porMaterial[mat] || 0) + (info.ton || 0);
     });
   });
@@ -7961,6 +7969,114 @@ function addChartImageToPdf(doc, chart, x, y, maxWidth, maxHeight) {
   return h;
 }
 
+// 04-ago-2026: helpers de análisis en texto para el PDF de Gráficos (spec
+// cerrado con Jesús, ver INSTRUCCIONESAPP.md sección 88). Viven fuera de
+// descargarPdfGraficos() para poder probarlos/reusarlos sin reconstruir
+// todo el PDF.
+function tonOfReg(r) { return r.ton || (r.neto_kg || 0) / 1000; }
+
+// Días trabajados = fechas (fecha1) DISTINTAS con al menos 1 registro en
+// el subconjunto recibido — nunca días calendario (pedido de Jesús).
+function diasTrabajadosDe(regs) {
+  return new Set(regs.map(r => r.fecha1).filter(Boolean)).size;
+}
+
+// "Vueltas por camión al día" (pregunta 4 de la sección 88, respuesta de
+// Jesús): identifica camiones por PLACA COMPLETA dentro del grupo (ej. los
+// que visitaron un banco puntual), y luego cuenta TODOS los viajes de esas
+// placas dentro de `universo` (no solo los que caen en el grupo) — un
+// camión puede desviarse a otro banco el mismo día por cierre de vialidad,
+// así que no se subestima su actividad real. `universo` ya viene acotado
+// por los filtros activos de banco/material/cuerpo/fecha (nunca el
+// histórico completo fuera de esos filtros).
+function vueltasPorCamionDia(regsGrupo, universo) {
+  const placas = new Set(regsGrupo.map(r => r.placas).filter(Boolean));
+  if (!placas.size) return 0;
+  const viajesDeEsasPlacas = universo.filter(r => placas.has(r.placas));
+  const dias = diasTrabajadosDe(viajesDeEsasPlacas);
+  if (!dias) return 0;
+  return viajesDeEsasPlacas.length / placas.size / dias;
+}
+
+function agruparRegs(regs, campo, nombreFn) {
+  const mapa = {};
+  regs.forEach(r => {
+    const raw = r[campo];
+    if (!raw) return;
+    const key = nombreFn ? nombreFn(raw) : raw;
+    if (!mapa[key]) mapa[key] = [];
+    mapa[key].push(r);
+  });
+  return Object.entries(mapa).map(([nombre, regs]) => ({ nombre, regs }));
+}
+
+function agruparRegsPorMesVista(regs) {
+  const mapa = {};
+  regs.forEach(r => {
+    if (!r.fecha1) return;
+    const [y, m] = r.fecha1.split('-');
+    let key;
+    if (window.dashVistaMeses === 'anual') {
+      key = y;
+    } else {
+      const dObj = new Date(parseInt(y), parseInt(m) - 1, 1);
+      key = `${dObj.toLocaleString('es-MX', { month: 'long' }).toUpperCase()} ${y}`;
+    }
+    if (!mapa[key]) mapa[key] = [];
+    mapa[key].push(r);
+  });
+  return Object.entries(mapa).map(([nombre, regs]) => ({ nombre, regs }));
+}
+
+// Arma el párrafo de análisis: extremo de mayor actividad + extremo de
+// menor + resumen breve de los demás (respuesta de Jesús, pregunta 3 de
+// la sección 88). `universo` se usa solo para "vueltas por camión"
+// (respuesta pregunta 4); si se pasa null, esa columna se omite del texto
+// (caso Material, donde "vueltas por camión" no aporta información clara
+// porque un mismo camión suele cargar más de un material).
+function armarAnalisisTexto(grupos, universo, etiquetaSingular, etiquetaAccion) {
+  if (!grupos.length) return `No hay datos de ${etiquetaSingular}s en el periodo/filtro seleccionado.`;
+  const fmtT = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtV = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  const stats = grupos.map(g => {
+    const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
+    const dias = diasTrabajadosDe(g.regs);
+    const viajesDia = dias ? g.regs.length / dias : 0;
+    const vueltas = universo ? vueltasPorCamionDia(g.regs, universo) : null;
+    return { nombre: g.nombre, ton, viajesDia, vueltas };
+  }).sort((a, b) => b.ton - a.ton);
+
+  const detalle = (s) => {
+    let t = `${fmtT(s.ton)} toneladas ${etiquetaAccion}, un promedio de ${fmtV(s.viajesDia)} viajes por día`;
+    if (s.vueltas !== null) t += ` y ${fmtV(s.vueltas)} vueltas por camión al día`;
+    return t;
+  };
+
+  if (stats.length === 1) {
+    const u = stats[0];
+    return `Se identificó un solo ${etiquetaSingular}: "${u.nombre}", con ${detalle(u)}.`;
+  }
+
+  const mayor = stats[0], menor = stats[stats.length - 1];
+  let txt = `Se identificaron ${stats.length} ${etiquetaSingular}s distintos en el periodo/filtro seleccionado. `
+    + `"${mayor.nombre}" fue el de mayor actividad, con ${detalle(mayor)}. `
+    + `El de menor actividad fue "${menor.nombre}", con ${detalle(menor)}.`;
+  const intermedios = stats.slice(1, -1);
+  if (intermedios.length) {
+    txt += ' El resto: ' + intermedios.map(s => `${s.nombre} (${fmtT(s.ton)} t)`).join(', ') + '.';
+  }
+  return txt;
+}
+
+function fmtFechaLarga(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dObj = new Date(y, m - 1, d);
+  return `${d} de ${dObj.toLocaleString('es-MX', { month: 'long' })} de ${y}`;
+}
+
 async function descargarPdfGraficos() {
  // Mismo try/catch de diagnóstico que descargarPdfResumen()/descargarPdfBancos()
  // (Fix 10-jul-2026 v4): sin esto, un error al generar el PDF en el celular
@@ -7972,143 +8088,187 @@ async function descargarPdfGraficos() {
   }
   const btnPdf = document.getElementById('btn-graficos-pdf');
   const btnHtmlPdf = btnPdf ? btnPdf.innerHTML : '';
-  if (btnPdf) { btnPdf.disabled = true; btnPdf.innerHTML = '<span class="spin"></span> Generando…'; }
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
-  const marginX = 0.6;
-  const anchoPagina = 8.5, altoPagina = 11;
-  const anchoUtil = anchoPagina - marginX * 2;
-  let y = 0.7;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', anchoPagina / 2, y, { align: 'center' });
-  y += 0.22;
-  doc.setFontSize(11);
-  doc.text('GRÁFICOS — Suministros', anchoPagina / 2, y, { align: 'center' });
-  y += 0.28;
-
-  const ahora = new Date();
-  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX', { hour12: false });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);
-  y += 0.18;
 
   const desde = document.getElementById('dash-fecha-desde')?.value || '';
   const hasta = document.getElementById('dash-fecha-hasta')?.value || '';
-  const periodoTexto = (desde || hasta) ? `${desde || '—'} a ${hasta || '—'}` : 'Todas las fechas';
-  doc.text(`Periodo: ${periodoTexto}`, marginX, y);
-  y += 0.18;
 
-  const bancosSel     = getMsSelected('banco').map(nombreBanco);
-  const materialesSel = getMsSelected('material').map(nombreMaterial);
-  const destinosSel   = getMsSelected('cuerpo');
-  const filtrosPartes = [];
-  if (bancosSel.length)     filtrosPartes.push('Banco: ' + bancosSel.join(', '));
-  if (materialesSel.length) filtrosPartes.push('Material: ' + materialesSel.join(', '));
-  if (destinosSel.length)   filtrosPartes.push('Cuerpo: ' + destinosSel.join(', '));
-  doc.setFont('helvetica', 'italic');
-  const textoFiltros = filtrosPartes.length ? ('Filtros activos: ' + filtrosPartes.join(' · ')) : 'Filtros activos: ninguno (todo lo disponible en el periodo)';
-  const lineasFiltros = doc.splitTextToSize(textoFiltros, anchoUtil);
-  doc.text(lineasFiltros, marginX, y);
-  y += 0.15 * lineasFiltros.length + 0.08;
-  doc.setFont('helvetica', 'normal');
-
-  const totalViajesTxt = document.getElementById('dash-kpi-viajes')?.textContent || '0';
-  const totalTonTxt    = document.getElementById('dash-kpi-toneladas')?.textContent || '0 t';
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text(`Viajes: ${totalViajesTxt}   ·   Toneladas: ${totalTonTxt}`, marginX, y);
-  y += 0.25;
-
-  // Dona Material + Pastel Banco lado a lado, igual que en pantalla.
-  const mitad = (anchoUtil - 0.2) / 2;
-  doc.setFontSize(10);
-  doc.text('Toneladas totales por Material', marginX, y);
-  doc.text('Toneladas totales por Banco (% del total)', marginX + mitad + 0.2, y);
-  y += 0.15;
-  const yAntesFila1 = y;
-  const hDona   = addChartImageToPdf(doc, chartMaterial, marginX, y, mitad, 3.2);
-  const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 3.2);
-  y = yAntesFila1 + Math.max(hDona, hPastel) + 0.35;
-
-  // Barra Banco (Origen), ancho completo.
-  if (y + 3.6 > altoPagina - 0.6) { doc.addPage(); y = 0.7; }
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-  doc.text('Toneladas totales por Banco (Origen)', marginX, y);
-  y += 0.15;
-  y += addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, 3.4) + 0.35;
-
-  // Barra Toneladas por Mes/Año (el título ya trae "MES" o "AÑO" según la
-  // vista activa en pantalla — se lee del mismo estado, window.dashVistaMeses).
-  const vistaMesesLbl = window.dashVistaMeses === 'anual' ? 'AÑO' : 'MES';
-  if (altoPagina - y - 0.6 < 2) { doc.addPage(); y = 0.7; }
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-  doc.text(`Toneladas por ${vistaMesesLbl}`, marginX, y);
-  y += 0.15;
-  const alturaMax = Math.min(6.5, altoPagina - y - 0.6);
-  y += addChartImageToPdf(doc, chartMeses, marginX, y, anchoUtil, alturaMax) + 0.3;
-
-  // ── Tabla resumen general (todos los datos exactos de las 3 gráficas
-  //    numéricas — Mes/Año no se repite porque alimenta la misma barra) ──
-  doc.addPage();
-  y = 0.7;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-  doc.text('RESUMEN GENERAL DE DATOS', anchoPagina / 2, y, { align: 'center' });
-  y += 0.3;
-
-  const fmtTon = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  function tablaAgregado(titulo, labels, values, datosY) {
-    if (datosY > altoPagina - 1.5) { doc.addPage(); datosY = 0.7; }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-    doc.text(titulo, marginX, datosY);
-    const total = values.reduce((s, v) => s + (v || 0), 0);
-    const body = labels.map((lbl, i) => {
-      const v = values[i] || 0;
-      const pct = total ? (v / total * 100) : 0;
-      return [lbl, fmtTon(v) + ' t', pct.toFixed(1) + '%'];
-    });
-    body.push(['TOTAL', fmtTon(total) + ' t', '100.0%']);
-    doc.autoTable({
-      startY: datosY + 0.1,
-      head: [['CONCEPTO', 'TONELADAS', '% DEL TOTAL']],
-      body,
-      styles: { fontSize: 9, cellPadding: 0.05 },
-      headStyles: { fillColor: [15, 110, 86], textColor: 255, fontStyle: 'bold' },
-      columnStyles: {
-        0: { cellWidth: anchoUtil - 2.4 },
-        1: { halign: 'right', cellWidth: 1.2 },
-        2: { halign: 'right', cellWidth: 1.2 }
-      },
-      margin: { left: marginX, right: marginX },
-      didParseCell: (data) => {
-        if (data.section === 'body' && data.row.index === body.length - 1) {
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fillColor = [40, 40, 40];
-          data.cell.styles.textColor = 255;
-        }
-      }
-    });
-    return doc.lastAutoTable.finalY + 0.3;
+  // 04-ago-2026 (sección 88, respuesta pregunta "costo de lecturas"): el
+  // análisis en texto (sobre todo "vueltas por camión") necesita el
+  // detalle línea por línea del rango filtrado — los agregados mensuales
+  // no guardan placas. Se lee acotado EXACTO al rango (mismo patrón que
+  // descargarPdfBancos(), sección 11.2/79), pero si el rango es grande
+  // (>90 días) o no hay rango fijado (= todo el histórico), se avisa
+  // antes de leer tanto — mismo criterio que "Ver TODO el histórico"
+  // (sección 66) y la ventana de Base de Datos (sección 76).
+  let avisoLecturaGrande = !desde || !hasta;
+  if (desde && hasta) {
+    const dias = Math.round((new Date(hasta) - new Date(desde)) / 86400000) + 1;
+    if (dias > 90) avisoLecturaGrande = true;
+  }
+  if (avisoLecturaGrande) {
+    const msg = (!desde || !hasta)
+      ? 'No fijaste un rango de fechas completo (Desde/Hasta) — el reporte va a leer TODO el histórico filtrado para calcular "vueltas por camión". Puede tardar. ¿Continuar?'
+      : 'El rango de fechas filtrado es de más de 90 días — el reporte va a leer el detalle completo de ese rango. Puede tardar. ¿Continuar?';
+    if (!confirm(msg)) return;
   }
 
-  const matLabels = chartMaterial.data.labels.map(nombreMaterial);
-  const matValues = chartMaterial.data.datasets[0].data;
-  y = tablaAgregado('Por Material', matLabels, matValues, y);
+  if (btnPdf) { btnPdf.disabled = true; btnPdf.innerHTML = '<span class="spin"></span> Leyendo…'; }
+  let detalle;
+  try {
+    detalle = await window.traerTodoFirestore(desde, hasta);
+  } finally {
+    if (btnPdf) btnPdf.innerHTML = '<span class="spin"></span> Generando…';
+  }
 
-  const bancoLabelsPdf = chartBanco.data.labels.map(nombreBanco);
-  const bancoValuesPdf = chartBanco.data.datasets[0].data;
-  y = tablaAgregado('Por Banco', bancoLabelsPdf, bancoValuesPdf, y);
+  // Mismos filtros que getDashboardFiltered() (FASE 6: solo origen_tipo
+  // BANCO) + banco/material/cuerpo activos en pantalla — el PDF SIEMPRE
+  // debe coincidir con lo que Jesús está viendo filtrado (alcance
+  // acordado en la sección 88).
+  const bancosSel     = getMsSelected('banco');
+  const materialesSel = getMsSelected('material');
+  const cuerposSel    = getMsSelected('cuerpo');
+  const filtrado = detalle.filter(r => {
+    if ((r.origen_tipo || 'BANCO') !== 'BANCO') return false;
+    if (bancosSel.length     && !bancosSel.includes(r.banco))     return false;
+    if (materialesSel.length && !materialesSel.includes(r.material)) return false;
+    if (cuerposSel.length    && !cuerposSel.includes(r.destino))  return false;
+    return true;
+  });
 
-  const mesesLabelsPdf = chartMeses.data.labels.map(l => Array.isArray(l) ? l.join(' ') : l);
-  const mesesValuesPdf = chartMeses.data.datasets[0].data;
-  y = tablaAgregado(`Por ${vistaMesesLbl}`, mesesLabelsPdf, mesesValuesPdf, y);
+  if (!filtrado.length) {
+    alert('No hay datos para exportar con el filtro actual.');
+    if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = btnHtmlPdf; }
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'in', format: 'letter' });
+  const marginX = 0.6;
+  const anchoPagina = 11, altoPagina = 8.5;
+  const anchoUtil = anchoPagina - marginX * 2;
+
+  const bancosSelTxt     = bancosSel.length     ? bancosSel.map(nombreBanco).join(', ')     : 'Todos';
+  const materialesSelTxt = materialesSel.length ? materialesSel.map(nombreMaterial).join(', ') : 'Todos';
+  const periodoTxt = (desde || hasta)
+    ? `Del ${fmtFechaLarga(desde) || '(sin definir)'} al ${fmtFechaLarga(hasta) || '(sin definir)'}`
+    : 'Todo el histórico disponible';
+
+  function encabezadoPagina(subtitulo) {
+    let y = 0.55;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', anchoPagina / 2, y, { align: 'center' });
+    y += 0.2;
+    doc.setFontSize(10.5);
+    doc.text(subtitulo, anchoPagina / 2, y, { align: 'center' });
+    y += 0.24;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    doc.text(periodoTxt, marginX, y);
+    y += 0.15;
+    doc.text(`Bancos filtrados: ${bancosSelTxt}`, marginX, y);
+    y += 0.13;
+    doc.text(`Materiales filtrados: ${materialesSelTxt}`, marginX, y);
+    y += 0.2;
+    return y;
+  }
+
+  function escribirParrafo(texto, y, maxWidth) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    const lineas = doc.splitTextToSize(texto, maxWidth);
+    doc.text(lineas, marginX, y);
+    return y + lineas.length * 0.15;
+  }
+
+  // ── Página 1: dona Material + pastel Banco, con su análisis ──────────
+  let y = encabezadoPagina('GRÁFICOS — Dona de Material y Pastel de Banco');
+  const mitad = (anchoUtil - 0.2) / 2;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Toneladas totales por Material', marginX, y);
+  doc.text('Toneladas totales por Banco (% del total)', marginX + mitad + 0.2, y);
+  y += 0.13;
+  const yAntes = y;
+  const hDona   = addChartImageToPdf(doc, chartMaterial, marginX, y, mitad, 2.9);
+  const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 2.9);
+  y = yAntes + Math.max(hDona, hPastel) + 0.22;
+
+  const gruposMaterial = agruparRegs(filtrado, 'material', nombreMaterial);
+  const gruposBanco1   = agruparRegs(filtrado, 'banco', nombreBanco);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Análisis — Material', marginX, y);
+  y += 0.14;
+  // "vueltas por camión" no aplica a Material (un mismo camión suele
+  // cargar más de un material) — se omite (universo = null).
+  y = escribirParrafo(armarAnalisisTexto(gruposMaterial, null, 'material', 'suministradas'), y, anchoUtil);
+  y += 0.12;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Análisis — Banco', marginX, y);
+  y += 0.14;
+  const textoBanco = armarAnalisisTexto(gruposBanco1, filtrado, 'banco', 'extraídas');
+  escribirParrafo(textoBanco, y, anchoUtil);
+
+  // ── Página 2: barra Banco (Origen) — mismo texto de Banco (pedido
+  //    explícito de Jesús: "exactamente lo mismo... con el gráfico de
+  //    barras") ──────────────────────────────────────────────────────
+  doc.addPage();
+  y = encabezadoPagina('GRÁFICOS — Toneladas totales por Banco (Origen)');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Toneladas totales por Banco (Origen)', marginX, y);
+  y += 0.14;
+  y += addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, 3.6) + 0.22;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Análisis — Banco', marginX, y);
+  y += 0.14;
+  escribirParrafo(textoBanco, y, anchoUtil);
+
+  // ── Página 3: barra Mes/Año — sigue el toggle activo en pantalla ─────
+  doc.addPage();
+  const vistaMesesLbl = window.dashVistaMeses === 'anual' ? 'AÑO' : 'MES';
+  y = encabezadoPagina(`GRÁFICOS — Toneladas por ${vistaMesesLbl}`);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text(`Toneladas por ${vistaMesesLbl}`, marginX, y);
+  y += 0.14;
+  const alturaMax = Math.min(4.2, altoPagina - y - 2.2);
+  y += addChartImageToPdf(doc, chartMeses, marginX, y, anchoUtil, alturaMax) + 0.22;
+  const gruposMes = agruparRegsPorMesVista(filtrado);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text(`Análisis — ${vistaMesesLbl}`, marginX, y);
+  y += 0.14;
+  // "Vueltas por camión" por mes/año usa como universo el propio grupo
+  // (no todo el rango filtrado): un camión activo en marzo no debe
+  // mezclarse con sus viajes de abril — criterio distinto al de Banco a
+  // propósito (ver sección 88).
+  const etiquetaMes = vistaMesesLbl === 'AÑO' ? 'año' : 'mes';
+  // "Vueltas por camión" por mes/año usa como universo el propio grupo
+  // (no todo el rango filtrado): un camión activo en marzo no debe
+  // mezclarse con sus viajes de abril — criterio distinto al de Banco a
+  // propósito (ver sección 88). Por eso no se reusa armarAnalisisTexto()
+  // con un solo `universo` compartido, se arma manual aquí mismo.
+  (function () {
+    const fmtT = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtV = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    if (!gruposMes.length) { escribirParrafo(`No hay datos por ${etiquetaMes} en el periodo/filtro seleccionado.`, y, anchoUtil); return; }
+    const stats = gruposMes.map(g => {
+      const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
+      const dias = diasTrabajadosDe(g.regs);
+      const viajesDia = dias ? g.regs.length / dias : 0;
+      const vueltas = vueltasPorCamionDia(g.regs, g.regs);
+      return { nombre: g.nombre, ton, viajesDia, vueltas };
+    }).sort((a, b) => b.ton - a.ton);
+    const detalle = (s) => `${fmtT(s.ton)} toneladas suministradas, un promedio de ${fmtV(s.viajesDia)} viajes por día (solo días con datos) y ${fmtV(s.vueltas)} vueltas por camión al día`;
+    let txt;
+    if (stats.length === 1) {
+      txt = `Se identificó un solo ${etiquetaMes}: "${stats[0].nombre}", con ${detalle(stats[0])}.`;
+    } else {
+      const mayor = stats[0], menor = stats[stats.length - 1];
+      txt = `"${mayor.nombre}" fue el ${etiquetaMes} de mayor actividad del periodo, con ${detalle(mayor)}. `
+        + `El ${etiquetaMes} de menor actividad fue "${menor.nombre}", con ${detalle(menor)}.`;
+      const intermedios = stats.slice(1, -1);
+      if (intermedios.length) txt += ' El resto: ' + intermedios.map(s => `${s.nombre} (${fmtT(s.ton)} t)`).join(', ') + '.';
+    }
+    escribirParrafo(txt, y, anchoUtil);
+  })();
 
   if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = btnHtmlPdf; }
-  guardarPdfDescarga(doc, `graficos_suministros_${isoHoy()}.pdf`);
+  guardarPdfDescarga(doc, `graficos_reporte_direccion_${isoHoy()}.pdf`);
  } catch (err) {
   console.error('Error generando el PDF de Gráficos:', err);
   alert('Error generando el PDF: ' + (err && err.message ? err.message : err));

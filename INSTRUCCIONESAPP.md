@@ -5785,81 +5785,122 @@ AND fecha2 != null`) para ver el tamaño real del problema y decidir si
 hace falta una corrección de datos aparte — se deja pendiente de que
 Jesús confirme si quiere esa auditoría ahora o después.
 
-## 88. 04-ago-2026 — PDF de la pestaña "Gráficos" (dona Material + pastel Banco + barra Banco + barra Mes/Año, con tabla resumen)
+## 88. 04-ago-2026 — PDF de "Gráficos" con análisis en texto (3 páginas: dona+pastel / barra Banco / barra Mes-Año) — reemplaza la versión simple de imágenes+tabla
 
-**Sesión:** Sonnet5-20260803-A (continuación — nota: se etiqueta con la
-fecha de arranque de la sesión, aunque el reloj del sistema ya marcaba
-04-ago-2026 al momento de esta entrega puntual).
+**Sesión:** Sonnet5-20260803-B (continuación, ya 04-ago-2026 al momento de
+esta entrega).
 
-**Contexto:** pendiente explícito dejado en la sección 79.2 ("va a ser más
-específico de lo que parece, se van a necesitar varias sesiones"). Antes
-de tocar código se releyó el repo desde GitHub (confirmando que los
-commits de la sesión anterior, secciones 79 y 87, ya estaban ahí) y se
-acordó el alcance exacto con Jesús con 3 preguntas puntuales en vez de
-adivinar: qué gráficas entran, si respeta filtros, y cómo se ve el
-resultado. Sin junta Obeya completa — mismo criterio que la sección 79
-(cambio acotado de UI/reporte, sin impacto de arquitectura, financiero ni
-de flujo de báscula/camión).
+**⚠️ Nota de reconciliación (mismo patrón de la sección 63):** esta sección
+88 reemplaza una sección 88 previa ("PDF de la pestaña Gráficos — dona +
+pastel + barra Banco + barra Mes/Año, con tabla resumen") que otra sesión
+construyó en paralelo mientras esta seguía en definición con Jesús. Esa
+versión exportaba las 4 gráficas como imagen (`chart.toBase64Image()`) +
+una tabla resumen, sin párrafo de análisis en texto ni cálculo de "vueltas
+por camión". Jesús confirmó explícitamente reemplazarla por la versión con
+narrativa (no dejar ambas, no solo agregar encima) — ver la pregunta y
+respuesta de reconciliación en el chat, 04-ago-2026.
 
-**Alcance acordado con Jesús:**
-1. Las 4 gráficas de la pestaña "Gráficos": dona de Material, pastel de
-   Banco (%), barra de Banco (Origen), barra de Toneladas por Mes/Año.
-2. Debe respetar EXACTAMENTE los filtros que ya estén puestos en pantalla
-   (banco/material/cuerpo/periodo) — "lo que estoy viendo filtrado".
-3. Layout: gráficas arriba (una por una / dona+pastel lado a lado como en
-   pantalla) y, aparte, una tabla resumen general al final con todos los
-   datos exactos.
+**Contexto/spec completo (recuperado del chat, se había perdido de este
+archivo en la sección 88 anterior):** ver preguntas y respuestas completas
+más abajo (88.1). Resumen del pedido original de Jesús: PDF horizontal
+carta, 3 páginas — página 1: dona Material + pastel Banco; página 2: barra
+Banco; página 3: barra Mes/Año (según el toggle activo) — cada página con
+encabezado de filtros activos (Material/Banco) y un párrafo de análisis en
+texto generado con los datos y filtros reales del momento de la descarga.
 
-**Qué se construyó (`descargarPdfGraficos()`):**
-- Sin agregar ninguna librería nueva: se reusa `jsPDF` + `jspdf-autotable`
-  (ya cargados desde antes, sección 16.2/16.4). Como las 4 gráficas ya son
-  `<canvas>` de Chart.js, se exportan directo a imagen con
-  `chart.toBase64Image()` — nada de `html2canvas` ni captura de pantalla.
-- **Respeta filtros sin leer Firestore de nuevo:** se exportan las MISMAS
-  instancias de Chart.js (`chartMaterial`, `chartBancoPie`, `chartBanco`,
-  `chartMeses`, variables ya existentes de `renderDashboard()`) tal como
-  estén en pantalla en el momento del clic — cero lecturas nuevas, cero
-  riesgo de que el PDF no coincida con lo que Jesús está viendo.
-- Encabezado del PDF con periodo, filtros activos (Banco/Material/Cuerpo,
-  igual que el resto de los PDF de la app) y los 2 KPI (viajes/toneladas)
-  ya visibles arriba de las gráficas en pantalla.
-- Página 1: dona Material + pastel Banco lado a lado (igual que en
-  pantalla), barra Banco (Origen) ancho completo, barra Mes/Año ancho
-  completo — con salto de página automático si no cabe verticalmente
-  (`addChartImageToPdf()` calcula el alto real según el aspect ratio del
-  canvas, nunca se estira/deforma la imagen).
-- Página(s) siguiente(s): tabla resumen general (`autoTable`) con 3 bloques
-  — Por Material, Por Banco, Por Mes/Año — cada uno con Concepto /
-  Toneladas / % del total y renglón de TOTAL en negro. "Por Banco"
-  alimenta tanto al pastel como a la barra de banco, así que no se duplicó
-  esa tabla dos veces (mismos números).
-- Botón `📄 Descargar PDF` agregado arriba de las gráficas en la pestaña
-  (mismo lugar/estilo que en Bancos), con spinner mientras genera y usando
-  el mismo `guardarPdfDescarga()` compartido (Web Share en PWA
-  standalone/iOS/Android/Windows, `doc.save()` en navegador normal — Fix
-  10-jul-2026 v2/v4, sección 16.2).
+### 88.1 — Decisiones cerradas con Jesús (preguntas y respuestas, mismo día)
 
-**Explícitamente NO tocado:** `renderDashboard()`, los filtros/slicers de
-la pestaña, ni las 4 gráficas en pantalla — solo lectura de las instancias
-ya renderizadas y del DOM de KPIs/filtros para el encabezado del PDF.
+1. **Identidad de camión:** placa completa (incluye dobles de
+   góndola/articulado).
+2. **Denominador de promedios (viajes/día, vueltas/camión):** solo días
+   con actividad real (días trabajados), nunca días calendario — mismo
+   criterio en Banco (páginas 1-2) y en Mes/Año (página 3).
+3. **Alcance del texto:** extremo de mayor + extremo de menor actividad,
+   más un resumen breve de los demás (no solo los 2 extremos, tampoco
+   lista exhaustiva uno por uno).
+4. **"Vueltas por camión" de un banco específico:** cuenta TODOS los
+   viajes de ese camión en el periodo (no solo los que fueron a ese banco
+   puntual) — un camión puede desviarse a otro banco el mismo día por
+   cierre de vialidad u otro percance. Sí respeta el filtro de Banco
+   activo (el universo de viajes considerado son los bancos filtrados, no
+   el histórico completo del camión).
+5. **Página 1 (dona Material + pastel Banco):** SÍ lleva párrafo de
+   análisis para Material también, no solo Banco.
+6. **Página 2 (barra Banco):** repite EXACTAMENTE el mismo párrafo de
+   Banco que la página 1 (mismo texto, solo cambia la gráfica).
+7. **Página 3 (Mes/Año):** sigue el toggle Mensual/Anual activo en
+   pantalla al momento de descargar.
+8. **Encabezado de filtros:** solo Material + Banco (Destino/Cuerpo NO se
+   agrega, aunque esté filtrado en pantalla).
+9. **Costo de lecturas:** lectura acotada EXACTA al rango filtrado, mismo
+   patrón que el PDF de Bancos (sección 11.2/79) — con aviso/confirmación
+   antes de leer si el rango es grande (>90 días o "todo el histórico").
+10. **Botón:** uno solo, genera las 3 páginas juntas.
+
+### 88.2 — Qué se construyó
+
+- **`descargarPdfGraficos()`** reescrita completa (antes: exportaba las 4
+  gráficas como imagen + tabla resumen, sin texto — ver nota de
+  reconciliación arriba).
+- **Lectura de datos:** `traerTodoFirestore(desde, hasta)` acotada al
+  rango exacto de `dash-fecha-desde`/`dash-fecha-hasta` (mismo patrón que
+  `descargarPdfBancos`), filtrado después por los mismos criterios que
+  `getDashboardFiltered()` (origen_tipo=BANCO + banco/material/cuerpo
+  activos) — así el análisis en texto usa exactamente el mismo universo
+  que las gráficas en pantalla, aunque la lectura sí sea nueva (no
+  reusa las instancias de Chart.js para los NÚMEROS del texto, solo para
+  las imágenes de las gráficas).
+- **Aviso de rango grande:** `confirm()` si no hay Desde/Hasta fijado o si
+  el rango supera 90 días, antes de leer — mismo criterio que "Ver TODO
+  el histórico" (sección 66).
+- **Helpers nuevos** (fuera de la función, reusables): `tonOfReg()`,
+  `diasTrabajadosDe()`, `vueltasPorCamionDia()`, `agruparRegs()`,
+  `agruparRegsPorMesVista()`, `armarAnalisisTexto()`, `fmtFechaLarga()`.
+- **"Vueltas por camión" en Mes/Año (página 3):** a diferencia de Banco,
+  aquí el universo de conteo es el propio grupo (mes o año), no todo el
+  rango filtrado — un camión activo en marzo no debe mezclarse con sus
+  viajes de abril. Se armó manual (no reusa `armarAnalisisTexto()` con un
+  `universo` compartido) por esta diferencia de alcance.
+- **Material sin "vueltas por camión":** se omite esa métrica en el
+  párrafo de Material (un mismo camión suele cargar más de un material en
+  el día, la cifra no aporta información clara ahí) — decisión de diseño,
+  no viene de una pregunta explícita a Jesús; queda documentada por si la
+  quiere de otra forma.
+- **Extra (pedido aparte, mismo mensaje de Jesús):** la dona de Material
+  (`renderDashboard()`, `porMaterial`) ya no incluye los pseudo-materiales
+  "COLOCACION MARINA"/"COLOCACION TERRESTRE". Causa raíz encontrada: no
+  eran del campo `por_material` (ese siempre usa el material real), sino
+  de `por_combinacion` — que desde el fix del 22-jul-2026 (sección
+  "Metas nunca mostraba avance...") guarda una ENTRADA ESPEJO por vertido
+  de colocación para que Metas viera avance ahí. `calcularResumenGenericoAgregado()`
+  (la usa Suministros/Gráficos) lee de `por_combinacion`, así que heredaba
+  esa entrada espejo como si fuera un material más. El fix filtra esos 2
+  valores literales al construir `porMaterial`, sin tocar `por_combinacion`
+  ni Metas (que sigue necesitando esa entrada espejo tal cual).
+
+**Explícitamente NO tocado:** `renderDashboard()` más allá del filtro de
+`porMaterial` arriba, los filtros/slicers de la pestaña, las 4 gráficas en
+pantalla, ni `por_combinacion`/Metas.
 
 **Verificación antes de entregar (checklist 30.5):**
-- 4 bloques `<script>` reales extraídos por posición exacta: `node
-  --check` limpio en los 4.
-- `grep` de IDs de DOM duplicados en todo el archivo: cero (`btn-graficos-pdf`
-  es el único ID nuevo).
-- Confirmado que `descargarPdfGraficos()`/`addChartImageToPdf()` viven en
+- 4 bloques `<script>` reales extraídos por posición exacta de
+  apertura/cierre: `node --check` limpio en los 4.
+- `grep` de IDs de DOM duplicados en todo el archivo: cero (sin IDs
+  nuevos — se reusa `btn-graficos-pdf` que ya existía).
+- Confirmado que los helpers nuevos y `descargarPdfGraficos()` viven en
   el mismo `<script>` normal donde ya viven `chartMaterial`/`chartBanco`/
   `chartBancoPie`/`chartMeses`/`renderDashboard()`/`nombreBanco()`/
-  `nombreMaterial()`/`getMsSelected()`/`isoHoy()`/`guardarPdfDescarga()` —
-  cero puentes `window.*` nuevos necesarios.
-- No se tocaron los 3 puntos de guardado de tickets (sección 1.1.5) — este
-  cambio es de lectura/reporte, no de escritura.
+  `nombreMaterial()`/`getMsSelected()`/`traerTodoFirestore` (vía
+  `window.*`)/`guardarPdfDescarga()` — cero puentes nuevos necesarios.
+- No se tocaron los 3 puntos de guardado de tickets (sección 1.1.5) —
+  cambio de lectura/reporte, no de escritura.
 
-**Pendiente de que Jesús pruebe en campo:** que el PDF se genere bien
-tanto en la app instalada (PWA) como en navegador normal, en los 3
-sistemas operativos que ya usan los roles (iOS, Android, Windows); y que
-la calidad/nitidez de las gráficas exportadas como imagen se vea bien
-impresa (si se ve borrosa al imprimir, la corrección es forzar mayor
-resolución del canvas antes de exportar — pendiente de decidir SOLO si
-hace falta, no se tocó preventivamente).
+**Pendiente de que Jesús pruebe en campo:**
+1. Que el párrafo de análisis lea bien en letra 9pt en las 3 páginas
+   (landscape carta) — si se ve muy apretado, se puede subir a 2 columnas
+   o bajar el tamaño de las gráficas.
+2. Que el aviso de "rango grande" no estorbe en el uso normal (rangos de
+   un mes o menos no deberían disparar el aviso nunca).
+3. Que los números de "vueltas por camión" cuadren con lo que Jesús
+   espera ver en campo — es una métrica nueva, vale la pena que la
+   revise con un caso real antes de repartir el PDF a Dirección.

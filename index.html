@@ -3749,7 +3749,7 @@ window.dbFilaBasculaEliminar = async function (filaId) {
 
   <div class="chart-card">
     <h3>Toneladas totales por Banco (Origen)</h3>
-    <div class="chart-wrap"><canvas id="chart-banco"></canvas></div>
+    <div class="chart-wrap" id="wrap-chart-banco"><canvas id="chart-banco"></canvas></div>
   </div>
 
   <div class="chart-card" style="padding:0;overflow:hidden;border-color:var(--accent);">
@@ -6552,7 +6552,7 @@ async function renderDashboard() {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
         tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed.toFixed(2) + ' t' } }
       }
     }
@@ -6576,7 +6576,7 @@ async function renderDashboard() {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
         tooltip: { callbacks: { label: (ctx) => {
           const total = (ctx.dataset.data || []).reduce((s, v) => s + (v || 0), 0);
           const pct = total ? (ctx.parsed / total * 100) : 0;
@@ -6589,6 +6589,12 @@ async function renderDashboard() {
 
   const ctxBanco = document.getElementById('chart-banco').getContext('2d');
   if (chartBanco) chartBanco.destroy();
+  // 04-ago-2026 (sección 91, pedido de Jesús): horizontal en vez de
+  // vertical — los nombres de banco quedan en el eje Y (a un lado) en vez
+  // de rotados/apretados abajo en el eje X. Mismo criterio que ya usa la
+  // barra de Mes/Año un poco más abajo.
+  const wrapBanco = document.getElementById('wrap-chart-banco');
+  if (wrapBanco) wrapBanco.style.height = Math.max(150, bancoLabels.length * 42) + 'px';
   chartBanco = new Chart(ctxBanco, {
     type: 'bar',
     data: {
@@ -6596,9 +6602,10 @@ async function renderDashboard() {
       datasets: [{ label: 'Toneladas', data: bancoValores, backgroundColor: bancoColores, borderRadius: 6 }]
     },
     options: {
+      indexAxis: 'y',
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' t' } } },
-      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } }, x: { ticks: { font: { size: 10 } } } }
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.x.toFixed(2) + ' t' } } },
+      scales: { x: { beginAtZero: true, ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } }
     }
   });
 
@@ -8285,7 +8292,66 @@ async function descargarPdfGraficos() {
     ? `Del ${fmtFechaLarga(desde) || '(sin definir)'} al ${fmtFechaLarga(hasta) || '(sin definir)'}`
     : 'Todo el histórico disponible';
 
-  function encabezadoPagina(subtitulo) {
+  // 04-ago-2026 (sección 91, pedido de Jesús): tabla resumen Banco/Material
+// en vez del texto de análisis — reemplaza armarAnalisisTexto() en las
+// páginas 1 y 2 del PDF de Gráficos (Página 3, Mes/Año, se queda en texto:
+// es otra dimensión, no Banco+Material, no la pidió Jesús en esta tabla).
+// Reutiliza tonOfReg()/diasTrabajadosDe() ya existentes, sin tocarlas.
+// Columnas pedidas: Banco, Material, # viajes, viajes/día promedio,
+// % del total de toneladas (contra el TOTAL GLOBAL de `filtrado`, no
+// contra el total de ese material/banco — "independientemente del
+// material"), toneladas promedio (por viaje, de esa fila banco+material).
+function dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX) {
+  const totalTonGlobal = filtrado.reduce((s, r) => s + tonOfReg(r), 0);
+  const grupos = {};
+  filtrado.forEach(r => {
+    const banco = nombreBanco(r.banco || '');
+    const material = nombreMaterial(r.material || '');
+    const key = banco + '||' + material;
+    if (!grupos[key]) grupos[key] = { banco, material, regs: [] };
+    grupos[key].regs.push(r);
+  });
+  const filas = Object.values(grupos).map(g => {
+    const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
+    const dias = diasTrabajadosDe(g.regs);
+    const viajes = g.regs.length;
+    return {
+      banco: g.banco, material: g.material, viajes,
+      viajesDia: dias ? viajes / dias : 0,
+      pctTotal: totalTonGlobal ? (ton / totalTonGlobal) * 100 : 0,
+      // 04-ago-2026 (aclaración de Jesús tras la sección 91): "toneladas
+      // promedio" es POR DÍA, mismo denominador (`dias`) que "viajes/día
+      // promedio" — así que si el filtro selecciona varios días, promedia
+      // correctamente contra esos días (no contra el número de viajes).
+      tonProm: dias ? ton / dias : 0
+    };
+  }).sort((a, b) => b.pctTotal - a.pctTotal);
+
+  const fmt1 = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const body = filas.map(f => [
+    f.banco, f.material, f.viajes.toLocaleString('es-MX'),
+    fmt1(f.viajesDia), fmt1(f.pctTotal) + '%', fmt1(f.tonProm) + ' t'
+  ]);
+
+  doc.autoTable({
+    startY: y,
+    head: [['BANCO', 'MATERIAL', 'VIAJES', 'VIAJES/DÍA PROM.', '% DEL TOTAL DE TON.', 'TON./DÍA PROM.']],
+    body,
+    // Fix ya documentado (10-jul-2026 v6, ver descargarPdfResumen arriba):
+    // doc usa unit:'in' — cellPadding se interpreta en PULGADAS, NO en
+    // puntos. 0.04 ≈ 3pt de relleno real; un valor tipo 3 aquí revienta la
+    // pila de jspdf-autotable con "Maximum call stack size exceeded".
+    styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak' },
+    headStyles: { fillColor: [15, 110, 86], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+    columnStyles: {
+      2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }
+    },
+    margin: { left: marginX, right: marginX }
+  });
+  return doc.lastAutoTable.finalY;
+}
+
+function encabezadoPagina(subtitulo) {
     let y = 0.55;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
     doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', anchoPagina / 2, y, { align: 'center' });
@@ -8322,20 +8388,10 @@ async function descargarPdfGraficos() {
   const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 2.9);
   y = yAntes + Math.max(hDona, hPastel) + 0.22;
 
-  const gruposMaterial = agruparRegs(filtrado, 'material', nombreMaterial);
-  const gruposBanco1   = agruparRegs(filtrado, 'banco', nombreBanco);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-  doc.text('Análisis — Material', marginX, y);
+  doc.text('Resumen — Banco / Material', marginX, y);
   y += 0.14;
-  // "vueltas por camión" no aplica a Material (un mismo camión suele
-  // cargar más de un material) — se omite (universo = null).
-  y = escribirParrafo(armarAnalisisTexto(gruposMaterial, null, 'material', 'suministradas'), y, anchoUtil);
-  y += 0.12;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-  doc.text('Análisis — Banco', marginX, y);
-  y += 0.14;
-  const textoBanco = armarAnalisisTexto(gruposBanco1, filtrado, 'banco', 'extraídas');
-  escribirParrafo(textoBanco, y, anchoUtil);
+  y = dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX);
 
   // ── Página 2: barra Banco (Origen) — mismo texto de Banco (pedido
   //    explícito de Jesús: "exactamente lo mismo... con el gráfico de
@@ -8347,9 +8403,9 @@ async function descargarPdfGraficos() {
   y += 0.14;
   y += addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, 3.6) + 0.22;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-  doc.text('Análisis — Banco', marginX, y);
+  doc.text('Resumen — Banco / Material', marginX, y);
   y += 0.14;
-  escribirParrafo(textoBanco, y, anchoUtil);
+  dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX);
 
   // ── Página 3: barra Mes/Año — sigue el toggle activo en pantalla ─────
   doc.addPage();

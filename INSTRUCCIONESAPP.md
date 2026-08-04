@@ -5991,3 +5991,56 @@ directamente (sin dividir entre viajes).
 duplicados. No se tocó `vueltasPorCamionDia()` (la función ya corregida y
 delicada de la sección 89) — se escribió una lógica de agrupado por día
 independiente para no arriesgar esa función ya probada.
+
+## 91. 04-ago-2026 — Gráficos: legend a un lado (no abajo) + tabla resumen Banco/Material en el PDF (reemplaza el texto)
+
+**Sesión:** Sonnet5-20260804-A.
+
+**Legends a un lado, pedido de Jesús:**
+- Dona de Material y pastel de Banco: `legend.position` de `'bottom'` a `'right'`.
+- Barra de Banco (Origen): pasó de vertical a horizontal (`indexAxis:'y'`,
+  mismo criterio que ya usaba la barra de Mes/Año) — los nombres de banco
+  quedan en el eje Y a un lado, no rotados/apretados abajo. Se agregó
+  `id="wrap-chart-banco"` al HTML para poder ajustar la altura del
+  contenedor según cuántos bancos haya, igual que ya hace `wrap-chart-meses`.
+- El plugin custom `pieBancoLabelsPlugin` (dibuja el % dentro de cada
+  rebanada) no se tocó — usa la geometría real del arco que calcula
+  Chart.js, se adapta solo sin importar dónde quede el legend.
+
+**Tabla resumen Banco/Material en el PDF (reemplaza el texto de análisis):**
+nueva función `dibujarTablaResumenBancoMaterial()` (jspdf-autotable, mismo
+patrón que `descargarPdfResumen()` — OJO con `cellPadding` en PULGADAS, no
+puntos, ver nota del bug de la sección 10-jul-2026 v6 ya documentado).
+Columnas: Banco, Material, # viajes, viajes/día promedio (viajes de esa
+fila ÷ días trabajados de esa fila), % del total de toneladas (contra el
+TOTAL GLOBAL del PDF filtrado, no contra el total de ese material/banco —
+"independientemente del material", pedido explícito), toneladas promedio
+(toneladas de esa fila ÷ viajes de esa fila). Reemplaza los 2 párrafos de
+"Análisis — Material"/"Análisis — Banco" en Página 1, y el texto repetido
+de "Análisis — Banco" en Página 2 (misma tabla en ambas). Página 3
+(Mes/Año) se queda en texto — es otra dimensión, no la pidió Jesús en la
+tabla. `armarAnalisisTexto()` queda sin llamadas (código muerto, no se
+borró por si se vuelve a necesitar).
+
+**Nota de proceso:** al mover el legend de la dona de Material a `'right'`,
+un primer `str_replace` borró por accidente el `tooltip.callbacks` de esa
+gráfica (el `old_str` incluía esa línea, el `new_str` no la repitió) — se
+detectó al revisar el archivo antes de correr `node --check` y se corrigió
+en el momento, mismo tipo de error ya documentado en la sección 89.
+
+**Verificación:** `node --check` limpio en los 4 bloques, sin IDs
+duplicados, confirmado que `dibujarTablaResumenBancoMaterial` usa
+`cellPadding: 0.04` (no un valor tipo 3 que reventaría la pila, bug ya
+conocido).
+
+## 92. 04-ago-2026 — Corrección de la sección 91: "toneladas promedio" es por día, no por viaje
+
+**Sesión:** Sonnet5-20260804-A.
+
+Jesús aclaró tras la entrega de la sección 91: "toneladas promedio" debe
+ser ton de esa fila ÷ DÍAS trabajados (mismo denominador que "viajes/día
+promedio"), no ÷ viajes — así que si el filtro selecciona varios días,
+promedia correctamente contra esos días. Encabezado de la tabla también
+aclarado: "TON. PROMEDIO" → "TON./DÍA PROM.".
+
+**Verificación:** `node --check` limpio en los 4 bloques, sin IDs duplicados.

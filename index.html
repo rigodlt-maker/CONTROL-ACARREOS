@@ -3705,6 +3705,12 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     </div>
   </div>
 
+  <div style="padding:0 0 10px;">
+    <button class="btn btn-primary" id="btn-graficos-pdf" onclick="descargarPdfGraficos()" style="width:100%;font-size:12px;">
+      📄 Descargar PDF
+    </button>
+  </div>
+
   <div class="charts-row-2">
     <div class="chart-card">
       <h3>Toneladas totales por Material</h3>
@@ -7930,6 +7936,187 @@ async function descargarPdfResumen() {
  }
 }
 window.descargarPdfResumen = descargarPdfResumen;
+
+// ══════════════════════════════════════════════════════
+// 04-ago-2026 (sección 88 de la bitácora) — PDF de la pestaña "Gráficos"
+// (dona Material, pastel Banco, barra Banco, barra Toneladas por Mes/Año).
+// Alcance acordado explícitamente con Jesús antes de tocar código:
+//  - Las 4 gráficas de la pestaña.
+//  - Respeta EXACTAMENTE los filtros que ya estén puestos en pantalla: no
+//    se vuelve a leer Firestore ni se recalculan agregados — se exportan
+//    las MISMAS instancias de Chart.js que ya están renderizadas en
+//    pantalla (chart.toBase64Image()), así que el PDF sale idéntico a lo
+//    que Jesús está viendo en ese momento. No se agrega ninguna librería
+//    nueva (jsPDF + jspdf-autotable, ya cargados desde antes).
+//  - Gráficas arriba (imágenes) + una tabla resumen general al final con
+//    los números exactos de cada una (Concepto / Toneladas / % del total).
+// ══════════════════════════════════════════════════════
+function addChartImageToPdf(doc, chart, x, y, maxWidth, maxHeight) {
+  const canvas = chart.canvas;
+  const ratio = canvas.width / Math.max(1, canvas.height);
+  let w = maxWidth, h = w / ratio;
+  if (h > maxHeight) { h = maxHeight; w = h * ratio; }
+  const img = chart.toBase64Image('image/png', 1.0);
+  doc.addImage(img, 'PNG', x + (maxWidth - w) / 2, y, w, h);
+  return h;
+}
+
+async function descargarPdfGraficos() {
+ // Mismo try/catch de diagnóstico que descargarPdfResumen()/descargarPdfBancos()
+ // (Fix 10-jul-2026 v4): sin esto, un error al generar el PDF en el celular
+ // no se ve en ningún lado — el botón "no hace nada" en apariencia.
+ try {
+  if (!chartMaterial || !chartBancoPie || !chartBanco || !chartMeses) {
+    alert('Espera a que las gráficas terminen de cargar antes de generar el PDF.');
+    return;
+  }
+  const btnPdf = document.getElementById('btn-graficos-pdf');
+  const btnHtmlPdf = btnPdf ? btnPdf.innerHTML : '';
+  if (btnPdf) { btnPdf.disabled = true; btnPdf.innerHTML = '<span class="spin"></span> Generando…'; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const marginX = 0.6;
+  const anchoPagina = 8.5, altoPagina = 11;
+  const anchoUtil = anchoPagina - marginX * 2;
+  let y = 0.7;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('ACARREO DE MATERIAL DEL ROMPEOLAS VERACRUZ', anchoPagina / 2, y, { align: 'center' });
+  y += 0.22;
+  doc.setFontSize(11);
+  doc.text('GRÁFICOS — Suministros', anchoPagina / 2, y, { align: 'center' });
+  y += 0.28;
+
+  const ahora = new Date();
+  const fechaGen = ahora.toLocaleDateString('es-MX') + ' ' + ahora.toLocaleTimeString('es-MX', { hour12: false });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Fecha de generación: ${fechaGen}`, marginX, y);
+  y += 0.18;
+
+  const desde = document.getElementById('dash-fecha-desde')?.value || '';
+  const hasta = document.getElementById('dash-fecha-hasta')?.value || '';
+  const periodoTexto = (desde || hasta) ? `${desde || '—'} a ${hasta || '—'}` : 'Todas las fechas';
+  doc.text(`Periodo: ${periodoTexto}`, marginX, y);
+  y += 0.18;
+
+  const bancosSel     = getMsSelected('banco').map(nombreBanco);
+  const materialesSel = getMsSelected('material').map(nombreMaterial);
+  const destinosSel   = getMsSelected('cuerpo');
+  const filtrosPartes = [];
+  if (bancosSel.length)     filtrosPartes.push('Banco: ' + bancosSel.join(', '));
+  if (materialesSel.length) filtrosPartes.push('Material: ' + materialesSel.join(', '));
+  if (destinosSel.length)   filtrosPartes.push('Cuerpo: ' + destinosSel.join(', '));
+  doc.setFont('helvetica', 'italic');
+  const textoFiltros = filtrosPartes.length ? ('Filtros activos: ' + filtrosPartes.join(' · ')) : 'Filtros activos: ninguno (todo lo disponible en el periodo)';
+  const lineasFiltros = doc.splitTextToSize(textoFiltros, anchoUtil);
+  doc.text(lineasFiltros, marginX, y);
+  y += 0.15 * lineasFiltros.length + 0.08;
+  doc.setFont('helvetica', 'normal');
+
+  const totalViajesTxt = document.getElementById('dash-kpi-viajes')?.textContent || '0';
+  const totalTonTxt    = document.getElementById('dash-kpi-toneladas')?.textContent || '0 t';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(`Viajes: ${totalViajesTxt}   ·   Toneladas: ${totalTonTxt}`, marginX, y);
+  y += 0.25;
+
+  // Dona Material + Pastel Banco lado a lado, igual que en pantalla.
+  const mitad = (anchoUtil - 0.2) / 2;
+  doc.setFontSize(10);
+  doc.text('Toneladas totales por Material', marginX, y);
+  doc.text('Toneladas totales por Banco (% del total)', marginX + mitad + 0.2, y);
+  y += 0.15;
+  const yAntesFila1 = y;
+  const hDona   = addChartImageToPdf(doc, chartMaterial, marginX, y, mitad, 3.2);
+  const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 3.2);
+  y = yAntesFila1 + Math.max(hDona, hPastel) + 0.35;
+
+  // Barra Banco (Origen), ancho completo.
+  if (y + 3.6 > altoPagina - 0.6) { doc.addPage(); y = 0.7; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('Toneladas totales por Banco (Origen)', marginX, y);
+  y += 0.15;
+  y += addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, 3.4) + 0.35;
+
+  // Barra Toneladas por Mes/Año (el título ya trae "MES" o "AÑO" según la
+  // vista activa en pantalla — se lee del mismo estado, window.dashVistaMeses).
+  const vistaMesesLbl = window.dashVistaMeses === 'anual' ? 'AÑO' : 'MES';
+  if (altoPagina - y - 0.6 < 2) { doc.addPage(); y = 0.7; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text(`Toneladas por ${vistaMesesLbl}`, marginX, y);
+  y += 0.15;
+  const alturaMax = Math.min(6.5, altoPagina - y - 0.6);
+  y += addChartImageToPdf(doc, chartMeses, marginX, y, anchoUtil, alturaMax) + 0.3;
+
+  // ── Tabla resumen general (todos los datos exactos de las 3 gráficas
+  //    numéricas — Mes/Año no se repite porque alimenta la misma barra) ──
+  doc.addPage();
+  y = 0.7;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text('RESUMEN GENERAL DE DATOS', anchoPagina / 2, y, { align: 'center' });
+  y += 0.3;
+
+  const fmtTon = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  function tablaAgregado(titulo, labels, values, datosY) {
+    if (datosY > altoPagina - 1.5) { doc.addPage(); datosY = 0.7; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text(titulo, marginX, datosY);
+    const total = values.reduce((s, v) => s + (v || 0), 0);
+    const body = labels.map((lbl, i) => {
+      const v = values[i] || 0;
+      const pct = total ? (v / total * 100) : 0;
+      return [lbl, fmtTon(v) + ' t', pct.toFixed(1) + '%'];
+    });
+    body.push(['TOTAL', fmtTon(total) + ' t', '100.0%']);
+    doc.autoTable({
+      startY: datosY + 0.1,
+      head: [['CONCEPTO', 'TONELADAS', '% DEL TOTAL']],
+      body,
+      styles: { fontSize: 9, cellPadding: 0.05 },
+      headStyles: { fillColor: [15, 110, 86], textColor: 255, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: anchoUtil - 2.4 },
+        1: { halign: 'right', cellWidth: 1.2 },
+        2: { halign: 'right', cellWidth: 1.2 }
+      },
+      margin: { left: marginX, right: marginX },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index === body.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [40, 40, 40];
+          data.cell.styles.textColor = 255;
+        }
+      }
+    });
+    return doc.lastAutoTable.finalY + 0.3;
+  }
+
+  const matLabels = chartMaterial.data.labels.map(nombreMaterial);
+  const matValues = chartMaterial.data.datasets[0].data;
+  y = tablaAgregado('Por Material', matLabels, matValues, y);
+
+  const bancoLabelsPdf = chartBanco.data.labels.map(nombreBanco);
+  const bancoValuesPdf = chartBanco.data.datasets[0].data;
+  y = tablaAgregado('Por Banco', bancoLabelsPdf, bancoValuesPdf, y);
+
+  const mesesLabelsPdf = chartMeses.data.labels.map(l => Array.isArray(l) ? l.join(' ') : l);
+  const mesesValuesPdf = chartMeses.data.datasets[0].data;
+  y = tablaAgregado(`Por ${vistaMesesLbl}`, mesesLabelsPdf, mesesValuesPdf, y);
+
+  if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = btnHtmlPdf; }
+  guardarPdfDescarga(doc, `graficos_suministros_${isoHoy()}.pdf`);
+ } catch (err) {
+  console.error('Error generando el PDF de Gráficos:', err);
+  alert('Error generando el PDF: ' + (err && err.message ? err.message : err));
+  const btnPdf = document.getElementById('btn-graficos-pdf');
+  if (btnPdf) { btnPdf.disabled = false; btnPdf.innerHTML = '📄 Descargar PDF'; }
+ }
+}
+window.descargarPdfGraficos = descargarPdfGraficos;
 
 // ══════════════════════════════════════════════════════
 // FASE 16.4 — Pestaña "BANCOS" (conciliación con bancos de material / sindicato)

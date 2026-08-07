@@ -3685,6 +3685,26 @@ window.dbFilaBasculaEliminar = async function (filaId) {
           </div>
         </div>
       </div>
+      <!-- 05-ago-2026 (pedido de Jesús): filtro de Tipo de camión (Volteo/
+           Góndola/Articulado) en Suministros — mismo patrón que ya existe
+           en Reportes (ms-reportes-tipocamion, sección 32-ish). Independiente
+           de esto, el PDF de Gráficos SIEMPRE arma sus 2 páginas de
+           comparación Volteo-vs-Góndola con ambos tipos completos, sin
+           importar lo que se seleccione aquí (ver descargarPdfGraficos). -->
+      <div class="full">
+        <label>Tipo de camión</label>
+        <div class="ms-wrap" id="ms-tipocamion-wrap">
+          <button type="button" class="ms-btn" id="ms-tipocamion-btn" onclick="toggleMS('tipocamion')">
+            <span id="ms-tipocamion-label">— Todos —</span>
+            <svg class="ms-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="ms-dropdown" id="ms-tipocamion-dd">
+            <div class="ms-option"><input type="checkbox" id="cb-dash-tc-VOLTEO" value="VOLTEO" onchange="onMsChange('tipocamion')"><label for="cb-dash-tc-VOLTEO">Volteo</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dash-tc-GONDOLA" value="GONDOLA" onchange="onMsChange('tipocamion')"><label for="cb-dash-tc-GONDOLA">Góndola</label></div>
+            <div class="ms-option"><input type="checkbox" id="cb-dash-tc-ARTICULADO" value="ARTICULADO" onchange="onMsChange('tipocamion')"><label for="cb-dash-tc-ARTICULADO">Articulado</label></div>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="slicer-actions">
       <button class="btn btn-secondary" onclick="limpiarFiltrosDashboard()" style="margin-top:10px;">
@@ -6420,6 +6440,42 @@ function onMsChange(key) {
   renderDashboard();
 }
 
+// 05-ago-2026 (pedido de Jesús): al hacer click en un banco/material dentro
+// de la leyenda de la dona/pastel de Suministros, antes solo se tachaba esa
+// rebanada EN ESA gráfica (comportamiento default de Chart.js,
+// chart.toggleDataVisibility) — no afectaba las otras 2 gráficas de abajo
+// (barra de Banco, barra de Mes/Año) ni los KPIs, y tampoco se reflejaba en
+// los filtros del dashboard. Esta función reemplaza ese comportamiento
+// default: en vez de ocultar la rebanada dentro de UNA gráfica, marca/
+// desmarca el checkbox correspondiente en el multiselect real
+// (ms-banco-dd / ms-material-dd) y dispara el mismo onMsChange() que ya
+// usan los filtros de arriba — así renderDashboard() vuelve a correr y
+// las 4 gráficas + los 4 KPIs + el propio dropdown de filtros quedan
+// consistentes entre sí con una sola fuente de verdad (los checkboxes),
+// en vez de mantener un estado de "ocultos" aparte por gráfica.
+function toggleFiltroDesdeLeyenda(tipo, valor) {
+  const dd = document.getElementById('ms-' + tipo + '-dd');
+  if (!dd) return;
+  const checkboxes = Array.from(dd.querySelectorAll('input[type="checkbox"]'));
+  const cb = checkboxes.find(c => c.value === valor);
+  if (!cb) return;
+  const marcados = checkboxes.filter(c => c.checked);
+  if (marcados.length === 0) {
+    // Modo "— Todos —": un clic en un elemento lo excluye, dejando
+    // explícitamente marcados todos los demás (equivalente visual a
+    // "tachar" ese elemento, pero ahora sí afecta todo el dashboard).
+    checkboxes.forEach(c => { c.checked = (c !== cb); });
+  } else {
+    cb.checked = !cb.checked;
+    // Si con este clic quedaron todos marcados de nuevo, se normaliza de
+    // vuelta a "— Todos —" (vacío) para que el filtro no se vea "raro"
+    // con todo tachado-y-vuelto-a-marcar uno por uno.
+    if (checkboxes.every(c => c.checked)) checkboxes.forEach(c => c.checked = false);
+  }
+  onMsChange(tipo);
+}
+window.toggleFiltroDesdeLeyenda = toggleFiltroDesdeLeyenda;
+
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.ms-wrap')) {
     document.querySelectorAll('.ms-dropdown').forEach(d => d.classList.remove('open'));
@@ -6430,7 +6486,7 @@ document.addEventListener('click', (e) => {
 function limpiarFiltrosDashboard() {
   document.getElementById('dash-fecha-desde').value = '';
   document.getElementById('dash-fecha-hasta').value = '';
-  ['banco','material','cuerpo'].forEach(key => {
+  ['banco','material','cuerpo','tipocamion'].forEach(key => {
     const dd = document.getElementById('ms-' + key + '-dd');
     if (dd) dd.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updateMsBtn(key);
@@ -6444,6 +6500,7 @@ function getDashboardFiltered() {
   const bancos     = getMsSelected('banco');
   const materiales = getMsSelected('material');
   const cuerpos    = getMsSelected('cuerpo');
+  const tiposCamion = getMsSelected('tipocamion');
   const datos = (window.usandoHistoricoDash && window.dashHistoricoCompleto)
     ? window.dashHistoricoCompleto
     : (window.db || []);
@@ -6460,6 +6517,7 @@ function getDashboardFiltered() {
     if (bancos.length    && !bancos.includes(r.banco))    return false;
     if (materiales.length && !materiales.includes(r.material)) return false;
     if (cuerpos.length   && !cuerpos.includes(r.destino)) return false;
+    if (tiposCamion.length && !tiposCamion.includes(r.tipo_camion)) return false;
     return true;
   });
 }
@@ -6480,7 +6538,8 @@ async function renderDashboard() {
   const filtros = {
     bancos:      getMsSelected('banco'),
     materiales:  getMsSelected('material'),
-    destinos:    getMsSelected('cuerpo')
+    destinos:    getMsSelected('cuerpo'),
+    tiposCamion: getMsSelected('tipocamion')
   };
 
   const fuenteEl = document.getElementById('dash-fuente-actual');
@@ -6504,6 +6563,9 @@ async function renderDashboard() {
       if (!porBancoAgg[banco]) porBancoAgg[banco] = { ton: 0, materiales: {} };
       porBancoAgg[banco].ton += ton;
       porBancoAgg[banco].materiales[material] = { ton: (porBancoAgg[banco].materiales[material]?.ton || 0) + ton };
+      // Nota: getDashboardFiltered() ya aplica bancos/materiales/cuerpos/
+      // tiposCamion — este bloque solo re-agrega lo que ya viene filtrado,
+      // no necesita repetir el filtro de tipo de camión aquí.
       if (r.fecha1) {
         const mesKey = r.fecha1.slice(0, 7);
         porMesAgg[mesKey] = (porMesAgg[mesKey] || 0) + ton;
@@ -6552,7 +6614,14 @@ async function renderDashboard() {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        // 05-ago-2026: onClick propio en vez del default de Chart.js — ver
+        // toggleFiltroDesdeLeyenda() (junto a onMsChange). En vez de tachar
+        // la rebanada solo en esta gráfica, activa/desactiva el material
+        // en el filtro real y re-renderiza las 4 gráficas + KPIs.
+        legend: {
+          position: 'right', labels: { boxWidth: 12, font: { size: 11 } },
+          onClick: (e, legendItem) => toggleFiltroDesdeLeyenda('material', legendItem.text)
+        },
         tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed.toFixed(2) + ' t' } }
       }
     }
@@ -6576,7 +6645,12 @@ async function renderDashboard() {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        // 05-ago-2026: mismo criterio que la dona de Material — ver
+        // toggleFiltroDesdeLeyenda().
+        legend: {
+          position: 'right', labels: { boxWidth: 12, font: { size: 11 } },
+          onClick: (e, legendItem) => toggleFiltroDesdeLeyenda('banco', legendItem.text)
+        },
         tooltip: { callbacks: { label: (ctx) => {
           const total = (ctx.dataset.data || []).reduce((s, v) => s + (v || 0), 0);
           const pct = total ? (ctx.parsed / total * 100) : 0;
@@ -8175,11 +8249,13 @@ window.calcularVueltasYCamionesDashboard = async function() {
     const bancosSel     = getMsSelected('banco');
     const materialesSel = getMsSelected('material');
     const cuerposSel    = getMsSelected('cuerpo');
+    const tiposCamionSel = getMsSelected('tipocamion');
     const filtrado = detalle.filter(r => {
       if ((r.origen_tipo || 'BANCO') !== 'BANCO') return false;
       if (bancosSel.length     && !bancosSel.includes(r.banco))     return false;
       if (materialesSel.length && !materialesSel.includes(r.material)) return false;
       if (cuerposSel.length    && !cuerposSel.includes(r.destino))  return false;
+      if (tiposCamionSel.length && !tiposCamionSel.includes(r.tipo_camion)) return false;
       return true;
     });
 
@@ -8260,19 +8336,34 @@ async function descargarPdfGraficos() {
   }
 
   // Mismos filtros que getDashboardFiltered() (FASE 6: solo origen_tipo
-  // BANCO) + banco/material/cuerpo activos en pantalla — el PDF SIEMPRE
-  // debe coincidir con lo que Jesús está viendo filtrado (alcance
-  // acordado en la sección 88).
-  const bancosSel     = getMsSelected('banco');
-  const materialesSel = getMsSelected('material');
-  const cuerposSel    = getMsSelected('cuerpo');
-  const filtrado = detalle.filter(r => {
+  // BANCO) + banco/material/cuerpo/tipo de camión activos en pantalla —
+  // el PDF SIEMPRE debe coincidir con lo que Jesús está viendo filtrado
+  // (alcance acordado en la sección 88).
+  const bancosSel      = getMsSelected('banco');
+  const materialesSel  = getMsSelected('material');
+  const cuerposSel     = getMsSelected('cuerpo');
+  const tiposCamionSel = getMsSelected('tipocamion');
+  // 05-ago-2026: `filtradoBase` respeta fecha/banco/material/cuerpo pero
+  // NO el filtro de Tipo de camión — lo usan las 2 páginas nuevas de
+  // comparación Volteo-vs-Góndola (pedido de Jesús), que necesitan ver
+  // AMBOS tipos completos sin importar qué tenga marcado el filtro de
+  // pantalla (si Jesús dejara solo "Volteo" marcado, la tabla de Góndola
+  // quedaría vacía sin este dato separado). `filtrado` sí respeta todos
+  // los filtros de pantalla, incluido tipo de camión, y es el que usan
+  // la Página 1 (dona/pastel/análisis) y las páginas de Banco y Mes/Año,
+  // igual que ya usaba antes de este cambio.
+  const filtradoBase = detalle.filter(r => {
     if ((r.origen_tipo || 'BANCO') !== 'BANCO') return false;
     if (bancosSel.length     && !bancosSel.includes(r.banco))     return false;
     if (materialesSel.length && !materialesSel.includes(r.material)) return false;
     if (cuerposSel.length    && !cuerposSel.includes(r.destino))  return false;
     return true;
   });
+  const filtrado = filtradoBase.filter(r =>
+    !tiposCamionSel.length || tiposCamionSel.includes(r.tipo_camion)
+  );
+  const filtradoVolteo  = filtradoBase.filter(r => r.tipo_camion === 'VOLTEO');
+  const filtradoGondola = filtradoBase.filter(r => r.tipo_camion === 'GONDOLA');
 
   if (!filtrado.length) {
     alert('No hay datos para exportar con el filtro actual.');
@@ -8288,68 +8379,75 @@ async function descargarPdfGraficos() {
 
   const bancosSelTxt     = bancosSel.length     ? bancosSel.map(nombreBanco).join(', ')     : 'Todos';
   const materialesSelTxt = materialesSel.length ? materialesSel.map(nombreMaterial).join(', ') : 'Todos';
+  const tiposCamionSelTxt = tiposCamionSel.length ? tiposCamionSel.map(nombreTipoCamion).join(', ') : 'Todos';
   const periodoTxt = (desde || hasta)
     ? `Del ${fmtFechaLarga(desde) || '(sin definir)'} al ${fmtFechaLarga(hasta) || '(sin definir)'}`
     : 'Todo el histórico disponible';
 
-  // 04-ago-2026 (sección 91, pedido de Jesús): tabla resumen Banco/Material
-// en vez del texto de análisis — reemplaza armarAnalisisTexto() en las
-// páginas 1 y 2 del PDF de Gráficos (Página 3, Mes/Año, se queda en texto:
-// es otra dimensión, no Banco+Material, no la pidió Jesús en esta tabla).
-// Reutiliza tonOfReg()/diasTrabajadosDe() ya existentes, sin tocarlas.
-// Columnas pedidas: Banco, Material, # viajes, viajes/día promedio,
-// % del total de toneladas (contra el TOTAL GLOBAL de `filtrado`, no
-// contra el total de ese material/banco — "independientemente del
-// material"), toneladas promedio (por viaje, de esa fila banco+material).
-function dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX) {
-  const totalTonGlobal = filtrado.reduce((s, r) => s + tonOfReg(r), 0);
-  const grupos = {};
-  filtrado.forEach(r => {
-    const banco = nombreBanco(r.banco || '');
-    const material = nombreMaterial(r.material || '');
-    const key = banco + '||' + material;
-    if (!grupos[key]) grupos[key] = { banco, material, regs: [] };
-    grupos[key].regs.push(r);
-  });
-  const filas = Object.values(grupos).map(g => {
-    const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
-    const dias = diasTrabajadosDe(g.regs);
-    const viajes = g.regs.length;
-    return {
-      banco: g.banco, material: g.material, viajes,
-      viajesDia: dias ? viajes / dias : 0,
-      pctTotal: totalTonGlobal ? (ton / totalTonGlobal) * 100 : 0,
-      // 04-ago-2026 (aclaración de Jesús tras la sección 91): "toneladas
-      // promedio" es POR DÍA, mismo denominador (`dias`) que "viajes/día
-      // promedio" — así que si el filtro selecciona varios días, promedia
-      // correctamente contra esos días (no contra el número de viajes).
-      tonProm: dias ? ton / dias : 0
-    };
-  }).sort((a, b) => b.pctTotal - a.pctTotal);
+  // 05-ago-2026 (rediseño pedido por Jesús): la tabla resumen Banco/
+  // Material de la sección 91 (04-ago-2026) vivía DUPLICADA en las
+  // páginas 1 y 2. Se retira de ahí — la Página 1 vuelve a usar
+  // armarAnalisisTexto() (el texto de análisis que había ANTES de la
+  // sección 91) — y la tabla se convierte en `dibujarTablaTipoCamion()`,
+  // reusada por las 2 páginas nuevas de comparación Volteo/Góndola, con
+  // una columna RANGO (primer y último día con viajes de esa fila
+  // Banco+Material dentro del periodo filtrado) y datos centrados en vez
+  // de alineados a la derecha (pedido explícito). Reutiliza tonOfReg()/
+  // diasTrabajadosDe() ya existentes, sin tocarlas.
+  function fmtRangoCorto(desdeIso, hastaIso) {
+    const corta = (iso) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y.slice(2)}`; };
+    return desdeIso === hastaIso ? corta(desdeIso) : `${corta(desdeIso)} – ${corta(hastaIso)}`;
+  }
+  function dibujarTablaTipoCamion(doc, regs, y, anchoUtil, marginX) {
+    const totalTonGlobal = regs.reduce((s, r) => s + tonOfReg(r), 0);
+    const grupos = {};
+    regs.forEach(r => {
+      const banco = nombreBanco(r.banco || '');
+      const material = nombreMaterial(r.material || '');
+      const key = banco + '||' + material;
+      if (!grupos[key]) grupos[key] = { banco, material, regs: [] };
+      grupos[key].regs.push(r);
+    });
+    const filas = Object.values(grupos).map(g => {
+      const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
+      const dias = diasTrabajadosDe(g.regs);
+      const viajes = g.regs.length;
+      const fechas = g.regs.map(r => r.fecha1).filter(Boolean).sort();
+      const rango = fechas.length ? fmtRangoCorto(fechas[0], fechas[fechas.length - 1]) : '—';
+      return {
+        banco: g.banco, material: g.material, rango, viajes,
+        viajesDia: dias ? viajes / dias : 0,
+        pctTotal: totalTonGlobal ? (ton / totalTonGlobal) * 100 : 0,
+        // "toneladas promedio" es POR DÍA (mismo denominador que
+        // "viajes/día promedio"), no por viaje — aclaración de Jesús ya
+        // documentada en la sección 92.
+        tonProm: dias ? ton / dias : 0
+      };
+    }).sort((a, b) => b.pctTotal - a.pctTotal);
 
-  const fmt1 = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  const body = filas.map(f => [
-    f.banco, f.material, f.viajes.toLocaleString('es-MX'),
-    fmt1(f.viajesDia), fmt1(f.pctTotal) + '%', fmt1(f.tonProm) + ' t'
-  ]);
+    const fmt1 = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const body = filas.map(f => [
+      f.banco, f.material, f.rango, f.viajes.toLocaleString('es-MX'),
+      fmt1(f.viajesDia), fmt1(f.pctTotal) + '%', fmt1(f.tonProm) + ' t'
+    ]);
 
-  doc.autoTable({
-    startY: y,
-    head: [['BANCO', 'MATERIAL', 'VIAJES', 'VIAJES/DÍA PROM.', '% DEL TOTAL DE TON.', 'TON./DÍA PROM.']],
-    body,
-    // Fix ya documentado (10-jul-2026 v6, ver descargarPdfResumen arriba):
-    // doc usa unit:'in' — cellPadding se interpreta en PULGADAS, NO en
-    // puntos. 0.04 ≈ 3pt de relleno real; un valor tipo 3 aquí revienta la
-    // pila de jspdf-autotable con "Maximum call stack size exceeded".
-    styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak' },
-    headStyles: { fillColor: [15, 110, 86], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
-    columnStyles: {
-      2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }
-    },
-    margin: { left: marginX, right: marginX }
-  });
-  return doc.lastAutoTable.finalY;
-}
+    doc.autoTable({
+      startY: y,
+      head: [['BANCO', 'MATERIAL', 'RANGO', 'VIAJES', 'VIAJES/DÍA PROM.', '% DEL TOTAL DE TON.', 'TON./DÍA PROM.']],
+      body,
+      // Fix ya documentado (10-jul-2026 v6, ver descargarPdfResumen arriba):
+      // doc usa unit:'in' — cellPadding se interpreta en PULGADAS, NO en
+      // puntos. 0.04 ≈ 3pt de relleno real; un valor tipo 3 aquí revienta la
+      // pila de jspdf-autotable con "Maximum call stack size exceeded".
+      // halign:'center' a nivel `styles` (no columnStyles) para que TODAS
+      // las columnas, incluidas Banco/Material, queden centradas (pedido
+      // explícito: "datos de manera centrada en la columna que corresponden").
+      styles: { fontSize: 8, cellPadding: 0.04, overflow: 'linebreak', halign: 'center' },
+      headStyles: { fillColor: [15, 110, 86], textColor: 255, fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
+      margin: { left: marginX, right: marginX }
+    });
+    return doc.lastAutoTable.finalY;
+  }
 
 function encabezadoPagina(subtitulo) {
     let y = 0.55;
@@ -8365,6 +8463,8 @@ function encabezadoPagina(subtitulo) {
     doc.text(`Bancos filtrados: ${bancosSelTxt}`, marginX, y);
     y += 0.13;
     doc.text(`Materiales filtrados: ${materialesSelTxt}`, marginX, y);
+    y += 0.13;
+    doc.text(`Tipos de camión filtrados: ${tiposCamionSelTxt}`, marginX, y);
     y += 0.2;
     return y;
   }
@@ -8376,7 +8476,13 @@ function encabezadoPagina(subtitulo) {
     return y + lineas.length * 0.15;
   }
 
-  // ── Página 1: dona Material + pastel Banco, con su análisis ──────────
+  // ── Página 1: dona Material + pastel Banco, con el análisis anterior a
+  //    la sección 91 (armarAnalisisTexto — banco/material de mayor y de
+  //    menor actividad, viajes/día y vueltas/día promedio). Gráficas un
+  //    poco más grandes (2.9 → 3.3in de alto) y SIN la tabla Resumen
+  //    Banco/Material (pedido explícito de Jesús, 05-ago-2026: "solo se
+  //    vean los gráficos de pastel y de dona... y abajo el análisis que
+  //    teníamos anteriormente") ──────────────────────────────────────
   let y = encabezadoPagina('GRÁFICOS — Dona de Material y Pastel de Banco');
   const mitad = (anchoUtil - 0.2) / 2;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
@@ -8384,30 +8490,88 @@ function encabezadoPagina(subtitulo) {
   doc.text('Toneladas totales por Banco (% del total)', marginX + mitad + 0.2, y);
   y += 0.13;
   const yAntes = y;
-  const hDona   = addChartImageToPdf(doc, chartMaterial, marginX, y, mitad, 2.9);
-  const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 2.9);
+  const hDona   = addChartImageToPdf(doc, chartMaterial, marginX, y, mitad, 3.3);
+  const hPastel = addChartImageToPdf(doc, chartBancoPie, marginX + mitad + 0.2, y, mitad, 3.3);
   y = yAntes + Math.max(hDona, hPastel) + 0.22;
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-  doc.text('Resumen — Banco / Material', marginX, y);
+  doc.text('Análisis — Material', marginX, y);
   y += 0.14;
-  y = dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX);
+  // "Vueltas por camión" no se muestra por Material (universo = null):
+  // un mismo camión suele cargar más de un material, mezclarlo no aporta
+  // información clara (mismo criterio documentado en armarAnalisisTexto()).
+  y = escribirParrafo(armarAnalisisTexto(agruparRegs(filtrado, 'material', nombreMaterial), null, 'material', 'suministradas'), y, anchoUtil) + 0.12;
 
-  // ── Página 2: barra Banco (Origen) — mismo texto de Banco (pedido
-  //    explícito de Jesús: "exactamente lo mismo... con el gráfico de
-  //    barras") ──────────────────────────────────────────────────────
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Análisis — Banco', marginX, y);
+  y += 0.14;
+  escribirParrafo(armarAnalisisTexto(agruparRegs(filtrado, 'banco', nombreBanco), filtrado, 'banco', 'suministradas'), y, anchoUtil);
+
+  // ── Página 2 y 3 (NUEVAS, 05-ago-2026, pedido de Jesús): comparación
+  //    Volteo vs. Góndola, una tabla por hoja, cada una con su propio
+  //    texto "en promedio se ingresan ### tons al día..." y la misma
+  //    conclusión (quién tiene mejor rendimiento). Usan `filtradoVolteo`/
+  //    `filtradoGondola` (ver más arriba: NO respetan el filtro de Tipo
+  //    de camión de pantalla, a propósito, para poder comparar ambos
+  //    completos aunque Jesús tenga uno de los dos filtrado en pantalla).
+  //    Los "viajes/día" y "toneladas/día" del texto son PROMEDIO GLOBAL
+  //    del tipo de camión completo (no desglosado por banco/material),
+  //    mismo criterio de "no rellenar huecos con 0" que el resto del PDF
+  //    (diasTrabajadosDe ya excluye días sin registro). ─────────────────
+  function statsTipoCamion(regs) {
+    const ton = regs.reduce((s, r) => s + tonOfReg(r), 0);
+    const dias = diasTrabajadosDe(regs);
+    return { ton, dias, viajes: regs.length, viajesDia: dias ? regs.length / dias : 0, tonDia: dias ? ton / dias : 0 };
+  }
+  const fmtTon2 = (v) => (+v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtEntero = (v) => Math.round(v).toLocaleString('es-MX');
+  const statsVolteo  = statsTipoCamion(filtradoVolteo);
+  const statsGondola = statsTipoCamion(filtradoGondola);
+  const diffTonDia = Math.abs(statsVolteo.tonDia - statsGondola.tonDia);
+  const ganadorTxt = statsVolteo.tonDia >= statsGondola.tonDia
+    ? 'Los volteos tienen mejor rendimiento en el acarreo de material.'
+    : 'Las góndolas tienen mejor rendimiento en el acarreo de material.';
+
+  doc.addPage();
+  y = encabezadoPagina('GRÁFICOS — Comparación Volteo vs. Góndola (Volteo)');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Detalle por Banco / Material — Volteo', marginX, y);
+  y += 0.14;
+  if (!filtradoVolteo.length) {
+    y = escribirParrafo('No se registraron viajes con camión de Volteo en el periodo/filtro seleccionado.', y, anchoUtil);
+  } else {
+    y = dibujarTablaTipoCamion(doc, filtradoVolteo, y, anchoUtil, marginX) + 0.22;
+    const txtVolteo = `En promedio se ingresan ${fmtTon2(statsVolteo.tonDia)} toneladas al día con ${fmtEntero(statsVolteo.viajesDia)} viajes de Volteos, teniendo una diferencia de ${fmtTon2(diffTonDia)} toneladas al día con relación a las góndolas.`;
+    y = escribirParrafo(txtVolteo, y, anchoUtil) + 0.08;
+    y = escribirParrafo(`Conclusión: ${ganadorTxt}`, y, anchoUtil);
+  }
+
+  doc.addPage();
+  y = encabezadoPagina('GRÁFICOS — Comparación Volteo vs. Góndola (Góndola)');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+  doc.text('Detalle por Banco / Material — Góndola', marginX, y);
+  y += 0.14;
+  if (!filtradoGondola.length) {
+    y = escribirParrafo('No se registraron viajes con camión de Góndola en el periodo/filtro seleccionado.', y, anchoUtil);
+  } else {
+    y = dibujarTablaTipoCamion(doc, filtradoGondola, y, anchoUtil, marginX) + 0.22;
+    const txtGondola = `En promedio se ingresan ${fmtTon2(statsGondola.tonDia)} toneladas al día con ${fmtEntero(statsGondola.viajesDia)} viajes de Góndolas, teniendo una diferencia de ${fmtTon2(diffTonDia)} toneladas al día con relación a los volteos.`;
+    y = escribirParrafo(txtGondola, y, anchoUtil) + 0.08;
+    y = escribirParrafo(`Conclusión: ${ganadorTxt}`, y, anchoUtil);
+  }
+
+  // ── Página 4: barra Banco (Origen), más grande y SIN el recuadro de
+  //    resumen (pedido explícito de Jesús, 05-ago-2026) ────────────────
   doc.addPage();
   y = encabezadoPagina('GRÁFICOS — Toneladas totales por Banco (Origen)');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
   doc.text('Toneladas totales por Banco (Origen)', marginX, y);
   y += 0.14;
-  y += addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, 3.6) + 0.22;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-  doc.text('Resumen — Banco / Material', marginX, y);
-  y += 0.14;
-  dibujarTablaResumenBancoMaterial(doc, filtrado, y, anchoUtil, marginX);
+  const alturaBanco = Math.min(5.4, altoPagina - y - 0.4);
+  addChartImageToPdf(doc, chartBanco, marginX, y, anchoUtil, alturaBanco);
 
-  // ── Página 3: barra Mes/Año — sigue el toggle activo en pantalla ─────
+  // ── Página 5: barra Mes/Año — sigue el toggle activo en pantalla, tal
+  //    como estaba (sin cambios, pedido explícito de Jesús) ────────────
   doc.addPage();
   const vistaMesesLbl = window.dashVistaMeses === 'anual' ? 'AÑO' : 'MES';
   y = encabezadoPagina(`GRÁFICOS — Toneladas por ${vistaMesesLbl}`);
@@ -10503,6 +10667,27 @@ async function obtenerLineasCrudasRango(desde, hasta) {
           const d = snap.data();
           Object.values(d.por_combinacion || {}).forEach(item => {
             if (typeof item === 'number') return;
+            // 05-ago-2026 (causa raíz de "9,191 vs 8,922 viajes" reportado
+            // por Jesús): por_combinacion guarda, para tickets de
+            // colocación, una ENTRADA ESPEJO bajo el pseudo-material
+            // "COLOCACION MARINA"/"COLOCACION TERRESTRE" (mismo
+            // banco/destino/tipo_camion que la entrada real — ver
+            // aplicarResumen(), fix del 22-jul-2026 para Metas). Es
+            // intencional que esa entrada exista para que Metas vea avance
+            // por vertido, pero para CUALQUIER consumidor de
+            // obtenerLineasCrudasRango() (viajes/toneladas reales de un
+            // rango) es un viaje contado dos veces. Ya se excluía a mano
+            // en la dona de Material (MATERIALES_EXCLUIR_DONA, en
+            // renderDashboard) pero NO en los totales (KPIs "Viajes
+            // filtrados"/"Toneladas filtradas", el pastel de Banco, la
+            // barra de Banco ni Reportes) — de ahí que Suministros mostrara
+            // 9,191 viajes / 252,998.92 t contra los 8,922 / 246,494 del
+            // agregado histórico real. Se filtra aquí, en la fuente única,
+            // para que TODOS los consumidores queden corregidos a la vez
+            // (alcance completo, sección 30.3 de la bitácora). Metas no
+            // pasa por esta función (lee por_combinacion directo), así que
+            // no se ve afectado.
+            if (item.material === 'COLOCACION MARINA' || item.material === 'COLOCACION TERRESTRE') return;
             lineas.push({ banco: item.banco, material: item.material, destino: item.destino, tipo_camion: item.tipo_camion, viajes: item.viajes || 0, ton: item.ton || 0, mes });
           });
         }

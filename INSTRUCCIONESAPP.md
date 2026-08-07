@@ -6044,3 +6044,123 @@ promedia correctamente contra esos días. Encabezado de la tabla también
 aclarado: "TON. PROMEDIO" → "TON./DÍA PROM.".
 
 **Verificación:** `node --check` limpio en los 4 bloques, sin IDs duplicados.
+
+## 93. 05/06-ago-2026 — Batch de correcciones de Jesús: bug de doble conteo en Suministros, toggle de leyendas afecta todo el dashboard, PDF de Gráficos rediseñado (5 páginas) + filtro Tipo de camión
+
+**Sesión:** Sonnet5-20260806-A. Trabajado sobre una copia de `index.html`
+e `INSTRUCCIONESAPP.md` subida manualmente por Jesús a este chat (no fue
+posible clonar/comparar contra el repo de GitHub en este entorno — sin
+acceso de red a un repo privado sin URL conocida; el resto de archivos
+del repo, `firestore.rules`/`sw.js`/`manifest.json`, tampoco se subieron
+a este chat, así que no se tocaron). **Antes de subir estos archivos al
+repo, comparar contra la versión actual de GitHub por si hubo cambios de
+otra sesión que no se conocían** (protocolo de la sección 0.6, punto 3).
+
+**1. 🔴 Bug de datos — causa raíz encontrada y corregida: Suministros
+mostraba 9,191 viajes / 252,998.92 t "filtrados" contra 8,922 viajes /
+246,494 t del "Total histórico" (banner de arriba), y el Excel de Jesús
+marca 8,927 viajes / 246,624.42 t.**
+- **Causa raíz confirmada (no hipótesis):** `obtenerLineasCrudasRango()`
+  (usada por `calcularResumenGenericoAgregado()`, que alimenta los 4 KPIs
+  y las 4 gráficas de Suministros) lee el campo `por_combinacion` del
+  agregado mensual. Ese campo guarda, para TODO ticket de colocación
+  (`COLOCACION_TERRESTRE`/`COLOCACION_MARINA`), una entrada espejo bajo el
+  pseudo-material "COLOCACION MARINA"/"COLOCACION TERRESTRE" (mismo banco/
+  destino/tipo_camion que la entrada real) — es intencional, fix del
+  22-jul-2026 para que Metas viera avance por vertido (ver `aplicarResumen()`).
+  El problema: esa entrada duplicada SÍ pasaba el filtro `soloOrigenBanco`
+  de Suministros (que solo excluye cuando el banco de origen es un Acopio,
+  no cuando el material es un pseudo-material), así que cada ticket de
+  colocación cuyo origen fuera un Banco real se contaba DOS VECES en los
+  KPIs, en el pastel de Banco y en la barra de Banco. Ya existía una
+  exclusión manual (`MATERIALES_EXCLUIR_DONA`) pero SOLO aplicaba a la dona
+  de Material, no a los totales ni a las otras 3 gráficas — de ahí que la
+  dona se viera "bien" mientras los KPIs y el pastel de Banco no.
+- **Fix:** se excluye el pseudo-material directamente en
+  `obtenerLineasCrudasRango()` (la fuente única que consumen los 4 KPIs +
+  4 gráficas), así que todos los consumidores quedan corregidos a la vez
+  (alcance completo, sección 30.3). Metas lee `por_combinacion` por su
+  cuenta, no pasa por esta función, así que no se ve afectado.
+- **Sobre el residuo de 8,922 vs 8,927 (Excel) — NO es el mismo bug:**
+  `resumenes/historico_global.total_viajes/total_ton` (el banner de
+  arriba) se incrementa UNA sola vez por ticket real, sin el mecanismo de
+  entrada espejo — es la cuenta correcta por diseño. La diferencia de 5
+  viajes / ~130 t contra el Excel es compatible con el mecanismo YA
+  documentado en el propio código (líneas ~1459-1468): si `updateDoc`
+  sobre `historico_global` falla (ticket guardado sin conexión, error de
+  red puntual, etc.), el ticket se guarda bien pero ese total rápido queda
+  desactualizado — el propio código avisa con un toast "Usa Recalcular
+  total histórico en Admin" para ese caso. **Recomendación a Jesús:**
+  correr ese botón de Admin para eliminar también ese residuo menor; si
+  vuelve a aparecer un desfase después de recalcular, sí sería un bug
+  nuevo y distinto a investigar aparte.
+
+**2. Toggle de leyendas (dona Material / pastel Banco) ahora afecta las 4
+gráficas + los 4 KPIs + los filtros, no solo la gráfica donde se hizo clic:**
+- Antes: click en la leyenda usaba el comportamiento default de Chart.js
+  (`toggleDataVisibility`), que solo tacha la rebanada EN ESA gráfica.
+- Ahora: `legend.onClick` de ambas gráficas llama a la función nueva
+  `toggleFiltroDesdeLeyenda(tipo, valor)` (junto a `onMsChange`), que en
+  vez de ocultar la rebanada marca/desmarca el checkbox real del banco o
+  material en el dropdown de filtros y dispara `onMsChange()` →
+  `renderDashboard()` — así las 4 gráficas, los 4 KPIs y el propio
+  dropdown de "Filtros del dashboard" quedan sincronizados con una sola
+  fuente de verdad (los checkboxes), tal como pidió Jesús ("que se
+  visualice ese cambio en los filtros"). La barra de Banco y la barra de
+  Mes/Año ya leían el mismo agregado filtrado, así que no necesitaron
+  cambios propios — solo heredan el filtro al re-renderizar.
+
+**3. Filtro nuevo "Tipo de camión" (Volteo/Góndola/Articulado) en
+Suministros:** mismo patrón visual/funcional que el multiselect que ya
+existía en Reportes (`ms-reportes-tipocamion`). Alimenta
+`calcularResumenGenericoAgregado()` (ya soportaba `tiposCamion`, solo
+faltaba conectarlo desde esta pestaña) y `getDashboardFiltered()`
+(fallback). Incluido en "Limpiar filtros" y en el encabezado del PDF
+("Tipos de camión filtrados: …").
+
+**4. PDF de Gráficos rediseñado — de 3 a 5 páginas (pedido explícito de
+Jesús):**
+- **Página 1** — dona de Material + pastel de Banco, un poco más grandes
+  (2.9in → 3.3in de alto), y abajo el análisis en texto que había ANTES
+  de la sección 91 (`armarAnalisisTexto()`, banco/material de mayor y de
+  menor actividad + viajes/día y vueltas/día promedio) — la tabla
+  "Resumen — Banco/Material" de la sección 91 se retira de esta página.
+- **Páginas 2 y 3 (nuevas)** — comparación Volteo vs. Góndola, una tabla
+  por hoja (`dibujarTablaTipoCamion()`, banco+material desglosado, MISMA
+  tabla de la sección 91 pero con una columna **RANGO** nueva — primer y
+  último día con viajes de esa fila banco+material dentro del periodo
+  filtrado — y **datos centrados** en vez de alineados a la derecha,
+  pedido explícito). Debajo de cada tabla, texto: "En promedio se
+  ingresan ### toneladas al día con ### viajes de Volteos/Góndolas,
+  teniendo una diferencia de ### toneladas al día con relación a
+  [el otro tipo]." + "Conclusión: Los volteos / Las góndolas tienen mejor
+  rendimiento en el acarreo de material." (mismo ganador en ambas
+  páginas, según quién tenga mayor toneladas/día). Estas 2 páginas usan
+  `filtradoVolteo`/`filtradoGondola`, derivados de `filtradoBase`
+  (respeta fecha/banco/material/cuerpo pero **a propósito NO** respeta el
+  filtro de Tipo de camión de pantalla — si Jesús filtra solo "Volteo" en
+  pantalla, estas 2 páginas igual comparan ambos tipos completos).
+- **Página 4** — barra horizontal de Banco (Origen), más grande (3.6in →
+  hasta 5.4in de alto, según espacio disponible) y **sin** el recuadro de
+  resumen que tenía debajo.
+- **Página 5** — barra de Mes/Año, sin cambios (tal como pidió Jesús:
+  "tal como está y con su texto de análisis que ya tiene").
+
+**Verificación:** `node --check` limpio en los 4 bloques no-módulo/módulo
+(`block_0`, `block_5` módulo, `block_6`, `block_7`), 0 IDs de DOM
+duplicados en todo el archivo (462 ids totales), confirmado que
+`dibujarTablaTipoCamion` sigue usando `cellPadding: 0.04` (no revienta la
+pila de jspdf-autotable, bug ya conocido de la sección 10-jul-2026 v6).
+`nombreTipoCamion()` y las funciones nuevas (`toggleFiltroDesdeLeyenda`,
+`dibujarTablaTipoCamion`) confirmadas dentro del mismo bloque `<script>`
+no-módulo que sus llamadores (no hay fuga de scope entre bloques, ver
+sección 30.1).
+
+**Pendiente / no incluido en esta entrega:** no se tocaron
+`firestore.rules`, `sw.js` ni `manifest.json` (no se subieron a este
+chat). No se corrió contra Firestore real ni se probó en un dispositivo —
+verificación hecha por lectura de código + `node --check`, igual
+salvedad que ya se documentó en sesiones anteriores sin acceso a red
+(sección 78-ish). Recomendado que Jesús pruebe el PDF con datos reales
+antes de repartirlo, sobre todo el cálculo de "diferencia" Volteo/Góndola
+con un rango de fechas amplio.

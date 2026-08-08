@@ -516,6 +516,11 @@ const auth       = getAuth(app);
 const COL        = "acarreos";
 const COL_USERS  = "usuarios";
 const COL_RESUMEN = "resumenes";
+// 08-ago-2026 (sección 97): colección APARTE para el contador diario por
+// grupo (Banco+Material+Rango+Tipo de camión) + placas — decisión
+// explícita de Jesús de que NO comparta documento con `resumenes` (evita
+// arriesgar el límite de 1 MiB por documento en meses de mucho volumen).
+const COL_RESUMEN_DIA = "resumenes_dia";
 
 let db             = [];
   window.db          = db;
@@ -1401,6 +1406,37 @@ async function aplicarResumen(rec, signo) {
     payload['por_banco_material_rango.' + keyBMR + '.rango']    = rangoNorm;
   }
 
+  // 08-ago-2026 (INSTRUCCIONESAPP.md sección 97) — decisión de Jesús:
+  // migración de "contador por placa" AUTORIZADA para que "vueltas por
+  // camión al día" (y "días trabajados" de las tablas Volteo/Góndola del
+  // PDF de Suministros) dejen de necesitar traerTodoFirestore() (miles de
+  // lecturas). Vive en una COLECCIÓN APARTE (`resumenes_dia`, decisión
+  // explícita de Jesús: "no toca los documentos actuales" de `resumenes`,
+  // para no arriesgar el límite de 1 MiB por documento de un doc que ya
+  // carga por_combinacion/por_banco_material_rango/tendencia_diaria).
+  // Semántica ACEPTADA por Jesús (cambia respecto a la versión cara del
+  // 4-ago): "vueltas por camión" ya NO proyecta una placa a TODO lo que
+  // hizo ese día en cualquier banco — cuenta solo sus viajes DENTRO del
+  // mismo grupo Banco+Material+Rango+Tipo de camión ese día. Mismo filtro
+  // que Suministros (origen_tipo BANCO, con banco capturado) y mismo
+  // agrupamiento que ya usa dibujarTablaTipoCamion() del PDF, para que
+  // ese mismo contador sirva también para "días trabajados" sin leer el
+  // detalle completo.
+  let payloadDia = null;
+  if (rec.banco && (rec.origen_tipo || 'BANCO') === 'BANCO' && rec.fecha1) {
+    const rangoNormDia = normalizarRango(rec.rango) || 'SIN_RANGO';
+    const rangoStrDia = rangoNormDia.replace(/\s+/g, '_').replace(/[.\/]/g, '');
+    const keyGrupoDia = `${bancoStr}__${matStr}__${rangoStrDia}__${camStr}`;
+    const base = `por_dia_grupo.${rec.fecha1}.${keyGrupoDia}`;
+    payloadDia = {};
+    payloadDia[base + '.viajes'] = increment(signo);
+    payloadDia[base + '.ton']    = increment(signo * ton);
+    if (rec.placas) {
+      const placaKey = String(rec.placas).toUpperCase().trim().replace(/\s+/g, '_').replace(/[.\/]/g, '');
+      if (placaKey) payloadDia[base + '.placas.' + placaKey] = increment(signo);
+    }
+  }
+
   try {
     // Mismo arreglo que aplicarAgregadoAvanceAcopio: updateDoc() en vez de
     // setDoc+merge, para que las claves con punto (por_material.X,
@@ -1433,6 +1469,31 @@ async function aplicarResumen(rec, signo) {
       if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el resumen del mes no se pudo actualizar. Usa "Recalcular resumen" en Admin.', 'err', 7000);
     }
   }
+
+  // 08-ago-2026 (sección 97): escritura del contador diario por grupo, en
+  // `resumenes_dia/<mes>` (colección aparte, ver nota de arriba). Falla
+  // silenciosa con aviso — mismo criterio que el resto de esta función —
+  // no bloquea la captura del ticket si esto falla.
+  if (payloadDia) {
+    const refDia = doc(db_f, COL_RESUMEN_DIA, mes);
+    try {
+      await updateDoc(refDia, payloadDia);
+    } catch (e) {
+      if (e && e.code === 'not-found') {
+        try {
+          await setDoc(refDia, { por_dia_grupo: {} });
+          await updateDoc(refDia, payloadDia);
+        } catch (e2) {
+          console.error('No se pudo crear/actualizar resumenes_dia/' + mes + ':', e2);
+          if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el contador diario por placa no se pudo actualizar. Usa "Recalcular contador diario" en Admin.', 'err', 7000);
+        }
+      } else {
+        console.error('No se pudo actualizar resumenes_dia/' + mes + ':', e);
+        if (window.showSyncToast) window.showSyncToast('⚠️', 'Ticket guardado, pero el contador diario por placa no se pudo actualizar. Usa "Recalcular contador diario" en Admin.', 'err', 7000);
+      }
+    }
+  }
+
 
   // Sección 10 (INSTRUCCIONESAPP.md) — mismo `payload` (mismos increments),
   // escrito también en un único documento acumulado sin cortar por mes, para
@@ -1623,6 +1684,77 @@ window.recalcularHistoricoGlobal = async function() {
     alert('Error al recalcular el total histórico: ' + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Recalcular total histórico (lee toda la base, solo 1a vez)'; }
+  }
+}
+
+// 08-ago-2026 (INSTRUCCIONESAPP.md sección 97) — Migración única
+// AUTORIZADA por Jesús: contador diario por grupo (Banco+Material+Rango+
+// Tipo de camión) + placas, en `resumenes_dia/<mes>` (colección APARTE de
+// `resumenes`, por decisión explícita de Jesús). Mismo patrón que
+// recalcularResumen()/recalcularHistoricoGlobal(): UNA sola lectura
+// completa de `acarreos`, disparada manualmente por un admin/master.
+// Después de esta migración, aplicarResumen() mantiene esto al día con
+// increment() en cada alta/edición/baja (ver el bloque `payloadDia` ahí)
+// — no vuelve a requerir leer la colección completa.
+//
+// Objetivo (para qué sirve esto — sección 96/97): que "vueltas por camión
+// al día" (PDF de Suministros) y "días trabajados" por grupo (tablas
+// Volteo/Góndola del mismo PDF, dibujarTablaTipoCamion()) se puedan leer
+// de aquí — 1 lectura por mes del rango pedido — en vez de
+// traerTodoFirestore() línea por línea. Esa Fase 2 (cambiar el PDF para
+// que lea de aquí) queda pendiente, fuera del alcance de esta migración.
+//
+// Semántica ACEPTADA por Jesús (sección 97): "vueltas por camión" ya NO
+// proyecta una placa a TODO lo que hizo ese día en cualquier banco (como
+// se definió el 4-ago) — cuenta solo sus viajes DENTRO del mismo grupo
+// Banco+Material+Rango+Tipo de camión ese día. Mismo filtro que
+// Suministros (origen_tipo BANCO, con banco capturado).
+window.recalcularResumenDiaGrupo = async function() {
+  if (!confirm('Esto va a leer TODA la colección de acarreos una sola vez para reconstruir el contador diario por placa/grupo (resumenes_dia). Puede tardar varios minutos. ¿Continuar?')) return;
+  const btn = document.getElementById('btn-recalcular-dia-grupo');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Leyendo toda la colección…'; }
+  try {
+    const snap = await getDocs(collection(db_f, COL));
+    const porMes = {}; // mes -> { por_dia_grupo: { fecha -> { key -> {viajes,ton,placas:{}} } } }
+    snap.forEach(docSnap => {
+      const r = docSnap.data();
+      if (!r.banco || !r.fecha1) return;
+      if ((r.origen_tipo || 'BANCO') !== 'BANCO') return; // mismo filtro que Suministros
+      const mes = mesKeyFromFecha(r.fecha1);
+      if (!mes) return;
+      const ton = r.ton || ((r.neto_kg || 0) / 1000);
+      const bancoStr = (r.banco || 'SD').replace(/\s+/g, '_');
+      const matStr   = (r.material || 'SD').replace(/\s+/g, '_');
+      const camStr   = (r.tipo_camion || 'SD').replace(/\s+/g, '_');
+      const rangoNorm = normalizarRango(r.rango) || 'SIN_RANGO';
+      const rangoStr = rangoNorm.replace(/\s+/g, '_').replace(/[.\/]/g, '');
+      const key = `${bancoStr}__${matStr}__${rangoStr}__${camStr}`;
+
+      if (!porMes[mes]) porMes[mes] = { por_dia_grupo: {} };
+      const pdg = porMes[mes].por_dia_grupo;
+      if (!pdg[r.fecha1]) pdg[r.fecha1] = {};
+      if (!pdg[r.fecha1][key]) pdg[r.fecha1][key] = { viajes: 0, ton: 0, placas: {} };
+      const g = pdg[r.fecha1][key];
+      g.viajes += 1;
+      g.ton    += ton;
+      if (r.placas) {
+        const placaKey = String(r.placas).toUpperCase().trim().replace(/\s+/g, '_').replace(/[.\/]/g, '');
+        if (placaKey) g.placas[placaKey] = (g.placas[placaKey] || 0) + 1;
+      }
+    });
+    const meses = Object.keys(porMes);
+    for (let i = 0; i < meses.length; i += 450) {
+      const batch = writeBatch(db_f);
+      meses.slice(i, i + 450).forEach(mes => {
+        batch.set(doc(db_f, COL_RESUMEN_DIA, mes), porMes[mes]);
+      });
+      await batch.commit();
+    }
+    alert('✅ Contador diario por placa/grupo reconstruido: ' + meses.length + ' mes(es) a partir de ' + snap.size + ' registro(s).');
+  } catch (e) {
+    alert('Error al recalcular el contador diario por placa/grupo: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Recalcular contador diario por placa (lee toda la base, solo 1a vez)'; }
   }
 }
 
@@ -3763,6 +3895,21 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     </button>
   </div>
 
+  <!-- 08-ago-2026 (INSTRUCCIONESAPP.md, sección 96): decisión de Jesús —
+       "vueltas por camión" pasa a ser OPCIONAL en el PDF de Suministros,
+       apagada por defecto (checkbox aparte). Mientras se resuelve de fondo
+       (migración de contador por placa a los resúmenes mensuales, sección
+       96), esto evita que el reporte muestre esa métrica sin que Jesús la
+       haya pedido explícitamente para ESE PDF en particular — el resto del
+       PDF (tablas Volteo/Góndola, dona, pastel, barras) sigue igual, no
+       depende de este checkbox. -->
+  <div style="padding:0 0 6px; display:flex; align-items:center; gap:8px;">
+    <input type="checkbox" id="chk-pdf-incluir-vueltas" style="width:16px;height:16px;">
+    <label for="chk-pdf-incluir-vueltas" style="font-size:12px;cursor:pointer;">
+      Incluir "vueltas por camión al día" en el análisis del PDF (apagado por defecto)
+    </label>
+  </div>
+
   <div style="padding:0 0 10px;">
     <button class="btn btn-primary" id="btn-graficos-pdf" onclick="descargarPdfGraficos()" style="width:100%;font-size:12px;">
       📄 Descargar PDF
@@ -4731,6 +4878,9 @@ window.dbFilaBasculaEliminar = async function (filaId) {
     </button>
     <button id="btn-recalcular-historico-global" class="btn btn-secondary" onclick="recalcularHistoricoGlobal()" style="width:100%;margin-top:8px;">
       Recalcular total histórico (lee toda la base, solo 1a vez)
+    </button>
+    <button id="btn-recalcular-dia-grupo" class="btn btn-secondary" onclick="recalcularResumenDiaGrupo()" style="width:100%;margin-top:8px;">
+      Recalcular contador diario por placa (lee toda la base, solo 1a vez)
     </button>
   </div>
 </div>
@@ -8323,15 +8473,30 @@ async function descargarPdfGraficos() {
 
   const desde = document.getElementById('dash-fecha-desde')?.value || '';
   const hasta = document.getElementById('dash-fecha-hasta')?.value || '';
+  // 08-ago-2026 (sección 96): checkbox nuevo, apagado por defecto —
+  // decisión de Jesús de que "vueltas por camión" sea opcional en este
+  // PDF. NO reduce por sí solo la lectura de detalle (las tablas
+  // Volteo/Góndola de las páginas 2-3 necesitan días-trabajados por
+  // Banco+Material+Rango, dato que los agregados mensuales actuales no
+  // guardan a ese nivel, así que el PDF sigue leyendo el rango completo
+  // igual que antes) — la reducción real de costo específica de "vueltas"
+  // depende de la migración de contador por placa autorizada en la
+  // sección 96, todavía pendiente de construir.
+  const incluirVueltasPdf = !!document.getElementById('chk-pdf-incluir-vueltas')?.checked;
 
-  // 04-ago-2026 (sección 88, respuesta pregunta "costo de lecturas"): el
-  // análisis en texto (sobre todo "vueltas por camión") necesita el
-  // detalle línea por línea del rango filtrado — los agregados mensuales
-  // no guardan placas. Se lee acotado EXACTO al rango (mismo patrón que
+  // 04-ago-2026 (sección 88, respuesta pregunta "costo de lecturas"): las
+  // tablas de este PDF (Volteo/Góndola, análisis por Banco/Material/Mes)
+  // necesitan el detalle línea por línea del rango filtrado — los
+  // agregados mensuales no guardan ese nivel (días trabajados por grupo,
+  // placas). Se lee acotado EXACTO al rango (mismo patrón que
   // descargarPdfBancos(), sección 11.2/79), pero si el rango es grande
   // (>90 días) o no hay rango fijado (= todo el histórico), se avisa
   // antes de leer tanto — mismo criterio que "Ver TODO el histórico"
-  // (sección 66) y la ventana de Base de Datos (sección 76).
+  // (sección 66) y la ventana de Base de Datos (sección 76). Jesús pidió
+  // explícitamente (sección 96) NO poner un límite duro de fechas aquí:
+  // comparar "todo el histórico" contra un mes puntual es parte de sus
+  // reportes a dirección, así que la opción de leer todo se mantiene,
+  // solo con este aviso de costo/tiempo.
   let avisoLecturaGrande = !desde || !hasta;
   if (desde && hasta) {
     const dias = Math.round((new Date(hasta) - new Date(desde)) / 86400000) + 1;
@@ -8339,7 +8504,7 @@ async function descargarPdfGraficos() {
   }
   if (avisoLecturaGrande) {
     const msg = (!desde || !hasta)
-      ? 'No fijaste un rango de fechas completo (Desde/Hasta) — el reporte va a leer TODO el histórico filtrado para calcular "vueltas por camión". Puede tardar. ¿Continuar?'
+      ? 'No fijaste un rango de fechas completo (Desde/Hasta) — el reporte va a leer TODO el histórico filtrado. Puede tardar. ¿Continuar?'
       : 'El rango de fechas filtrado es de más de 90 días — el reporte va a leer el detalle completo de ese rango. Puede tardar. ¿Continuar?';
     if (!confirm(msg)) return;
   }
@@ -8531,7 +8696,11 @@ function encabezadoPagina(subtitulo) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
   doc.text('Análisis — Banco', marginX, y);
   y += 0.14;
-  escribirParrafo(armarAnalisisTexto(agruparRegs(filtrado, 'banco', nombreBanco), filtrado, 'banco', 'suministradas'), y, anchoUtil);
+  // 08-ago-2026 (sección 96): "vueltas por camión" es opcional — si el
+  // checkbox está apagado (default), se pasa universo=null, mismo
+  // mecanismo que ya usa armarAnalisisTexto() para Material (línea de
+  // arriba) cuando la métrica no aplica.
+  escribirParrafo(armarAnalisisTexto(agruparRegs(filtrado, 'banco', nombreBanco), incluirVueltasPdf ? filtrado : null, 'banco', 'suministradas'), y, anchoUtil);
 
   // ── Página 2 y 3 (NUEVAS, 05-ago-2026, pedido de Jesús): comparación
   //    Volteo vs. Góndola, una tabla por hoja, cada una con su propio
@@ -8629,10 +8798,14 @@ function encabezadoPagina(subtitulo) {
       const ton = g.regs.reduce((s, r) => s + tonOfReg(r), 0);
       const dias = diasTrabajadosDe(g.regs);
       const viajesDia = dias ? g.regs.length / dias : 0;
-      const vueltas = vueltasPorCamionDia(g.regs, g.regs);
+      // 08-ago-2026 (sección 96): "vueltas por camión" opcional — se omite
+      // el cálculo por completo (no solo el texto) cuando el checkbox está
+      // apagado, mismo criterio que armarAnalisisTexto() con universo=null.
+      const vueltas = incluirVueltasPdf ? vueltasPorCamionDia(g.regs, g.regs) : null;
       return { nombre: g.nombre, ton, viajesDia, vueltas };
     }).sort((a, b) => b.ton - a.ton);
-    const detalle = (s) => `${fmtT(s.ton)} toneladas suministradas, un promedio de ${fmtV(s.viajesDia)} viajes por día (solo días con datos) y ${fmtVueltas(s.vueltas)} vueltas por camión al día`;
+    const detalle = (s) => `${fmtT(s.ton)} toneladas suministradas, un promedio de ${fmtV(s.viajesDia)} viajes por día (solo días con datos)`
+      + (s.vueltas !== null ? ` y ${fmtVueltas(s.vueltas)} vueltas por camión al día` : '');
     let txt;
     if (stats.length === 1) {
       txt = `Se identificó un solo ${etiquetaMes}: "${stats[0].nombre}", con ${detalle(stats[0])}.`;

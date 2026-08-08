@@ -6262,4 +6262,219 @@ refresh no se puede simular sin un navegador móvil real) — verificación
 hecha por lectura de código. Recomendado que Jesús confirme en campo que
 el gesto ya no recarga la app.
 
+---
 
+## 96. 08-ago-2026 — Decisiones de Jesús sobre "vueltas por camión" (PDF de Suministros) + Fase 1 aplicada (checkbox opcional). Migración de contador por placa: AUTORIZADA, todavía sin construir.
+
+**Sesión:** Sonnet5-20260808-A. Continúa sobre copia de `index.html`
+subida manualmente por Jesús (comparada byte a byte contra el repo de
+GitHub antes de tocar nada — sin diferencias, el repo ya tenía esta misma
+versión). `importador.html` también se subió a este chat pero **no se
+tocó en esta sesión** (no forma parte de este repo — ver sección 94).
+
+**Contexto — 3 preguntas resueltas en una conversación previa (otra
+sesión), antes de que esta sesión tocara código:**
+
+1. **¿Qué tan importante es mantener "vueltas por camión" en el PDF de
+   Suministros?** → Respuesta de Jesús: que sea **opcional** (checkbox
+   aparte, apagado por defecto).
+2. **¿Autoriza la migración única sobre el histórico para agregar un
+   contador por placa a los resúmenes mensuales** (mismo patrón que ya
+   existe por banco/material — `por_banco_material_rango` — para que esta
+   métrica deje de costar miles de lecturas)? → **Sí, autorizada.**
+3. **¿Poner un límite DURO de rango de fechas al PDF de Suministros para
+   frenar el gasto de lecturas ya mismo?** → **No.** Jesús quiere
+   conservar la opción de leer todo el histórico a propósito: la usa para
+   comparar un panorama concreto (ej. julio 2026) contra el panorama
+   global y así medir si un mes se comportó mejor o peor que el promedio
+   histórico — información que usa en reportes a dirección. Un límite
+   duro le quitaría esa capacidad.
+
+**Fase 1 aplicada en esta sesión (checkbox — respuesta 1):**
+- Checkbox nuevo `chk-pdf-incluir-vueltas` en la pestaña Suministros/
+  Gráficos, junto al botón "📄 Descargar PDF", **apagado por defecto**.
+- `descargarPdfGraficos()` lee ese checkbox (`incluirVueltasPdf`) y lo
+  pasa como `universo` (o `null` si está apagado) a `armarAnalisisTexto()`
+  en el análisis de Banco (Página 1) — mismo mecanismo que YA existía
+  para omitir la métrica en el análisis de Material (`universo = null`,
+  documentado desde la sección 88). En el análisis Mes/Año (Página 5,
+  bloque manual que no pasa por `armarAnalisisTexto()`), se agregó el
+  mismo condicional: si el checkbox está apagado, `vueltasPorCamionDia()`
+  ni siquiera se llama (no solo se oculta el texto).
+- El aviso de "rango de fechas grande / sin fijar" (`confirm()` antes de
+  leer) se reescribió para **no** atribuir la lectura completa
+  específicamente a "vueltas por camión" — ver siguiente punto, sigue
+  siendo necesaria por otra razón.
+
+**⚠️ Aclaración importante para Jesús (para que la Fase 1 no genere una
+expectativa equivocada de ahorro de lecturas):** el checkbox apagado
+**no reduce el costo de lecturas de este PDF en general.** Las tablas de
+las páginas 2 y 3 (comparación Volteo vs. Góndola, `dibujarTablaTipoCamion()`)
+necesitan "días trabajados" por cada fila Banco+Material+Rango — un dato
+que los agregados mensuales actuales (`por_banco_material_rango`) NO
+guardan (solo totales del mes, sin desglose por día). Por eso el PDF
+completo sigue llamando a `traerTodoFirestore(desde, hasta)` igual que
+antes, sin importar el checkbox. El checkbox de esta fase resuelve
+exactamente lo que Jesús pidió en la pregunta 1 (que la métrica sea
+opcional en el reporte), pero **no** es todavía el ahorro de lecturas de
+la pregunta 2 — ese ahorro depende de la migración de abajo, y de una
+Fase 2 más grande (que las tablas Volteo/Góndola lean del agregado en vez
+del detalle completo), todavía sin diseñar.
+
+**Verificación de sintaxis (regla 24.4/30.5):** `node --check` limpio en
+los 4 bloques `<script>` del archivo (`block_0`, `block_5` módulo,
+`block_6`, `block_7`). 0 IDs de DOM duplicados (464 ids totales, antes
+462 — los 2 nuevos son el checkbox y su label).
+
+**Migración de contador por placa (respuesta 2) — AUTORIZADA, diseño
+propuesto, TODAVÍA NO CONSTRUIDA en esta sesión (una fase por entrega —
+sección 0):**
+
+Propuesta de diseño para la siguiente sesión/fase (a confirmar en junta
+Obeya de Software — DBA/Integridad de datos + Arquitecto — antes de
+escribir el código de escritura y de migración, por el volumen de campos
+anidados que implica):
+
+- Nuevo mapa en el resumen mensual (`resumenes/<mes>`), mismo patrón que
+  `por_banco_material_rango`/`tendencia_diaria` (increment() sobre claves
+  con punto, se fusiona con `updateDoc`): `por_dia_placas.<fecha1>.viajes`
+  (increment) y `por_dia_placas.<fecha1>.placas.<placaNormalizada>.viajes`
+  (increment) — el número de claves de placa con valor > 0 dentro de un
+  día = camiones distintos ese día (no se puede "borrar" una clave a 0
+  con `increment()`, así que la lectura filtra valor > 0, no la
+  presencia de la clave).
+- Con eso, `vueltasPorCamionDia()`-equivalente para un rango se puede
+  calcular leyendo SOLO los documentos mensuales del rango pedido
+  (1 lectura por mes, ya se hace hoy para el resto del dashboard) en vez
+  de `traerTodoFirestore()` línea por línea — el ahorro real que pidió
+  Jesús en la pregunta 2.
+- Escritura hacia adelante: agregar este bloque a `aplicarResumen()`
+  (~línea 1394, junto a `por_banco_material_rango`) para que TODO ticket
+  nuevo alimente esta estructura desde ya, sin esperar a la migración.
+- Migración única sobre el histórico: función nueva tipo
+  `recalcularHistoricoGlobal()` (botón en Admin), que lee el histórico
+  completo UNA vez (ya autorizado por Jesús) y escribe `por_dia_placas`
+  retroactivo en cada `resumenes/<mes>` que no lo tenga.
+- **Pendiente de decidir antes de construir:** tamaño estimado del mapa
+  por mes (¿cuántas placas distintas activas por día en Rompeolas
+  Oriente? — determina si esto es viable dentro del límite de tamaño de
+  documento de Firestore, 1 MiB) y si conviene trocar `placas` a un
+  sub-documento en vez de mapa anidado si el conteo de placas/día resulta
+  alto. **No se estimó ese tamaño en esta sesión** — siguiente paso antes
+  de escribir el código real de escritura + migración.
+
+**Confirmación de la pregunta 3 (sin límite duro de fechas):** no se tocó
+ningún límite existente — el único control de fecha en Suministros/
+Gráficos sigue siendo el aviso de `confirm()` antes de leer (informativo,
+no bloqueante), tal como ya estaba. No se requirió cambio de código para
+esta respuesta, solo se documenta aquí la decisión para que ninguna
+sesión futura proponga por su cuenta un límite duro sin saber que ya se
+preguntó y Jesús ya dijo que no.
+
+**Pendiente para la próxima sesión:** (a) estimar tamaño de
+`por_dia_placas` por mes antes de construir la migración, (b) escribir el
+bloque de `aplicarResumen()` + la función de migración + el botón en
+Admin, (c) decidir si vale la pena una Fase 2 que también mueva
+`dibujarTablaTipoCamion()` (páginas 2-3) a leer de agregados en vez de
+detalle completo, ya que esa es la lectura que de verdad domina el costo
+de este PDF.
+
+---
+
+## 97. 08-ago-2026 — Migración de contador diario por placa/grupo: escritura en vivo + botón de migración únicos, construidos — CORREGIDO (falta Fase 2: que el PDF/tablas lean de aquí)
+
+**Sesión:** Sonnet5-20260808-A (continuación de la misma sesión de la
+sección 96).
+
+**Hallazgo antes de escribir código (rol DBA/Integridad de datos de la
+junta Obeya, sección 0.7):** "vueltas por camión al día", tal como se
+definió el 4-ago-2026 (sección 89, con ejemplo numérico de Jesús), es una
+métrica **cruzada** — toma las placas que visitaron un grupo (ej. un
+Banco) y cuenta TODOS sus viajes en el universo filtrado completo (para
+no perder camiones que se desviaron a otro banco el mismo día). Esa
+definición **no se puede reconstruir barato desde un agregado** sin
+guardar prácticamente el detalle placa-por-placa-por-día — reconstruir
+eso hubiera arriesgado el límite de 1 MiB de `resumenes/<mes>` (que ya
+carga `por_combinacion`/`por_banco_material_rango`/`tendencia_diaria`) y
+no habría dado el ahorro de lecturas que buscaba Jesús.
+
+**Decisiones de Jesús antes de construir (preguntadas explícitamente):**
+1. **Cambio de semántica aceptado:** "vueltas por camión" deja de
+   proyectar una placa a TODO lo que hizo ese día — pasa a contar solo
+   sus viajes DENTRO del mismo grupo Banco+Material+Rango+Tipo de camión
+   ese día. Esto sí es barato de agregar.
+2. **Colección aparte:** el contador nuevo vive en `resumenes_dia`, NO
+   dentro de `resumenes` — no toca los documentos actuales ni su riesgo
+   de tamaño.
+
+**Construido en esta sesión:**
+
+1. **`COL_RESUMEN_DIA = "resumenes_dia"`** (constante nueva, junto a
+   `COL_RESUMEN`, ~línea 518).
+
+2. **Escritura en vivo, dentro de `aplicarResumen()` (rec, signo)** —
+   NO se creó una función paralela con sus propios call sites (evita el
+   riesgo de la sección 30.2/44: "grep de TODOS los call sites antes de
+   dar un bug por cerrado" aplicado en sentido inverso — mejor no crear
+   una segunda puerta de entrada que alguna sesión futura olvide llamar).
+   Confirmado con `grep`: los 5 call sites reales de `aplicarResumen()`
+   (`moverResumen`, y 3 llamadas directas al guardar/editar/eliminar un
+   ticket) quedan cubiertos automáticamente por estar DENTRO de la misma
+   función. Filtro aplicado: solo si `rec.banco` existe, `fecha1` existe,
+   y `(rec.origen_tipo || 'BANCO') === 'BANCO'` — mismo filtro que usa
+   Suministros para sus KPIs/gráficas. Estructura escrita (con
+   `increment()`, igual patrón que `por_banco_material_rango`):
+   `por_dia_grupo.<fecha1>.<bancoStr__matStr__rangoStr__camStr>.viajes`,
+   `.ton`, y `.placas.<placaNormalizada>` (conteo de viajes de esa placa
+   ese día, dentro de ese grupo). Reutiliza `bancoStr`/`matStr`/`camStr`
+   ya calculados para `comboKey` (sin duplicar lógica), y
+   `normalizarRango()` (misma que usa `por_banco_material_rango`). Falla
+   silenciosa con aviso — mismo criterio ya establecido (sección 68) para
+   el resto de esta función: el ticket se guarda bien aunque esto falle.
+
+3. **Migración única — `window.recalcularResumenDiaGrupo()`**, botón
+   nuevo en Admin ("Recalcular contador diario por placa (lee toda la
+   base, solo 1a vez)", `btn-recalcular-dia-grupo`) — mismo patrón
+   exacto que `recalcularResumen()`/`recalcularHistoricoGlobal()`: UNA
+   lectura completa de `acarreos` vía `getDocs()`, arma la estructura en
+   memoria agrupada por mes, y la escribe con `writeBatch` (lotes de 450)
+   a `resumenes_dia/<mes>`. Mismo filtro de origen/banco/fecha que la
+   escritura en vivo (punto 2), para que ambos caminos —migración e
+   incremental— construyan exactamente la misma forma de dato.
+
+4. **`firestore.rules` — regla nueva para `resumenes_dia`:** mismo
+   criterio de permisos que `resumenes` (lectura: cualquier usuario
+   autorizado; creación/actualización: capturista/coordinador/admin/
+   master; borrado: solo master). Sin esta regla, tanto la escritura en
+   vivo como la migración habrían fallado con `permission-denied` —
+   verificado contra el archivo real antes de dar esto por completo (regla
+   30.4: no asumir que una colección nueva hereda permisos de otra).
+
+**Verificación de sintaxis (regla 24.4/30.5):** `node --check` limpio en
+los 4 bloques `<script>` del archivo (`block_0`, `block_5` módulo,
+`block_6`, `block_7`). 465 IDs de DOM totales (antes 464), sin
+duplicados — el nuevo es `btn-recalcular-dia-grupo`.
+
+**Alcance / lo que falta (Fase 2, todavía NO construida):** esta sesión
+deja el dato disponible y alimentándose solo en `resumenes_dia`, pero
+**el PDF de Suministros (`descargarPdfGraficos()`) y el panel de
+"Vueltas promedio"/"Camiones promedio por día" del dashboard TODAVÍA
+leen `traerTodoFirestore()` (detalle completo), sin cambios en esta
+sesión.** El ahorro de lecturas que pidió Jesús ("recuerda que la
+intención es reducir el número de lecturas al crear el PDF de
+Suministros") **no se materializa hasta que esa Fase 2 se construya**:
+cambiar `dibujarTablaTipoCamion()` (páginas 2-3, días trabajados por
+grupo) y el cálculo de vueltas (páginas 1 y 5) para que lean
+`resumenes_dia` del rango pedido (1 lectura por mes) en vez de leer
+ticket por ticket. Es la siguiente fase natural, pendiente de que Jesús
+confirme que quiere que se construya ahora o después de correr la
+migración y confirmar en campo que los números de `resumenes_dia`
+cuadran contra un mes de prueba calculado a mano/Excel.
+
+**Pendiente antes de correr la migración en producción (recomendación,
+no bloqueante):** Jesús debe correr primero "Recalcular contador diario
+por placa" en Admin (lee TODA la colección — puede tardar varios
+minutos, mismo aviso que los botones hermanos), y lo ideal es comparar el
+resultado de un mes conocido contra un cálculo manual antes de construir
+la Fase 2 encima de este dato nuevo — mismo criterio de verificación que
+ya se usó para el desfase de 8,922 vs 8,927 viajes de la sección 93.

@@ -6164,3 +6164,102 @@ salvedad que ya se documentó en sesiones anteriores sin acceso a red
 (sección 78-ish). Recomendado que Jesús pruebe el PDF con datos reales
 antes de repartirlo, sobre todo el cálculo de "diferencia" Volteo/Góndola
 con un rango de fechas amplio.
+
+## 94. 07-ago-2026 — 🔴 Bug real reportado por Jesús: columna RANGO del PDF (páginas Volteo/Góndola, `dibujarTablaTipoCamion()`) mostraba fechas en vez del rango de piedra — CORREGIDO
+
+**Sesión:** trabajado junto con una sesión de corrección del importador
+de Excel (`importador.html`, no forma parte de este repo pero comparte
+catálogos/lógica de agregados — ver esa sesión aparte para el detalle de
+esos fixes).
+
+**Contexto:** la sección 93 (punto 4) documentó la columna RANGO nueva de
+`dibujarTablaTipoCamion()` como "primer y último día con viajes de esa
+fila banco+material dentro del periodo filtrado" — un rango de FECHAS.
+Jesús reportó, viendo el PDF real, que eso no tenía sentido: "RANGO" en
+toda la app siempre se refiere a la clasificación de piedra del material
+(0.02 a 0.20 ton, etc. — ver catálogos `RANGOS`/`RANGOS_ACOPIO`), nunca a
+fechas. La sección 93 documentó el diseño equivocado como si fuera
+correcto porque nadie lo cruzó contra el significado real de "rango" en
+el resto de la app antes de entregarlo.
+
+**Fix (`dibujarTablaTipoCamion()`, ~línea 8401):**
+1. La agrupación de filas pasa de Banco+Material a **Banco+Material+Rango**
+   (usando `normalizarRango(r.rango)`, la misma normalización que ya usa
+   `por_banco_material_rango`) — necesario porque un mismo Banco+Material
+   puede tener más de una piedra válida (ej. NÚCLEO en Acopio admite
+   "0.02 a 0.20 ton" **y** "0.01 a 0.50 ton" — ver `RANGOS_ACOPIO`), así
+   que agrupar solo por Banco+Material mezclaría piedras distintas bajo
+   una sola fila y un solo % del total.
+2. La columna RANGO ahora muestra ese rango de piedra normalizado (o
+   "SIN RANGO" si el ticket no tiene rango capturado) en vez de
+   `fmtRangoCorto()` sobre `fecha1` mín/máx. `fmtRangoCorto()` se retira
+   (no se usaba en ningún otro lado del archivo).
+
+**Sin tocar:** el resto de `dibujarTablaTipoCamion()` (columnas VIAJES,
+VIAJES/DÍA PROM., % DEL TOTAL DE TON., TON./DÍA PROM., estilos de tabla,
+`cellPadding: 0.04`) no cambió — sigue siendo el mismo cálculo ya
+verificado en las secciones 91/92.
+
+**Verificación de sintaxis (regla 24.4/30.5):** `node --check` limpio en
+los 4 bloques `<script>` del archivo. Confirmado que `normalizarRango`
+está definido en scope global (línea ~1157, `window.normalizarRango`)
+antes de este punto del archivo, así que `dibujarTablaTipoCamion()` lo
+usa sin problema aunque viva en un bloque `<script>` distinto.
+
+**Pendiente:** no se corrió contra Firestore real ni se generó un PDF de
+prueba en esta sesión (mismo alcance de verificación que la sección 93:
+lectura de código + `node --check`). Recomendado que Jesús genere un PDF
+con datos reales para confirmar visualmente antes de repartirlo.
+
+## 95. 07-ago-2026 — 🔴 Bug real reportado por Jesús: deslizar hacia abajo para "actualizar" recargaba toda la app (splash de nuevo + se perdía la pestaña donde estaba) — CORREGIDO
+
+**Contexto:** Jesús reportó que al hacer el gesto de deslizar hacia abajo
+(pull-to-refresh) para actualizar la pantalla donde estaba, la app entera
+se recargaba desde cero: volvía a reproducir la animación de splash
+(~4.6s) y lo regresaba a la pestaña inicial, perdiendo dónde estaba
+parado.
+
+**Causa confirmada:** el archivo no tenía ninguna protección contra el
+gesto NATIVO de pull-to-refresh del navegador/PWA (Android Chrome y la
+mayoría de navegadores móviles: al deslizar hacia abajo estando arriba
+del todo de la página, disparan una recarga completa de la URL por
+defecto). Esa recarga completa —no un refresh de datos— es la que
+reproducía el splash otra vez (el script de splash, línea ~3045, se
+ejecutaba sin condición en cada carga del DOM) y perdía el estado de
+navegación (pestaña activa, filtros en pantalla, etc.). Los datos de casi
+todas las pantallas ya se mantienen al día solos vía listeners de
+Firestore (`onSnapshot`), así que ese gesto de recarga no aportaba nada
+en la práctica — solo interrumpía al usuario.
+
+**Fix (dos capas):**
+1. **`overscroll-behavior-y: contain;` en `html, body`** (nueva regla
+   junto al selector `body` existente, ~línea 76) — apaga el gesto nativo
+   de pull-to-refresh del navegador sin afectar el scroll normal de la
+   página. Esta es la corrección real: ya no hay recarga completa al
+   deslizar hacia abajo.
+2. **Splash "solo una vez por sesión" activado** (el código ya existía
+   comentado desde antes, se activó tal cual estaba escrito, ~línea
+   3045) — segunda capa de protección: si la página SÍ llega a recargarse
+   dentro de la misma pestaña por cualquier otro motivo (ej. el usuario
+   usa el botón de recargar del navegador a propósito), `sessionStorage`
+   evita que el splash se reproduzca dos veces en la misma sesión de
+   pestaña.
+
+**Alcance / lo que NO cambia:** el gesto de "deslizar hacia abajo" deja
+de recargar la página, pero **no** se construyó un refresh manual de
+datos que lo reemplace — no hacía falta porque las pantallas ya se
+actualizan solas por los listeners de Firestore. Si alguna pantalla
+puntual usa lectura única (`getDocs`, no listener) y Jesús sí quiere una
+forma explícita de refrescar esa pantalla en particular, sería un fix
+aparte (habría que revisar cuáles pantallas son de lectura única antes de
+diseñarlo) — queda pendiente de que Jesús confirme si lo necesita.
+
+**Verificación de sintaxis (regla 24.4/30.5):** `node --check` limpio en
+los 4 bloques `<script>` del archivo.
+
+**Pendiente:** no se probó en un dispositivo real (el gesto de pull-to-
+refresh no se puede simular sin un navegador móvil real) — verificación
+hecha por lectura de código. Recomendado que Jesús confirme en campo que
+el gesto ya no recarga la app.
+
+
